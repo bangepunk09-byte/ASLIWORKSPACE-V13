@@ -1,0 +1,14 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+.circle_key
+.circle_workspace_db.json
+.circle_workspace_db.mirror.json
+.circle_workspace_db.tmp.json
+backups/
+
