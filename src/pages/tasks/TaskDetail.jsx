@@ -532,11 +532,11 @@ export default function TaskDetail({ id, onClose, onChanged }) {
                   />
                 </Row>
                 <Row label="Prioritas"><PrioritySelect value={t.priority} onChange={(v) => patch({ priority: v })} testid="task-detail-priority" /></Row>
+                <Row label="Tanggal Mulai"><DatePicker disabled={ro} value={t.start_date || (t.created_at ? fmtDate(t.created_at, "yyyy-MM-dd") : "")} onChange={(val) => { const nextVal = val || (t.created_at ? fmtDate(t.created_at, "yyyy-MM-dd") : null); if (nextVal !== (t.start_date || null)) patch({ start_date: nextVal }); }} placeholder="Pilih tanggal mulai" className={inp} data-testid="task-detail-start-date" /></Row>
                 <Row label="Deadline"><div className="flex flex-wrap items-center gap-2"><DateTimePicker disabled={ro} value={t.deadline ? fmtDate(t.deadline, "yyyy-MM-dd'T'HH:mm") : ""} onChange={(val) => { const v = val ? new Date(val).toISOString() : null; if (v !== t.deadline) patch({ deadline: v }); }} placeholder="Pilih deadline & jam" className={`${inp} flex-1 min-w-[180px]`} data-testid="task-detail-deadline" />{d && <span className={`whitespace-nowrap text-xs ${d.cls}`}>{d.state === "overdue" ? "Overdue" : d.state === "today" ? "Hari Ini" : ""}</span>}</div></Row>
                 <Row label="IP / Brand"><LabelPicker value={t.label_ids} onChange={(v) => patch({ label_ids: v })} testid="task-detail-labels" /></Row>
                 <Row label="Jenis Item"><ItemPicker value={t.item_type} onChange={(v) => patch({ item_type: v })} testid="task-detail-item" /></Row>
                 <Row label="Link File / Folder"><input disabled={ro} defaultValue={t.link_url || ""} key={`l${t.link_url}`} onBlur={(e) => e.target.value.trim() !== (t.link_url || "") && patch({ link_url: e.target.value.trim() })} placeholder="https://…" className={inp} data-testid="task-detail-link" /></Row>
-                <Row label="Tanggal Submit"><DatePicker disabled={ro} value={t.submit_date || ""} onChange={(val) => (val || null) !== (t.submit_date || null) && patch({ submit_date: val || null })} placeholder="Pilih tanggal submit" className={inp} data-testid="task-detail-submit-date" /></Row>
                 <Row label="Board">
                   <Select
                     value={t.board_id || "none"}

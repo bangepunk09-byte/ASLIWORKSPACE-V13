@@ -26,6 +26,7 @@ import { toast } from "sonner";
 import { useApp } from "../context/AppContext";
 import { api, errMsg, fileUrl, uploadFile } from "../lib/api";
 import { Avatar, PageHeader, rel, ImageLightbox, VerifiedBadge, buildMentionMatcher } from "../components/common";
+import { playSound } from "../lib/sound";
 import PollCard from "./chat/PollCard";
 import CreatePollDialog from "./chat/CreatePollDialog";
 import {
@@ -385,6 +386,8 @@ function Composer({ parentId, onPosted, placeholder, compact = false, defaultTop
     }
     const optimisticPost = {
       id: tempId,
+      _clientKey: tempId,
+      _justPosted: true,
       author_id: me?.user_id || "user_admin1",
       topic: currentTopic,
       text: currentText,
@@ -402,7 +405,8 @@ function Composer({ parentId, onPosted, placeholder, compact = false, defaultTop
       created_at: new Date().toISOString()
     };
 
-    // Optimistically update UI immediately (0ms delay)
+    // Play sound & optimistically update UI immediately on post click
+    playSound(parentId ? "message" : "post");
     setText("");
     if (!defaultTopic) setTopic("");
     setFiles([]);
@@ -821,14 +825,16 @@ function PostCard({ p, onChange, onDelete, reply }) {
       if (replaceId) {
         const idx = prevReplies.findIndex((r) => r.id === replaceId || r.id === newReply.id);
         if (idx !== -1) {
-          nextReplies = prevReplies.map((r, i) => (i === idx ? newReply : r));
+          nextReplies = prevReplies.map((r, i) =>
+            i === idx ? { ...newReply, _clientKey: r._clientKey || replaceId, _justPosted: r._justPosted } : r
+          );
         } else {
           nextReplies = [...prevReplies.filter((r) => r.id !== newReply.id && r.id !== replaceId), newReply];
         }
       } else {
         const exists = prevReplies.some((r) => r.id === newReply.id);
         nextReplies = exists
-          ? prevReplies.map((r) => (r.id === newReply.id ? newReply : r))
+          ? prevReplies.map((r) => (r.id === newReply.id ? { ...newReply, _clientKey: r._clientKey, _justPosted: r._justPosted } : r))
           : [...prevReplies.filter((r) => r.id !== newReply.id), newReply];
       }
 
@@ -949,7 +955,10 @@ function PostCard({ p, onChange, onDelete, reply }) {
   };
 
   return (
-    <article className={`flex gap-2.5 sm:gap-3 ${reply ? "py-3.5 sm:py-4" : "card p-3.5 sm:p-4"}`} data-testid={`post-${p.id}`}>
+    <article
+      className={`flex gap-2.5 sm:gap-3 ${reply ? "py-3.5 sm:py-4" : "card p-3.5 sm:p-4"} ${p._justPosted ? "animate-post-popup" : ""}`}
+      data-testid={`post-${p.id}`}
+    >
       <Link to={`/people/${p.author_id}`} className="shrink-0"><Avatar user={author} size={reply ? 32 : 40} /></Link>
       <div className="min-w-0 flex-1">
         <div className="flex items-start justify-between gap-2">
@@ -1201,7 +1210,7 @@ function PostCard({ p, onChange, onDelete, reply }) {
                   <div className="divide-y divide-subtle/60 rounded-xl bg-surface px-3 border border-subtle/50">
                     {replies.map((r) => (
                       <PostCard
-                        key={r.id}
+                        key={r._clientKey || r.id}
                         p={r}
                         reply
                         onChange={handleReplyChange}
@@ -1444,14 +1453,14 @@ function Feed() {
         setPosts((ps) => {
           const existing = Array.isArray(ps) ? ps : [];
           if (existing.some((x) => x.id === d.id)) return existing;
-          // Replace optimistic post by same author if present
           const optIdx = existing.findIndex((x) => String(x.id).startsWith("pst_opt_") && x.author_id === d.author_id && x.text === d.text);
           const next = optIdx !== -1
-            ? existing.map((x, idx) => (idx === optIdx ? d : x))
+            ? existing.map((x, idx) => (idx === optIdx ? { ...d, _clientKey: x._clientKey || x.id, _justPosted: x._justPosted } : x))
             : [d, ...existing];
           if (!tag) {
-            setPostsCache(next);
-            try { localStorage.setItem("circle_cache_posts_feed", JSON.stringify(next)); } catch {}
+            const cleanForCache = next.map(({ _clientKey, _justPosted, ...rest }) => rest);
+            setPostsCache(cleanForCache);
+            try { localStorage.setItem("circle_cache_posts_feed", JSON.stringify(cleanForCache)); } catch {}
           }
           return next;
         });
@@ -1533,13 +1542,17 @@ function Feed() {
         setMore(r.data.length === 30);
       });
 
+  const persistFeedCache = (next) => {
+    if (tag) return;
+    const clean = (next || []).map(({ _clientKey, _justPosted, ...rest }) => rest);
+    setPostsCache(clean);
+    try { localStorage.setItem("circle_cache_posts_feed", JSON.stringify(clean)); } catch {}
+  };
+
   const upd = (np) => {
     setPosts((ps) => {
       const next = ps.map((x) => (x.id === np.id ? { ...x, ...np } : x));
-      if (!tag) {
-        setPostsCache(next);
-        try { localStorage.setItem("circle_cache_posts_feed", JSON.stringify(next)); } catch {}
-      }
+      persistFeedCache(next);
       return next;
     });
   };
@@ -1549,14 +1562,22 @@ function Feed() {
       const existing = ps || [];
       let next;
       if (replaceId) {
-        next = existing.map((x) => (x.id === replaceId ? newPost : x));
+        const hasReplace = existing.some((x) => x.id === replaceId);
+        next = hasReplace
+          ? existing.map((x) =>
+              x.id === replaceId
+                ? { ...newPost, _clientKey: x._clientKey || replaceId, _justPosted: x._justPosted }
+                : x
+            )
+          : existing.map((x) =>
+              x.id === newPost.id
+                ? { ...newPost, _clientKey: x._clientKey || x.id, _justPosted: x._justPosted }
+                : x
+            );
       } else {
         next = [newPost, ...existing.filter((x) => x.id !== newPost.id)];
       }
-      if (!tag) {
-        setPostsCache(next);
-        try { localStorage.setItem("circle_cache_posts_feed", JSON.stringify(next)); } catch {}
-      }
+      persistFeedCache(next);
       return next;
     });
   };
@@ -1742,16 +1763,13 @@ function Feed() {
         ) : (
           posts.map((p) => (
             <PostCard
-              key={p.id}
+              key={p._clientKey || p.id}
               p={p}
               onChange={upd}
               onDelete={(id) => {
                 setPosts((ps) => {
                   const next = ps.filter((x) => x.id !== id);
-                  if (!tag) {
-                    setPostsCache(next);
-                    try { localStorage.setItem("circle_cache_posts_feed", JSON.stringify(next)); } catch {}
-                  }
+                  persistFeedCache(next);
                   return next;
                 });
               }}

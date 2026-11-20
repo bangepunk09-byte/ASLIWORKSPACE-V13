@@ -607,7 +607,7 @@ export default function StickyNotesWidget({ densityStyles }) {
                               {it.done && <Check size={11} strokeWidth={3} />}
                             </span>
                             <span
-                              className={`text-xs leading-snug break-words flex-1 ${
+                              className={`min-w-0 flex-1 text-xs leading-relaxed break-words ${
                                 it.done
                                   ? "line-through text-slate-400 dark:text-slate-500"
                                   : "text-slate-800 dark:text-slate-100 font-medium"
@@ -736,7 +736,7 @@ export default function StickyNotesWidget({ densityStyles }) {
 
       {/* Create / Edit Sticky Note Dialog */}
       <Dialog open={editorOpen} onOpenChange={setEditorOpen}>
-        <DialogContent className="max-w-lg p-0 bg-surface rounded-2xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+        <DialogContent className="max-w-xl p-0 bg-surface rounded-2xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 overflow-hidden">
           <DialogHeader className="px-5 pt-5 pb-3 border-b text-left pr-10">
             <DialogTitle className="text-base sm:text-lg font-extrabold text-ink">
               {editingNote ? t("notes_modal_edit_title", "Edit Sticky Note") : t("notes_modal_create_title", "Buat Sticky Note Checklist")}
@@ -807,11 +807,11 @@ export default function StickyNotesWidget({ densityStyles }) {
               </div>
 
               {draftItems.length > 0 && (
-                <div className="space-y-1.5 max-h-48 overflow-y-auto scroll-thin pr-1">
+                <div className="space-y-2 max-h-56 overflow-y-auto scroll-thin pr-1">
                   {draftItems.map((it, idx) => (
                     <div
                       key={it.id}
-                      className="flex items-center gap-2 rounded-xl border bg-surface2/60 px-2.5 py-1.5"
+                      className="flex items-start gap-2.5 rounded-xl border bg-surface2/60 px-3 py-2"
                     >
                       <button
                         type="button"
@@ -820,7 +820,7 @@ export default function StickyNotesWidget({ densityStyles }) {
                             prev.map((row, i) => (i === idx ? { ...row, done: !row.done } : row))
                           )
                         }
-                        className={`flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded border cursor-pointer ${
+                        className={`mt-0.5 flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded border cursor-pointer ${
                           it.done
                             ? "bg-emerald-500 border-emerald-500 text-white"
                             : "border-slate-400 bg-surface"
@@ -828,14 +828,15 @@ export default function StickyNotesWidget({ densityStyles }) {
                       >
                         {it.done && <Check size={11} strokeWidth={3} />}
                       </button>
-                      <input
+                      <textarea
+                        rows={Math.max(1, Math.min(4, Math.ceil((it.text?.length || 1) / 52)))}
                         value={it.text}
                         onChange={(e) =>
                           setDraftItems((prev) =>
                             prev.map((row, i) => (i === idx ? { ...row, text: e.target.value } : row))
                           )
                         }
-                        className={`flex-1 bg-transparent text-xs outline-none ${
+                        className={`flex-1 min-w-0 resize-none bg-transparent text-xs sm:text-[13px] leading-relaxed outline-none ${
                           it.done ? "line-through text-sub" : "text-ink font-medium"
                         }`}
                       />
@@ -844,7 +845,7 @@ export default function StickyNotesWidget({ densityStyles }) {
                         onClick={() =>
                           setDraftItems((prev) => prev.filter((_, i) => i !== idx))
                         }
-                        className="text-sub hover:text-rose-600 p-1 cursor-pointer"
+                        className="text-sub hover:text-rose-600 p-1 shrink-0 cursor-pointer"
                         aria-label="Hapus poin"
                       >
                         <X size={13} />
@@ -854,28 +855,34 @@ export default function StickyNotesWidget({ densityStyles }) {
                 </div>
               )}
 
-              <div className="flex items-center gap-2">
-                <input
+              <div className="space-y-2">
+                <textarea
+                  rows={3}
                   value={newPointInput}
                   onChange={(e) => setNewPointInput(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") {
+                    if (e.key === "Enter" && !e.shiftKey) {
                       e.preventDefault();
                       appendPointFromInput();
                     }
                   }}
-                  placeholder="Tulis poin checklist lalu tekan Enter..."
-                  className="h-9 flex-1 rounded-xl border bg-surface2 px-3 text-xs outline-none focus:border-brand"
+                  placeholder="Tulis poin checklist panjang di sini... (Enter untuk tambah, Shift+Enter baris baru)"
+                  className="min-h-[88px] w-full resize-y rounded-2xl border bg-surface2 px-3.5 py-2.5 text-sm leading-relaxed outline-none focus:border-brand"
                   data-testid="note-point-input"
                 />
-                <button
-                  type="button"
-                  onClick={appendPointFromInput}
-                  className="inline-flex h-9 items-center gap-1 rounded-xl border bg-surface px-3 text-xs font-bold text-ink hover:bg-surface2 cursor-pointer shrink-0"
-                  data-testid="note-add-point-btn"
-                >
-                  <Plus size={13} /> Tambah
-                </button>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] text-sub">
+                    Tip: Paste beberapa baris sekaligus akan otomatis jadi poin terpisah.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={appendPointFromInput}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-xl border bg-surface px-3.5 text-xs font-bold text-ink hover:bg-surface2 cursor-pointer shrink-0"
+                    data-testid="note-add-point-btn"
+                  >
+                    <Plus size={14} /> Tambah Poin
+                  </button>
+                </div>
               </div>
             </div>
 

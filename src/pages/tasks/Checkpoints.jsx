@@ -561,7 +561,7 @@ export function CheckpointPresetBar({ onApply, currentCheckpoints = [], testidPr
                     setTplItems((prev) => prev.map((x, i) => (i === idx ? e.target.value : x)))
                   }
                   placeholder={`Nama tahap ${idx + 1}…`}
-                  className="h-7 flex-1 rounded-lg border bg-surface2 px-2 text-xs text-ink outline-none focus:border-brand"
+                  className="h-7 flex-1 rounded-lg border bg-surface2 px-3 text-xs text-ink outline-none focus:border-brand"
                   data-testid={`template-stage-input-${idx}`}
                 />
                 {tplItems.length > 1 && (
@@ -756,6 +756,7 @@ export default function Checkpoints({ t, ro, patch, reload, members, emptyMessag
       unassigned: !!c.unassigned,
       deadline: c.deadline || "",
       done: !!c.done,
+      started_at: c.started_at || null,
       done_at: c.done_at,
       done_by: c.done_by,
       notified_ready_for: c.notified_ready_for || null
@@ -782,9 +783,14 @@ export default function Checkpoints({ t, ro, patch, reload, members, emptyMessag
 
   const edit = (id, ch) => {
     const prevActiveIdx = cps.findIndex((c) => !c.done);
-    const nextList = cps.map((c) => (c.id === id ? { ...c, ...ch } : c));
+    const nowIso = new Date().toISOString();
+    let nextList = cps.map((c) => (c.id === id ? { ...c, ...ch } : c));
     const nextActiveIdx = nextList.findIndex((c) => !c.done);
     const targetIdx = nextList.findIndex((c) => c.id === id);
+
+    if (nextActiveIdx !== -1 && !nextList[nextActiveIdx].started_at) {
+      nextList = nextList.map((c, idx) => (idx === nextActiveIdx ? { ...c, started_at: nowIso } : c));
+    }
 
     let notifToast = undefined;
     if (ch.done === true && nextActiveIdx !== -1 && nextActiveIdx !== prevActiveIdx) {

@@ -6093,11 +6093,18 @@ async function startServer() {
       assigneeIds = [creatorId];
     }
     const primaryAssigneeId = assigneeIds[0] || null;
-    const cps = normalizedInputCps.map((c: any) =>
-      c && !c.assignee_id && !c.unassigned && primaryAssigneeId
+    const createNowIso = new Date().toISOString();
+    const createFirstActiveIdx = normalizedInputCps.findIndex((c: any) => !c?.done);
+    const cps = normalizedInputCps.map((c: any, idx: number) => {
+      if (!c || typeof c !== "object") return c;
+      const withPic = !c.assignee_id && !c.unassigned && primaryAssigneeId
         ? { ...c, assignee_id: primaryAssigneeId }
-        : c
-    );
+        : c;
+      if (idx === createFirstActiveIdx && !withPic.started_at) {
+        return { ...withPic, started_at: createNowIso };
+      }
+      return withPic;
+    });
     const doneCount = cps.filter((c: any) => c.done).length;
     const progress = cps.length > 0 ? Math.round((doneCount / cps.length) * 100) : (req.body.progress ?? (req.body.status === "done" ? 100 : 0));
 
@@ -6159,8 +6166,9 @@ async function startServer() {
       requestor_ids: reqIds,
       assignee_id: primaryAssigneeId,
       assignee_ids: assigneeIds,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
+      start_date: req.body.start_date || createNowIso.slice(0, 10),
+      created_at: createNowIso,
+      updated_at: createNowIso
     };
     if (t.status === "done") {
       if (!t.completed_at) t.completed_at = t.created_at;
@@ -6414,7 +6422,7 @@ async function startServer() {
         label_ids: resolveLabelIds(item),
         item_type: item.item_type || null,
         link_url: item.link_url || "",
-        start_date: item.start_date || null,
+        start_date: item.start_date || nowIso.slice(0, 10),
         submit_date: item.submit_date || null,
         deadline: item.deadline || new Date(Date.now() + 86400000 * 3).toISOString(),
         created_by: finalReqIds[0] || actorId,
@@ -7161,14 +7169,24 @@ async function startServer() {
             ? (req.body.assignee_id ? [req.body.assignee_id] : [])
             : (Array.isArray(t.assignee_ids) && t.assignee_ids.length ? t.assignee_ids : (t.assignee_id ? [t.assignee_id] : [])));
       const effectivePrimaryAssignee = effectiveTaskAssignees[0] || null;
+      const patchNowIso = new Date().toISOString();
       const newCheckpoints = req.body.checkpoints.map((nc: any) => {
         if (!nc || typeof nc !== "object") return nc;
-        const isNewCp = !oldCheckpoints.some((oc: any) => oc.id === nc.id);
-        if (isNewCp && !nc.assignee_id && !nc.unassigned && effectivePrimaryAssignee) {
-          return { ...nc, assignee_id: effectivePrimaryAssignee };
+        const oldCp = oldCheckpoints.find((oc: any) => oc.id === nc.id);
+        const isNewCp = !oldCp;
+        let updated = nc;
+        if (isNewCp && !updated.assignee_id && !updated.unassigned && effectivePrimaryAssignee) {
+          updated = { ...updated, assignee_id: effectivePrimaryAssignee };
         }
-        return nc;
+        if (updated.done && !oldCp?.done && !updated.done_at) {
+          updated = { ...updated, done_at: patchNowIso };
+        }
+        return updated;
       });
+      const nextActiveStageIdx = newCheckpoints.findIndex((c: any) => c && !c.done);
+      if (nextActiveStageIdx !== -1 && !newCheckpoints[nextActiveStageIdx].started_at) {
+        newCheckpoints[nextActiveStageIdx] = { ...newCheckpoints[nextActiveStageIdx], started_at: patchNowIso };
+      }
       req.body.checkpoints = newCheckpoints;
       if (effectiveTaskAssignees.length === 0 && req.body.assignee_ids === undefined && req.body.assignee_id === undefined) {
         const cpPics = newCheckpoints.map((c: any) => c?.assignee_id).filter(Boolean);
@@ -8053,12 +8071,160 @@ async function startServer() {
     res.json(g);
   });
 
-  // Team Stats Endpoint for MonthlyStats / TeamPerformance
+  // Team Stats Endpoint for MonthlyStats / TeamPerformance (scoped per division board)
   app.get("/api/stats/team", (req, res) => {
+    const reqUser = getReqUser(req) || currentSessionUser;
+    const isSuper = reqUser?.role === "super_admin" || reqUser?.role === "workspace_admin";
+    const userDept = String(reqUser?.department || "").trim().toLowerCase();
     const range = (req.query.range as string) || "7d";
     const now = new Date();
     const todayStr = now.toISOString().slice(0, 10);
     const anchor = (req.query.anchor as string) || todayStr;
+
+    const isCollabBoard = (b: any) => {
+      if (!b) return false;
+      const bd = String(b.department || "").trim().toLowerCase();
+      return Boolean(
+        b.is_collaborative ||
+        b.board_type === "collaborative" ||
+        b.board_type === "project" ||
+        b.project_id ||
+        !bd ||
+        bd === "semua divisi" ||
+        bd === "all" ||
+        bd === "kolaborasi" ||
+        bd === "project" ||
+        b.id === "brd_div_project"
+      );
+    };
+
+    const allBoards = Array.isArray(db.boards) ? db.boards : [];
+    const allDbTasks = Array.isArray(db.tasks) ? db.tasks : [];
+    const allDbUsers = Array.isArray(db.users) ? db.users : [];
+
+    const taskMatchesBoard = (t: any, b: any) => {
+      if (!t || !b) return false;
+      if (t.board_id === b.id) return true;
+      const bDept = String(b.department || "").trim().toLowerCase();
+      const tDept = String(t.department || "").trim().toLowerCase();
+      if (!t.board_id && bDept && tDept && tDept === bDept && !isCollabBoard(b)) return true;
+      return false;
+    };
+
+    const accessibleBoards = allBoards.filter((b: any) => {
+      if (isSuper) return true;
+      const bDept = String(b.department || "").trim().toLowerCase();
+      const isCollab = isCollabBoard(b);
+      const isDeptMember = Boolean(userDept && bDept && bDept === userDept);
+      const isInvited = Boolean(reqUser?.user_id && Array.isArray(b.invited_member_ids) && b.invited_member_ids.includes(reqUser.user_id));
+      const isCollabMember = Boolean(
+        isCollab &&
+        (b.all_workspace_members !== false ||
+          bDept === "semua divisi" ||
+          (reqUser?.user_id && Array.isArray(b.member_ids) && b.member_ids.includes(reqUser.user_id)))
+      );
+      const isCreator = Boolean(reqUser?.user_id && b.created_by === reqUser.user_id);
+      return isDeptMember || isInvited || isCollabMember || isCreator;
+    });
+
+    // Prioritize user's own division board first
+    const orderedBoards = [...accessibleBoards].sort((a: any, b: any) => {
+      const aOwn = userDept && String(a.department || "").trim().toLowerCase() === userDept && !isCollabBoard(a) ? 1 : 0;
+      const bOwn = userDept && String(b.department || "").trim().toLowerCase() === userDept && !isCollabBoard(b) ? 1 : 0;
+      if (bOwn !== aOwn) return bOwn - aOwn;
+      const aCol = isCollabBoard(a) ? 1 : 0;
+      const bCol = isCollabBoard(b) ? 1 : 0;
+      if (aCol !== bCol) return aCol - bCol;
+      return 0;
+    });
+
+    const requestedBoardId = String(req.query.board_id || "").trim();
+    const requestedDept = String(req.query.department || "").trim().toLowerCase();
+
+    let scopeMode: "board" | "all" = "board";
+    let targetBoard: any = null;
+
+    if (requestedBoardId === "all" && isSuper) {
+      scopeMode = "all";
+    } else if (requestedBoardId) {
+      targetBoard = orderedBoards.find((b: any) => b.id === requestedBoardId) || null;
+    } else if (requestedDept) {
+      targetBoard = orderedBoards.find((b: any) => String(b.department || "").trim().toLowerCase() === requestedDept) || null;
+    }
+
+    if (scopeMode === "board" && !targetBoard) {
+      const ownBoard = orderedBoards.find(
+        (b: any) => userDept && String(b.department || "").trim().toLowerCase() === userDept && !isCollabBoard(b)
+      );
+      if (ownBoard) {
+        const ownHasTasks = allDbTasks.some((t: any) => !t.archived && taskMatchesBoard(t, ownBoard));
+        // For Super Admin in Management without active tasks, pick the first active division board so stats immediately show real division load
+        if (isSuper && !ownHasTasks) {
+          targetBoard =
+            orderedBoards.find((b: any) => !isCollabBoard(b) && allDbTasks.some((t: any) => !t.archived && taskMatchesBoard(t, b))) ||
+            ownBoard;
+        } else {
+          targetBoard = ownBoard;
+        }
+      } else {
+        targetBoard =
+          orderedBoards.find((b: any) => allDbTasks.some((t: any) => !t.archived && taskMatchesBoard(t, b))) ||
+          orderedBoards[0] ||
+          null;
+      }
+      if (!targetBoard && isSuper) scopeMode = "all";
+    }
+
+    let scopedTasks: any[];
+    let scopedUsers: any[];
+
+    if (scopeMode === "board" && targetBoard) {
+      scopedTasks = allDbTasks.filter((t: any) => taskMatchesBoard(t, targetBoard));
+      const bDept = String(targetBoard.department || "").trim().toLowerCase();
+      const isCollab = isCollabBoard(targetBoard);
+      const invitedSet = new Set<string>(Array.isArray(targetBoard.invited_member_ids) ? targetBoard.invited_member_ids : []);
+      const explicitMemberSet = new Set<string>(Array.isArray(targetBoard.member_ids) ? targetBoard.member_ids : []);
+      const assignedOnBoardSet = new Set<string>();
+      scopedTasks.forEach((t: any) => {
+        if (t.assignee_id) assignedOnBoardSet.add(t.assignee_id);
+        if (Array.isArray(t.assignee_ids)) t.assignee_ids.forEach((id: string) => id && assignedOnBoardSet.add(id));
+      });
+
+      if (isCollab) {
+        scopedUsers = allDbUsers.filter((u: any) => {
+          if (!u || u.is_bot || u.role === "assistant" || u.user_id === CIRCLE_BOT_ID) return false;
+          if (targetBoard.all_workspace_members !== false) {
+            return assignedOnBoardSet.size > 0
+              ? assignedOnBoardSet.has(u.user_id) || invitedSet.has(u.user_id) || explicitMemberSet.has(u.user_id)
+              : true;
+          }
+          return explicitMemberSet.has(u.user_id) || invitedSet.has(u.user_id) || assignedOnBoardSet.has(u.user_id);
+        });
+      } else {
+        scopedUsers = allDbUsers.filter((u: any) => {
+          if (!u || u.is_bot || u.role === "assistant" || u.user_id === CIRCLE_BOT_ID) return false;
+          const uDept = String(u.department || "").trim().toLowerCase();
+          return (
+            (bDept && uDept === bDept) ||
+            invitedSet.has(u.user_id) ||
+            assignedOnBoardSet.has(u.user_id)
+          );
+        });
+      }
+    } else if (isSuper) {
+      scopeMode = "all";
+      scopedTasks = allDbTasks;
+      scopedUsers = allDbUsers;
+    } else {
+      // Non-admin fallback strictly to user's own department tasks/members
+      scopedTasks = allDbTasks.filter((t: any) =>
+        Boolean(userDept && String(t.department || "").trim().toLowerCase() === userDept)
+      );
+      scopedUsers = allDbUsers.filter(
+        (u: any) => !u.is_bot && u.role !== "assistant" && u.user_id !== CIRCLE_BOT_ID &&
+          (!userDept || String(u.department || "").trim().toLowerCase() === userDept)
+      );
+    }
 
     let week: string[] = [];
     if (range === "4w") {
@@ -8078,27 +8244,25 @@ async function startServer() {
       });
     }
 
-    // Real dynamic task stats
-    const totalTasks = db.tasks.length;
-    const doneTasks = db.tasks.filter((t: any) => t.status === "done" || t.archived);
-    const overdueTasks = db.tasks.filter((t: any) => t.status !== "done" && !t.archived && t.deadline && new Date(t.deadline) < now);
+    // Dynamic task stats scoped strictly to active division / board
+    const totalTasks = scopedTasks.length;
+    const doneTasks = scopedTasks.filter((t: any) => t.status === "done" || t.archived);
+    const overdueTasks = scopedTasks.filter((t: any) => t.status !== "done" && !t.archived && t.deadline && new Date(t.deadline) < now);
 
     const onTimeRate = totalTasks > 0 ? Math.round(((totalTasks - overdueTasks.length) / totalTasks) * 100) : 100;
 
     const dayOfWeek = (now.getDay() + 6) % 7;
     const series = week.map((d, idx) => {
-      // Find tasks completed on this date or matching deadline
-      const matchedDone = db.tasks.filter((t: any) => {
+      const matchedDone = scopedTasks.filter((t: any) => {
         const compDate = (t.completed_at || t.archived_at || "").slice(0, 10);
         return compDate === d && (t.status === "done" || t.archived);
       }).length;
 
-      const matchedOverdue = db.tasks.filter((t: any) => {
+      const matchedOverdue = scopedTasks.filter((t: any) => {
         const deadDate = (t.deadline || "").slice(0, 10);
         return deadDate === d && t.status !== "done" && !t.archived && new Date(t.deadline) < now;
       }).length;
 
-      // Realistic weekly progression for 7d vs daily progression for 4w
       const doneVal = matchedDone > 0 ? matchedDone : (range === "7d" && doneTasks.length > 0 && idx <= dayOfWeek ? Math.max(0, doneTasks.length - Math.max(0, dayOfWeek - idx)) : matchedDone);
       const overdueVal = matchedOverdue;
 
@@ -8112,9 +8276,28 @@ async function startServer() {
       };
     });
 
-    const { people } = computeWorkspaceWorkload(db, now, anchor);
+    const { people } = computeWorkspaceWorkload(db, now, anchor, { tasks: scopedTasks, users: scopedUsers });
+
+    const availableScopes = orderedBoards.map((b: any) => ({
+      board_id: b.id,
+      name: b.name || b.department || "Board",
+      department: b.department || "",
+      color: b.color || "#3B82F6",
+      is_collaborative: isCollabBoard(b),
+      task_count: allDbTasks.filter((t: any) => !t.archived && taskMatchesBoard(t, b)).length
+    }));
 
     res.json({
+      scope: {
+        mode: scopeMode,
+        board_id: scopeMode === "all" ? "all" : (targetBoard?.id || ""),
+        board_name: scopeMode === "all" ? "Semua Divisi" : (targetBoard?.name || targetBoard?.department || reqUser?.department || "Divisi"),
+        department: scopeMode === "all" ? null : (targetBoard?.department || reqUser?.department || null),
+        color: scopeMode === "all" ? null : (targetBoard?.color || null),
+        is_admin: isSuper,
+        total_tasks: totalTasks
+      },
+      available_scopes: availableScopes,
       today: todayStr,
       anchor,
       range,

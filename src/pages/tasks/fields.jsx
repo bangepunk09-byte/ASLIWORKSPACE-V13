@@ -292,7 +292,7 @@ export function LabelPicker({ value = [], onChange, testid = "label-picker" }) {
             </button>); })}
         </div>
         <div className="mt-2 flex items-center gap-1 border-t pt-2">
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Label baru" className="h-8 min-w-0 flex-1 rounded-lg border bg-surface2 px-2 text-xs" data-testid="new-label-input" />
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Label baru" className="h-8 min-w-0 flex-1 rounded-lg border bg-surface2 px-3 text-xs" data-testid="new-label-input" />
           <input type="color" value={color} onChange={(e) => setColor(e.target.value)} className="h-8 w-8 rounded" aria-label="Warna label" />
           <button type="button" onClick={create} disabled={!name.trim()} className="btn-accent h-8 px-2 text-xs disabled:opacity-40" data-testid="create-label-btn">Tambah</button>
         </div>
@@ -735,7 +735,7 @@ export function ListEditor({ items, onChange, placeholder, field = "text", testi
           <button type="button" onClick={() => onChange(items.filter((x) => x.id !== it.id))} className="text-sub" aria-label="Remove"><X size={13} /></button>
         </div>
       ))}
-      <div className="mt-1 flex gap-1"><input value={t} onChange={(e) => setT(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (t.trim()) { onChange([...items, { id: `i${Date.now()}`, [field]: t.trim(), done: false }]); setT(""); } } }} placeholder={placeholder} className="h-9 flex-1 rounded-lg border bg-surface2 px-2 text-sm" />
+      <div className="mt-1 flex gap-1"><input value={t} onChange={(e) => setT(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (t.trim()) { onChange([...items, { id: `i${Date.now()}`, [field]: t.trim(), done: false }]); setT(""); } } }} placeholder={placeholder} className="h-9 flex-1 rounded-lg border bg-surface2 px-3 text-sm" />
         <button type="button" onClick={() => { if (t.trim()) { onChange([...items, { id: `i${Date.now()}`, [field]: t.trim(), done: false }]); setT(""); } }} className="flex h-9 w-9 items-center justify-center rounded-lg border" aria-label="Add"><Plus size={14} /></button></div>
     </div>
   );

@@ -12,6 +12,11 @@ import { getBoardAssigneeScope, getHumanUsers, isBoardCollaborative } from "./bo
 import { CheckpointPresetBar } from "./Checkpoints";
 import { playSound } from "../../lib/sound";
 
+const todayYmd = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
 const blank = (me, d = {}) => {
   const explicitAssignees = Array.isArray(d?.assignee_ids) && d.assignee_ids.length
     ? d.assignee_ids.filter(Boolean)
@@ -25,7 +30,7 @@ const blank = (me, d = {}) => {
     priority: "medium",
     deadline_date: "",
     deadline_time: "",
-    start_date: "",
+    start_date: d?.start_date || todayYmd(),
     project_id: d?.project_id || "",
     department: d?.department || "",
     board_id: d?.board_id || "",
@@ -374,7 +379,7 @@ export default function TaskCreate({ open, onOpenChange, preset, defaults, onCre
         project_id: f.project_id || null,
         deadline: toDeadline(deadline_date, deadline_time),
         deadline_has_time: !!deadline_time,
-        start_date: f.start_date || null,
+        start_date: f.start_date || todayYmd(),
         estimate: f.estimate || null
       });
       toast.success(`Tugas ${data.number_str || ""} berhasil dibuat!`);
@@ -502,6 +507,7 @@ export default function TaskCreate({ open, onOpenChange, preset, defaults, onCre
               />
             </Row>
             <Row label="Prioritas"><PrioritySelect value={f.priority} onChange={set("priority")} testid="task-priority-select" /></Row>
+            <Row label="Tanggal Mulai" hint="Otomatis tgl dibuat"><DatePicker value={f.start_date} onChange={(val) => set("start_date")(val || todayYmd())} placeholder="Otomatis hari ini" className={inp} data-testid="task-start-date-input" /></Row>
             <Row label="Deadline"><div className="flex gap-2"><DatePicker value={f.deadline_date} onChange={set("deadline_date")} placeholder="Pilih tanggal" className={inp} data-testid="task-deadline-input" /><TimePicker value={f.deadline_time} onChange={set("deadline_time")} placeholder="Jam" className={`${inp} w-32 shrink-0`} data-testid="task-deadline-time-input" /></div></Row>
 
             {/* Checkpoints */}

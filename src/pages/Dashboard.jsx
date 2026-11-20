@@ -29,7 +29,8 @@ import {
   ShieldCheck,
   Pin,
   Pencil,
-  StickyNote
+  StickyNote,
+  AlertTriangle
 } from "lucide-react";
 import StickyNotesWidget from "../components/StickyNotesWidget";
 import { toast } from "sonner";
@@ -52,6 +53,7 @@ const DEFAULT_WIDGET_CONFIG = {
     tasks: true,
     messages: true,
     performance: true,
+    bottleneck: true,
     personnel: true,
     drive_directory: true
   },
@@ -704,7 +706,7 @@ export default function Dashboard() {
         {/* ============================================================ */}
         {/* TEAM WORKLOAD & MONTHLY PERFORMANCE SECTION (MOVED TO TOP)   */}
         {/* ============================================================ */}
-        {(widgetLayout.visible.performance !== false || widgetLayout.visible.personnel !== false) && (
+        {(widgetLayout.visible.performance !== false || widgetLayout.visible.bottleneck !== false || widgetLayout.visible.personnel !== false) && (
           <div className="w-full min-w-0">
             <Suspense
               fallback={
@@ -713,7 +715,10 @@ export default function Dashboard() {
             >
               <MonthlyStats
                 showPerformance={widgetLayout.visible.performance !== false}
+                showBottleneck={widgetLayout.visible.bottleneck !== false}
                 showPersonnel={widgetLayout.visible.personnel !== false}
+                tasks={tasks}
+                onOpenTask={setSelectedTaskId}
               />
             </Suspense>
           </div>
@@ -867,10 +872,7 @@ export default function Dashboard() {
                                 <DriveIcon name={s.icon} size={20} />
                               </div>
                               <div className="min-w-0 flex-1">
-                                <div className="flex items-center gap-1.5 min-w-0">
-                                  <h4 className="truncate min-w-0 text-sm sm:text-base font-bold text-ink leading-snug py-0.5">{s.name}</h4>
-                                  {s.pinned && <Pin size={12} className="text-brand shrink-0 fill-current" />}
-                                </div>
+                                <h4 className="truncate min-w-0 text-sm sm:text-base font-bold text-ink leading-snug py-0.5">{s.name}</h4>
                                 <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
                                   <span className="rounded-full bg-surface2 px-2 py-0.5 font-semibold text-sub">
                                     {s.category || "General"}
@@ -883,6 +885,7 @@ export default function Dashboard() {
                                       {s.badge}
                                     </span>
                                   )}
+                                  {s.pinned && <Pin size={12} className="text-brand shrink-0 fill-current" title="Disematkan" />}
                                 </div>
                               </div>
                             </div>
@@ -1127,6 +1130,12 @@ export default function Dashboard() {
                   title: "Performa & Monitoring Bulanan",
                   desc: "Grafik tugas selesai, overdue, dan ketepatan waktu",
                   icon: TrendingUp
+                },
+                {
+                  key: "bottleneck",
+                  title: "Rekap Bottleneck Proyek",
+                  desc: "Ringkasan proyek tersendat, kendala aktif, dan PIC terkait",
+                  icon: AlertTriangle
                 },
                 {
                   key: "personnel",

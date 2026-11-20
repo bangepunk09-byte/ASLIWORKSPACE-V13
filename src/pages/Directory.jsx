@@ -1411,13 +1411,8 @@ export default function Directory() {
                       >
                         <DriveIcon name={s.icon} size={22} />
                       </div>
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <h3 className="truncate font-bold text-ink text-base leading-snug py-0.5">{s.name}</h3>
-                          {s.pinned && (
-                            <Pin size={13} className="text-brand shrink-0 fill-current" title="Disematkan" />
-                          )}
-                        </div>
+                      <div className="min-w-0 flex-1">
+                        <h3 className="truncate font-bold text-ink text-base leading-snug py-0.5">{s.name}</h3>
                         <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
                           <span className="rounded-full bg-surface2 px-2.5 py-0.5 font-semibold text-sub">
                             {s.category || "General"}
@@ -1429,6 +1424,9 @@ export default function Directory() {
                             >
                               {s.badge}
                             </span>
+                          )}
+                          {s.pinned && (
+                            <Pin size={13} className="text-brand shrink-0 fill-current" title="Disematkan" />
                           )}
                         </div>
                       </div>

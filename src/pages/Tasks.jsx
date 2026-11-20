@@ -277,7 +277,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
 
   const [projects, setProjects] = useState({});
   const [saved, setSaved] = useState(params.get("view") || "all");
-  const [view, setView] = useState(params.get("kanban") ? "board" : prefs.task_view || "board");
+  const [view, setView] = useState(params.get("timeline") ? "timeline" : params.get("kanban") ? "board" : prefs.task_view || "board");
   const [f, setF] = useState({ q: "", label: params.get("label") || "", assignee_id: params.get("assignee") || "", priority: "", department: "", item_type: "" });
   const [groupBy, setGroupBy] = useState("none");
   const [selected, setSelected] = useState([]);
@@ -323,6 +323,8 @@ export function TaskWorkspace({ projectId, compactHeader }) {
   const urlAssigneeParam = params.get("assignee") || "";
   const urlBoardParam = params.get("board") || "";
   const urlKanbanParam = params.get("kanban") || "";
+  const urlTimelineParam = params.get("timeline") || "";
+  const urlBottleneckParam = params.get("bottleneck") || "";
   const urlViewParam = params.get("view") || "";
 
   useEffect(() => {
@@ -335,14 +337,16 @@ export function TaskWorkspace({ projectId, compactHeader }) {
       didAutoSelectBoardRef.current = true;
       setBoardId(urlBoardParam);
     }
-    if (urlKanbanParam) {
+    if (urlTimelineParam) {
+      setView("timeline");
+    } else if (urlKanbanParam) {
       setView("board");
     }
     if (urlViewParam === "archive" || urlViewParam === "archived") {
       setView("archive");
       setSaved("archived");
     }
-  }, [urlAssigneeParam, urlBoardParam, urlKanbanParam, urlViewParam]);
+  }, [urlAssigneeParam, urlBoardParam, urlKanbanParam, urlTimelineParam, urlViewParam]);
 
   const isTaskAssignedToMe = useCallback((t, uid) => {
     if (!t || !uid) return false;
@@ -1027,7 +1031,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
             />
           )
           : view === "list" ? <ListView tasks={visibleTasks} projects={projects} boards={boards} projectId={projectId} onOpen={open} selected={selected} setSelected={setSelected} reload={load} onPatchTask={updateTaskLocally} groupBy={groupBy} boardId={boardId} reportMode={reportMode} onReportModeChange={setReportMode} />
-          : view === "timeline" ? <Timeline tasks={visibleTasks} onOpen={open} /> : <Calendar tasks={visibleTasks} onOpen={open} />}
+          : view === "timeline" ? <Timeline tasks={visibleTasks} onOpen={open} onPatchTask={updateTaskLocally} reload={load} initialFilterMode={urlBottleneckParam ? "bottleneck" : "all"} /> : <Calendar tasks={visibleTasks} onOpen={open} />}
         </div>
 
       {/* Import Target Division/Board Modal (Super Admin Only) */}

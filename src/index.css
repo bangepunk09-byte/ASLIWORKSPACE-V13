@@ -78,13 +78,20 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, [contentedita
   --tw-ring-offset-color: transparent !important;
 }
 
-/* UNIFIED SHAPE SYSTEM: All single-line inputs, selects, buttons, chips, and cards align to Kapsul / Membulat / Tegas */
-input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]),
+/* UNIFIED SHAPE SYSTEM: Apply --input-radius ONLY to boxed/bordered inputs & selects so borderless/transparent inline inputs never clip the caret or text on the left */
+input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]):not(.bg-transparent):not(.border-0):not(.border-none):not(.rounded-none),
+input.border.bg-transparent:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]):not(.rounded-none),
 select {
   border-radius: var(--input-radius) !important;
 }
 
-textarea {
+input.bg-transparent:not(.border):not(.rounded-md):not(.rounded-lg):not(.rounded-xl),
+textarea.bg-transparent:not(.border):not(.rounded-md):not(.rounded-lg):not(.rounded-xl) {
+  border-radius: 0 !important;
+}
+
+textarea:not(.bg-transparent):not(.border-0):not(.border-none):not(.rounded-none),
+textarea.border.bg-transparent:not(.rounded-none) {
   border-radius: var(--radius) !important;
 }
 
@@ -251,6 +258,27 @@ html[data-shape="sharp"] .rounded-md {
 }
 .animate-accordion-up {
   animation: accordion-up 220ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes post-popup-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(-14px) scale(0.94);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(2px) scale(1.012);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-post-popup {
+  animation: post-popup-enter 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  transform-origin: top center;
+  will-change: transform, opacity;
 }
 
 .glass { background: color-mix(in srgb, var(--c-surface) 82%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }

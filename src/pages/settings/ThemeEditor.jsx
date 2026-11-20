@@ -152,7 +152,7 @@ export default function ThemeEditor({ scope }) {
               <input
                 value={tokens[k]}
                 onChange={(e) => setTok(k, e.target.value)}
-                className={`mt-0.5 h-7 w-full border bg-surface px-2 font-mono text-xs ${
+                className={`mt-0.5 h-7 w-full border bg-surface px-3 font-mono text-xs ${
                   isHex(tokens[k]) ? "" : "border-rose-400"
                 }`}
                 data-testid={`theme-hex-${k}`}

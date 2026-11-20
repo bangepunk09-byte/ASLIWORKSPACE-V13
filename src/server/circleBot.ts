@@ -75,11 +75,16 @@ export interface PersonWorkload {
   more: number;
 }
 
-export function computeWorkspaceWorkload(db: Record<string, any>, now = new Date(), anchor?: string) {
+export function computeWorkspaceWorkload(
+  db: Record<string, any>,
+  now = new Date(),
+  anchor?: string,
+  options?: { tasks?: any[]; users?: any[] }
+) {
   const todayStr = now.toISOString().slice(0, 10);
   const effectiveAnchor = anchor || todayStr;
-  const allTasks = Array.isArray(db.tasks) ? db.tasks : [];
-  const allUsers = Array.isArray(db.users) ? db.users : [];
+  const allTasks = Array.isArray(options?.tasks) ? options.tasks : (Array.isArray(db.tasks) ? db.tasks : []);
+  const allUsers = Array.isArray(options?.users) ? options.users : (Array.isArray(db.users) ? db.users : []);
   const activeTasksTotal = allTasks.filter((t: any) => t.status !== "done" && !t.archived).length;
   const todayWibIdx = getWibDayIndex(now);
 

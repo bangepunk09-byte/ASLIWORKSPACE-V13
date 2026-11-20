@@ -1769,7 +1769,7 @@ export function LabelsAdmin() {
       <div className="divide-y">{labels.map((l) => (
         <div key={l.id} className="flex flex-wrap items-center gap-2 py-2" data-testid={`label-row-${l.id}`}>
           <input type="color" value={l.color} disabled={!isManager} onChange={(e) => run(() => api.patch(`/labels/${l.id}`, { color: e.target.value })).then(reloadLabels)} className="h-8 w-8" aria-label="Warna label" data-testid={`label-color-${l.id}`} />
-          <input defaultValue={l.name} disabled={!isManager} onBlur={(e) => e.target.value !== l.name && run(() => api.patch(`/labels/${l.id}`, { name: e.target.value }), "Nama label diperbarui").then(reloadLabels)} className="h-9 w-40 rounded-lg border bg-surface2 px-2 text-sm" data-testid={`label-name-${l.id}`} />
+          <input defaultValue={l.name} disabled={!isManager} onBlur={(e) => e.target.value !== l.name && run(() => api.patch(`/labels/${l.id}`, { name: e.target.value }), "Nama label diperbarui").then(reloadLabels)} className="h-9 w-40 rounded-lg border bg-surface2 px-3 text-sm" data-testid={`label-name-${l.id}`} />
           <LabelChip label={l} small /><span className="flex-1 truncate text-xs text-sub">{l.description}</span>
           {isManager && <><button onClick={() => run(() => api.patch(`/labels/${l.id}`, { archived: !l.archived }), l.archived ? "Label dipulihkan" : "Label diarsipkan").then(reloadLabels)} className="text-xs font-semibold text-sub" data-testid={`label-archive-${l.id}`}>{l.archived ? "Pulihkan" : "Arsipkan"}</button>
             <button onClick={() => run(() => api.delete(`/labels/${l.id}`), "Label dihapus").then(reloadLabels)} className="text-rose-500" aria-label="Hapus label" data-testid={`label-delete-${l.id}`}><Trash2 size={14} /></button></>}
@@ -1820,9 +1820,9 @@ export function ProfileFieldsAdmin() {
       <p className="mb-2 text-xs font-semibold text-sub">Kolom kustom</p>
       <div className="space-y-2">{fields.map((f, i) => (
         <div key={f.key || i} className="flex flex-wrap items-center gap-2 rounded-xl border p-2">
-          <input value={f.name} onChange={(e) => upd(i, { name: e.target.value })} className="h-9 flex-1 rounded-lg border bg-surface2 px-2 text-sm" data-testid={`cf-name-${i}`} />
+          <input value={f.name} onChange={(e) => upd(i, { name: e.target.value })} className="h-9 flex-1 rounded-lg border bg-surface2 px-3 text-sm" data-testid={`cf-name-${i}`} />
           <AppSelect value={f.type} onChange={(e) => upd(i, { type: e.target.value })} className="h-9 rounded-xl border bg-surface2 px-3 text-xs font-medium">{TYPES.map((t) => <option key={t} value={t}>{t.replace("_", " ")}</option>)}</AppSelect>
-          {["dropdown", "multi_select"].includes(f.type) && <input defaultValue={(f.options || []).join(", ")} onBlur={(e) => upd(i, { options: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) })} placeholder="Opsi, pisahkan dengan koma" className="h-9 rounded-lg border bg-surface2 px-2 text-xs" />}
+          {["dropdown", "multi_select"].includes(f.type) && <input defaultValue={(f.options || []).join(", ")} onBlur={(e) => upd(i, { options: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) })} placeholder="Opsi, pisahkan dengan koma" className="h-9 rounded-lg border bg-surface2 px-3 text-xs" />}
           <V value={f.visibility} onChange={(v) => upd(i, { visibility: v })} />
           <button type="button" disabled={!i} onClick={() => mv(i, -1)} className="text-sub disabled:opacity-30" aria-label="Geser ke atas"><ArrowUp size={14} /></button>
           <button type="button" onClick={() => setFields(fields.filter((_, j) => j !== i))} className="text-rose-500" aria-label="Hapus kolom"><Trash2 size={14} /></button>
