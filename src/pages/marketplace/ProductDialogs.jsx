@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { api, errMsg, uploadFile } from "../../lib/api";
+import { upsertConversationInCache } from "../../lib/workspaceCaches";
 import { Avatar } from "../../components/common";
 import {
   Dialog,
@@ -89,6 +90,7 @@ export function ProductDetailDialog({
     setChatBusy(true);
     try {
       const { data } = await api.post("/conversations/dm", { user_id: item.seller_id });
+      if (data?.id) upsertConversationInCache(data, me?.user_id);
       onClose();
       navigate(`/messages/${data.id}`);
     } catch (e) {

@@ -4,10 +4,11 @@ import { Users, Search, MessageCircle, MapPin, Briefcase, Mail } from "lucide-re
 import { toast } from "sonner";
 import { useApp } from "../context/AppContext";
 import { api, errMsg } from "../lib/api";
+import { upsertConversationInCache } from "../lib/workspaceCaches";
 import { Avatar, PageHeader, Empty, getAvailabilityStatusMeta, VerifiedBadge } from "../components/common";
 
 export default function Employees() {
-  const { users, online, t } = useApp();
+  const { me, users, online, t } = useApp();
   const [q, setQ] = useState("");
   const [sel, setSel] = useState([]);
   const dmBusyRef = useRef(false);
@@ -39,7 +40,10 @@ export default function Employees() {
     dmBusyRef.current = true;
     try {
       const { data } = await api.post("/conversations/dm", { user_id: uid });
-      if (data?.id) navigate(`/messages/${data.id}`);
+      if (data?.id) {
+        upsertConversationInCache(data, me?.user_id);
+        navigate(`/messages/${data.id}`);
+      }
     } catch (e) {
       toast.error(errMsg(e, "Gagal membuka obrolan"));
     } finally {

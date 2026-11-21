@@ -7,6 +7,7 @@ import { api, errMsg, fileUrl, uploadFile } from "../lib/api";
 import { Avatar, Spinner, rel, AccentButton, GhostButton, getAvailabilityStatusMeta, VerifiedBadge, MentionText } from "../components/common";
 import { getProfileCompletion } from "../lib/profileCompletion";
 import { upsertAccountInVault } from "../lib/persistentMirror";
+import { upsertConversationInCache } from "../lib/workspaceCaches";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { AppSelect } from "../components/ui/select";
 import { DatePicker } from "../components/ui/date-picker";
@@ -595,7 +596,10 @@ export default function Profile() {
     setDmBusy(true);
     try {
       const { data } = await api.post("/conversations/dm", { user_id: uid });
-      if (data?.id) navigate(`/messages/${data.id}`);
+      if (data?.id) {
+        upsertConversationInCache(data, me?.user_id);
+        navigate(`/messages/${data.id}`);
+      }
     } catch (e) {
       toast.error(errMsg(e, "Gagal membuka pesan"));
     } finally {

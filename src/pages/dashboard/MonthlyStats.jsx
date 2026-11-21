@@ -5,6 +5,7 @@ import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, Cart
 import { toast } from "sonner";
 import { useApp } from "../../context/AppContext";
 import { api, errMsg } from "../../lib/api";
+import { upsertConversationInCache } from "../../lib/workspaceCaches";
 import { Avatar, AvatarStack, LabelChip } from "../../components/common";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../../components/ui/dropdown-menu";
 import { analyzeTaskFlow, toDayDate } from "../tasks/timelineFlow";
@@ -237,7 +238,7 @@ function TeamPerformance({ data, anchor, setAnchor, range, setRange, scopeLabel,
 }
 
 function PersonCard({ p, boardId, className = "" }) {
-  const { userMap, t: tr } = useApp();
+  const { me, userMap, t: tr } = useApp();
   const navigate = useNavigate();
   const usr = userMap?.[p.user_id];
   const [emo, lbl, cls] = STATUS[p.status] || STATUS.optimal;
@@ -255,7 +256,10 @@ function PersonCard({ p, boardId, className = "" }) {
     setDmBusy(true);
     try {
       const { data } = await api.post("/conversations/dm", { user_id: p.user_id });
-      if (data?.id) navigate(`/messages/${data.id}`);
+      if (data?.id) {
+        upsertConversationInCache(data, me?.user_id);
+        navigate(`/messages/${data.id}`);
+      }
     } catch (e) {
       toast.error(errMsg(e, "Gagal membuka obrolan"));
     } finally {

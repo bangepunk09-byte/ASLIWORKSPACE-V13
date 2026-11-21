@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Search, PanelRight, BellOff, Bell, X, Pin, FileText, CheckSquare, UserPlus, MailPlus, Lock, LogOut, Archive, Trash2, Shield, MapPin, ShieldCheck, Sparkles, Check } from "lucide-react";
 import { toast } from "sonner";
@@ -38,6 +38,72 @@ export {
   appendMessageToCache,
   updateMessageInCache,
 };
+
+const PREFETCH_TIMESTAMPS = new Map();
+export function prefetchConversation(cid) {
+  if (!cid) return;
+  const now = Date.now();
+  const lastAt = PREFETCH_TIMESTAMPS.get(cid) || 0;
+  if (now - lastAt < 8000) return;
+  if (CHAT_CACHE[`msgs_${cid}`] && CHAT_CACHE[`conv_${cid}`] && now - lastAt < 25000) return;
+  PREFETCH_TIMESTAMPS.set(cid, now);
+  if (!CHAT_CACHE[`msgs_${cid}`]) {
+    api.get(`/conversations/${cid}/messages`).then((r) => {
+      const arr = Array.isArray(r.data) ? r.data : null;
+      if (arr) {
+        arr.forEach((m) => { if (m?.poll) seedPollCache(m.poll); });
+        CHAT_CACHE[`msgs_${cid}`] = arr;
+        setTimeout(() => {
+          try { localStorage.setItem(`circle_msgs_cache_${cid}`, JSON.stringify(arr)); } catch {}
+        }, 0);
+      }
+    }).catch(() => {});
+  }
+}
+
+function writeMsgsCacheDeferred(cid, arr) {
+  if (!cid || !Array.isArray(arr)) return;
+  CHAT_CACHE[`msgs_${cid}`] = arr;
+  setTimeout(() => {
+    try { localStorage.setItem(`circle_msgs_cache_${cid}`, JSON.stringify(arr)); } catch {}
+  }, 0);
+}
+
+function areMessagesEquivalent(a, b) {
+  if (a === b) return true;
+  if (!Array.isArray(a) || !Array.isArray(b)) return false;
+  if (a.length !== b.length) return false;
+  if (a.length === 0) return true;
+  const step = a.length > 20 ? Math.max(1, Math.floor(a.length / 20)) : 1;
+  for (let i = 0; i < a.length; i += step) {
+    const x = a[i];
+    const y = b[i];
+    if (!x || !y) return false;
+    if (
+      x.id !== y.id ||
+      x.text !== y.text ||
+      x.edited !== y.edited ||
+      x.deleted !== y.deleted ||
+      x.pinned !== y.pinned ||
+      x.updated_at !== y.updated_at ||
+      x.sticky_note?.progress !== y.sticky_note?.progress ||
+      x.poll?.total_votes !== y.poll?.total_votes ||
+      JSON.stringify(x.reactions || null) !== JSON.stringify(y.reactions || null)
+    ) {
+      return false;
+    }
+  }
+  const lastA = a[a.length - 1];
+  const lastB = b[b.length - 1];
+  return (
+    lastA?.id === lastB?.id &&
+    lastA?.text === lastB?.text &&
+    lastA?.edited === lastB?.edited &&
+    lastA?.deleted === lastB?.deleted &&
+    lastA?.pinned === lastB?.pinned &&
+    lastA?.sticky_note?.progress === lastB?.sticky_note?.progress
+  );
+}
 
 const CIRCLE_QUICK_PROMPTS = [
   { label: "Morning Brief", prompt: "/morning-brief" },
@@ -363,7 +429,12 @@ function Panel({ conv, reload, onClose, onLeft }) {
 
 
 
-const getInitialConv = (cid, me) => {
+const getInitialConv = (cid, me, hint = null) => {
+  if (hint && hint.id === cid) {
+    const merged = { ...(CHAT_CACHE[`conv_${cid}`] || {}), ...hint };
+    CHAT_CACHE[`conv_${cid}`] = merged;
+    return merged;
+  }
   if (CHAT_CACHE[`conv_${cid}`]) return CHAT_CACHE[`conv_${cid}`];
   try {
     const uid = me?.user_id;
@@ -382,9 +453,10 @@ const getInitialConv = (cid, me) => {
       }
     }
   } catch {}
-  
-  const isOfficial = cid.startsWith("group_official_");
-  let name = "Obrolan";
+
+  const isOfficial = String(cid || "").startsWith("group_official_");
+  const isCircleId = String(cid || "").startsWith("conv_circle_");
+  let name = isCircleId ? "Circle" : "";
   if (isOfficial) {
     name = cid.replace("group_official_", "");
     name = name.charAt(0).toUpperCase() + name.slice(1);
@@ -394,8 +466,8 @@ const getInitialConv = (cid, me) => {
     id: cid,
     type: isOfficial ? "group" : "dm",
     group_type: isOfficial ? "department" : undefined,
-    name: name,
-    member_ids: isOfficial ? [] : ["user_circle_assistant", me?.user_id].filter(Boolean),
+    name,
+    member_ids: isCircleId ? ["user_circle_assistant", me?.user_id].filter(Boolean) : [],
     admin_ids: [],
     unread: 0,
     is_verified: isOfficial,
@@ -406,9 +478,9 @@ const getInitialConv = (cid, me) => {
 
 
 
-export default function ChatView({ cid, onChange, onRead, onLeft }) {
+export default function ChatView({ cid, initialConv = null, onChange, onRead, onLeft }) {
   const { me, ws, userMap, subscribe, online, t: tr } = useApp();
-  const [conv, setConv] = useState(() => getInitialConv(cid, me));
+  const [conv, setConv] = useState(() => getInitialConv(cid, me, initialConv));
   const [msgs, setMsgs] = useState(() => getInitialMsgs(cid));
   const [more, setMore] = useState(false);
   const [reply, setReply] = useState(null);
@@ -420,41 +492,43 @@ export default function ChatView({ cid, onChange, onRead, onLeft }) {
   const [featureHubOpen, setFeatureHubOpen] = useState(false);
   const [search, setSearch] = useState(null);
   const [results, setResults] = useState([]);
-  const prevCid = useRef(cid);
+  const activeCidRef = useRef(cid);
+  activeCidRef.current = cid;
+  const onReadRef = useRef(onRead);
+  onReadRef.current = onRead;
+  const onLeftRef = useRef(onLeft);
+  onLeftRef.current = onLeft;
   const bottom = useRef(null);
   const scroller = useRef(null);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
-  // Synchronously swap state on cid change during render so there is 0ms lag between conversations
-  if (prevCid.current !== cid) {
-    prevCid.current = cid;
-    const nextConv = getInitialConv(cid, me);
-    const nextMsgs = getInitialMsgs(cid);
-    setConv(nextConv);
-    setMsgs(nextMsgs);
-    setReply(null);
-  }
+  const loadConv = useCallback((signal) => {
+    const targetCid = cid;
+    return api.get(`/conversations/${targetCid}`, signal ? { signal } : undefined).then((r) => {
+      if (activeCidRef.current !== targetCid) return;
+      if (r.data) {
+        setConv(r.data);
+        CHAT_CACHE[`conv_${targetCid}`] = r.data;
+      }
+    }).catch((err) => {
+      if (err?.code === "ERR_CANCELED" || err?.name === "CanceledError" || err?.name === "AbortError") return;
+      if (activeCidRef.current !== targetCid) return;
+      if (err?.response?.status === 404) {
+        delete CHAT_CACHE[`conv_${targetCid}`];
+        navigate("/messages", { replace: true });
+      }
+    });
+  }, [cid, navigate]);
 
-  const loadConv = () => api.get(`/conversations/${cid}`).then((r) => {
-    if (r.data) {
-      setConv(r.data);
-      CHAT_CACHE[`conv_${cid}`] = r.data;
+  const markRead = useCallback(() => {
+    const targetCid = cid;
+    if (CHAT_CACHE[`conv_${targetCid}`]) {
+      CHAT_CACHE[`conv_${targetCid}`].unread = 0;
     }
-  }).catch((err) => {
-    if (err?.response?.status === 404) {
-      delete CHAT_CACHE[`conv_${cid}`];
-      navigate("/messages", { replace: true });
-    }
-  });
-
-  const markRead = () => {
-    if (CHAT_CACHE[`conv_${cid}`]) {
-      CHAT_CACHE[`conv_${cid}`].unread = 0;
-    }
-    onRead?.(cid);
-    api.post(`/conversations/${cid}/read`).catch(() => {});
-  };
+    onReadRef.current?.(targetCid);
+    api.post(`/conversations/${targetCid}/read`).catch(() => {});
+  }, [cid]);
 
   const acceptInvite = async () => {
     try {
@@ -528,34 +602,57 @@ export default function ChatView({ cid, onChange, onRead, onLeft }) {
     }
   };
 
+  useLayoutEffect(() => {
+    if (scroller.current) {
+      scroller.current.scrollTop = scroller.current.scrollHeight;
+    }
+  }, [cid]);
+
   useEffect(() => {
-    const initialConv = getInitialConv(cid, me);
-    const initialMsgs = getInitialMsgs(cid);
-    setConv(initialConv);
-    setMsgs(initialMsgs);
-    requestAnimationFrame(() => bottom.current?.scrollIntoView());
+    const controller = new AbortController();
+    let cancelled = false;
+    const targetCid = cid;
+    const initialConvData = getInitialConv(targetCid, me, initialConv);
+    const initialMsgs = getInitialMsgs(targetCid);
+    setConv((prev) => (prev?.id === targetCid ? prev : initialConvData));
+    setMsgs((prev) => (areMessagesEquivalent(prev, initialMsgs) ? prev : initialMsgs));
     markRead();
-    loadConv();
-    api.get(`/conversations/${cid}/messages`).then((r) => {
+    loadConv(controller.signal);
+
+    api.get(`/conversations/${targetCid}/messages`, { signal: controller.signal }).then((r) => {
+      if (cancelled || activeCidRef.current !== targetCid) return;
       const arr = Array.isArray(r.data) ? r.data : [];
       if (arr.length === 0 && initialMsgs.length > 0 && !hasCompletedInitialHydrate()) {
         rehydrateIfServerRestarted(api).catch(() => {});
         return;
       }
       arr.forEach((m) => { if (m?.poll) seedPollCache(m.poll); });
-      const hadCount = initialMsgs.length;
-      setMsgs(arr);
-      CHAT_CACHE[`msgs_${cid}`] = arr;
-      try { localStorage.setItem(`circle_msgs_cache_${cid}`, JSON.stringify(arr)); } catch {}
+      writeMsgsCacheDeferred(targetCid, arr);
       setMore(arr.length >= 50);
-      if (arr.length !== hadCount) {
-        requestAnimationFrame(() => bottom.current?.scrollIntoView());
+      let updated = false;
+      setMsgs((prev) => {
+        if (areMessagesEquivalent(prev, arr)) return prev;
+        updated = true;
+        return arr;
+      });
+      if (updated) {
+        requestAnimationFrame(() => {
+          if (!cancelled && scroller.current) {
+            scroller.current.scrollTop = scroller.current.scrollHeight;
+          }
+        });
       }
     }).catch((err) => {
-      if (err?.response?.status === 403) {
+      if (cancelled || err?.code === "ERR_CANCELED" || err?.name === "CanceledError" || err?.name === "AbortError") return;
+      if (err?.response?.status === 403 && activeCidRef.current === targetCid) {
         setMsgs([]);
       }
     });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
   }, [cid, me?.user_id]); // eslint-disable-line
 
   useEffect(() => {
@@ -616,7 +713,7 @@ export default function ChatView({ cid, onChange, onRead, onLeft }) {
         removeGroupFromCache(cid, me?.user_id);
         setPanel(false);
         setMobilePanel(false);
-        onLeft?.(cid);
+        onLeftRef.current?.(cid);
         navigate("/messages", { replace: true });
         return;
       }
@@ -652,8 +749,7 @@ export default function ChatView({ cid, onChange, onRead, onLeft }) {
         const next = optIdx !== -1
           ? arr.map((y, idx) => (idx === optIdx ? d : y))
           : [...arr, d];
-        CHAT_CACHE[`msgs_${cid}`] = next;
-        try { localStorage.setItem(`circle_msgs_cache_${cid}`, JSON.stringify(next)); } catch {}
+        writeMsgsCacheDeferred(cid, next);
         return next;
       });
       setTyping((t) => ({ ...t, [d.sender_id]: 0 }));
@@ -666,8 +762,7 @@ export default function ChatView({ cid, onChange, onRead, onLeft }) {
     if (e.type === "message:update" && d?.conversation_id === cid) {
       setMsgs((x) => {
         const arr = (Array.isArray(x) ? x : []).map((y) => (y.id === d.id ? d : y));
-        CHAT_CACHE[`msgs_${cid}`] = arr;
-        try { localStorage.setItem(`circle_msgs_cache_${cid}`, JSON.stringify(arr)); } catch {}
+        writeMsgsCacheDeferred(cid, arr);
         return arr;
       });
       if (d?.pinned !== undefined) loadConv();
@@ -751,8 +846,7 @@ export default function ChatView({ cid, onChange, onRead, onLeft }) {
       } else {
         next = arr.some((y) => y.id === m.id) ? arr : [...arr, m];
       }
-      CHAT_CACHE[`msgs_${cid}`] = next;
-      try { localStorage.setItem(`circle_msgs_cache_${cid}`, JSON.stringify(next)); } catch {}
+      writeMsgsCacheDeferred(cid, next);
       return next;
     });
     if (m !== null) {

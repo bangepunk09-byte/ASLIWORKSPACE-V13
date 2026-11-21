@@ -12,11 +12,56 @@ export function seedPollCache(poll) {
 // ---- Chat / Conversations Cache ----
 export const CHAT_CACHE = {};
 
+const pendingStorageWrites = new Map();
+let storageFlushTimer = null;
+
+function flushPendingStorageWrites() {
+  storageFlushTimer = null;
+  if (typeof localStorage === "undefined") {
+    pendingStorageWrites.clear();
+    return;
+  }
+  pendingStorageWrites.forEach((value, key) => {
+    try {
+      if (value === null) localStorage.removeItem(key);
+      else localStorage.setItem(key, value);
+    } catch {}
+  });
+  pendingStorageWrites.clear();
+}
+
+function scheduleStorageWrite(key, serializedValue) {
+  if (!key) return;
+  pendingStorageWrites.set(key, serializedValue);
+  if (!storageFlushTimer) {
+    storageFlushTimer = setTimeout(flushPendingStorageWrites, 0);
+  }
+}
+
+function stripMessagesFromConv(conv) {
+  if (!conv || typeof conv !== "object") return conv;
+  if (!("messages" in conv)) return conv;
+  const { messages: _omitted, ...rest } = conv;
+  return rest;
+}
+
+export function saveConversationListCache(convs, userId) {
+  if (!Array.isArray(convs)) return;
+  if (convs.length === 0 && !hasCompletedInitialHydrate()) return;
+  const slim = convs.map(stripMessagesFromConv);
+  try {
+    const serialized = JSON.stringify(slim);
+    if (userId) scheduleStorageWrite(`circle_convs_cache_${userId}`, serialized);
+    scheduleStorageWrite("circle_convs_cache", serialized);
+  } catch {}
+}
+
 export function clearChatCache() {
   Object.keys(CHAT_CACHE).forEach((k) => delete CHAT_CACHE[k]);
 }
 
 export function getInitialMsgs(cid) {
+  if (!cid) return [];
   if (CHAT_CACHE[`msgs_${cid}`]) return CHAT_CACHE[`msgs_${cid}`];
   try {
     const saved = localStorage.getItem(`circle_msgs_cache_${cid}`);
@@ -42,18 +87,9 @@ export function getInitialMsgs(cid) {
 
 export function hydrateConversationsCache(convs, userId) {
   if (!Array.isArray(convs)) return;
-  try {
-    if (convs.length > 0 || hasCompletedInitialHydrate()) {
-      const serialized = JSON.stringify(convs);
-      if (userId) {
-        localStorage.setItem(`circle_convs_cache_${userId}`, serialized);
-      }
-      localStorage.setItem("circle_convs_cache", serialized);
-    }
-  } catch {}
   convs.forEach((c) => {
     if (!c || !c.id) return;
-    CHAT_CACHE[`conv_${c.id}`] = c;
+    CHAT_CACHE[`conv_${c.id}`] = stripMessagesFromConv(c);
     if (Array.isArray(c.messages)) {
       if (c.messages.length === 0 && !hasCompletedInitialHydrate()) {
         const existing = getInitialMsgs(c.id);
@@ -61,28 +97,36 @@ export function hydrateConversationsCache(convs, userId) {
       }
       CHAT_CACHE[`msgs_${c.id}`] = c.messages;
       try {
-        localStorage.setItem(`circle_msgs_cache_${c.id}`, JSON.stringify(c.messages));
+        scheduleStorageWrite(`circle_msgs_cache_${c.id}`, JSON.stringify(c.messages));
       } catch {}
     }
   });
+  saveConversationListCache(convs, userId);
 }
 
 export function upsertConversationInCache(conv, userId) {
   if (!conv || !conv.id) return;
-  const merged = { ...(CHAT_CACHE[`conv_${conv.id}`] || {}), ...conv };
+  const slimConv = stripMessagesFromConv(conv);
+  const merged = { ...(CHAT_CACHE[`conv_${conv.id}`] || {}), ...slimConv };
   CHAT_CACHE[`conv_${conv.id}`] = merged;
+  if (Array.isArray(conv.messages) && conv.messages.length > 0) {
+    CHAT_CACHE[`msgs_${conv.id}`] = conv.messages;
+    try {
+      scheduleStorageWrite(`circle_msgs_cache_${conv.id}`, JSON.stringify(conv.messages));
+    } catch {}
+  }
   try {
     const key = userId ? `circle_convs_cache_${userId}` : "circle_convs_cache";
-    const raw = localStorage.getItem(key) || localStorage.getItem("circle_convs_cache");
+    const raw = pendingStorageWrites.get(key) || localStorage.getItem(key) || localStorage.getItem("circle_convs_cache");
     const list = raw ? JSON.parse(raw) : [];
     if (Array.isArray(list)) {
       const idx = list.findIndex((c) => c && c.id === conv.id);
       const next = idx !== -1
-        ? list.map((c, i) => (i === idx ? { ...c, ...merged } : c))
-        : [merged, ...list];
+        ? list.map((c, i) => (i === idx ? stripMessagesFromConv({ ...c, ...merged }) : stripMessagesFromConv(c)))
+        : [merged, ...list.map(stripMessagesFromConv)];
       const serialized = JSON.stringify(next);
-      if (userId) localStorage.setItem(`circle_convs_cache_${userId}`, serialized);
-      localStorage.setItem("circle_convs_cache", serialized);
+      if (userId) scheduleStorageWrite(`circle_convs_cache_${userId}`, serialized);
+      scheduleStorageWrite("circle_convs_cache", serialized);
     }
   } catch {}
 }
@@ -92,15 +136,18 @@ export function removeConversationFromCache(convId, userId) {
   delete CHAT_CACHE[`conv_${convId}`];
   delete CHAT_CACHE[`msgs_${convId}`];
   try {
+    scheduleStorageWrite(`circle_msgs_cache_${convId}`, null);
     localStorage.removeItem(`circle_msgs_cache_${convId}`);
     const keys = [userId ? `circle_convs_cache_${userId}` : null, "circle_convs_cache"].filter(Boolean);
     keys.forEach((key) => {
-      const raw = localStorage.getItem(key);
+      const raw = pendingStorageWrites.get(key) || localStorage.getItem(key);
       if (!raw) return;
       const list = JSON.parse(raw);
       if (Array.isArray(list)) {
         const next = list.filter((c) => c && c.id !== convId);
-        localStorage.setItem(key, JSON.stringify(next));
+        const serialized = JSON.stringify(next);
+        localStorage.setItem(key, serialized);
+        pendingStorageWrites.delete(key);
       }
     });
   } catch {}
@@ -112,25 +159,26 @@ export function clearConversationMessagesCache(convId, userId) {
   if (CHAT_CACHE[`conv_${convId}`]) {
     CHAT_CACHE[`conv_${convId}`] = {
       ...CHAT_CACHE[`conv_${convId}`],
-      messages: [],
       last_message_preview: "",
       unread: 0,
     };
   }
   try {
     localStorage.setItem(`circle_msgs_cache_${convId}`, "[]");
+    pendingStorageWrites.delete(`circle_msgs_cache_${convId}`);
     const keys = [userId ? `circle_convs_cache_${userId}` : null, "circle_convs_cache"].filter(Boolean);
     keys.forEach((key) => {
-      const raw = localStorage.getItem(key);
+      const raw = pendingStorageWrites.get(key) || localStorage.getItem(key);
       if (!raw) return;
       const list = JSON.parse(raw);
       if (Array.isArray(list)) {
         const next = list.map((c) =>
           c && c.id === convId
-            ? { ...c, messages: [], last_message_preview: "", unread: 0 }
-            : c
+            ? { ...stripMessagesFromConv(c), last_message_preview: "", unread: 0 }
+            : stripMessagesFromConv(c)
         );
         localStorage.setItem(key, JSON.stringify(next));
+        pendingStorageWrites.delete(key);
       }
     });
   } catch {}
@@ -146,7 +194,7 @@ export function appendMessageToCache(msg) {
     : [...existing, msg];
   CHAT_CACHE[`msgs_${cid}`] = next;
   try {
-    localStorage.setItem(`circle_msgs_cache_${cid}`, JSON.stringify(next));
+    scheduleStorageWrite(`circle_msgs_cache_${cid}`, JSON.stringify(next));
   } catch {}
 }
 
@@ -157,7 +205,7 @@ export function updateMessageInCache(msg) {
   const next = existing.map((m) => (m.id === msg.id ? msg : m));
   CHAT_CACHE[`msgs_${cid}`] = next;
   try {
-    localStorage.setItem(`circle_msgs_cache_${cid}`, JSON.stringify(next));
+    scheduleStorageWrite(`circle_msgs_cache_${cid}`, JSON.stringify(next));
   } catch {}
 }
 

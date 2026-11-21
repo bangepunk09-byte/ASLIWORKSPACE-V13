@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Plus, Search, MessageCircle, ShieldCheck, Trash2, LogOut, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
@@ -7,8 +7,36 @@ import { api, errMsg } from "../lib/api";
 import { playSound } from "../lib/sound";
 import { Avatar, Empty, fmtTime, GroupIcon } from "../components/common";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../components/ui/dialog";
-import ChatView, { hydrateConversationsCache, upsertConversationInCache, appendMessageToCache, updateMessageInCache } from "./chat/ChatView";
-import { removeConversationFromCache, clearConversationMessagesCache, removeGroupFromCache } from "../lib/workspaceCaches";
+import ChatView, { hydrateConversationsCache, upsertConversationInCache, appendMessageToCache, updateMessageInCache, prefetchConversation } from "./chat/ChatView";
+import { removeConversationFromCache, clearConversationMessagesCache, removeGroupFromCache, saveConversationListCache } from "../lib/workspaceCaches";
+
+const ConversationRow = memo(function ConversationRow({ c, active, onSelect, onContextMenu, emptyLabel }) {
+  return (
+    <button
+      onClick={() => onSelect(c)}
+      onMouseEnter={() => prefetchConversation(c.id)}
+      onFocus={() => prefetchConversation(c.id)}
+      onContextMenu={(e) => onContextMenu(e, c)}
+      data-testid={`conversation-item-${c.id}`}
+      className={`flex w-full items-center gap-3 rounded-2xl p-2.5 text-left transition-colors cursor-pointer ${active ? "bg-soft-red" : "hover:bg-surface2"}`}
+    >
+      {c.other ? <Avatar user={c.other} size={42} /> : <GroupIcon c={c} size={42} />}
+      <span className="min-w-0 flex-1">
+        <span className="flex items-center justify-between gap-2">
+          <span className="flex items-center gap-1 min-w-0">
+            <span className="truncate text-sm font-semibold leading-snug">{c.title}</span>
+            {c.is_verified && <ShieldCheck size={13} className="shrink-0 text-blue-500 fill-blue-500/10" />}
+          </span>
+          <span className="shrink-0 text-[10px] text-sub">{fmtTime(c.last_message_at)}</span>
+        </span>
+        <span className="flex items-center justify-between gap-2">
+          <span className="truncate text-xs text-sub leading-snug">{c.last_message_preview || emptyLabel}</span>
+          {c.unread > 0 && <span className="rounded-full bg-brand px-1.5 text-[10px] font-bold text-white" data-testid="conversation-unread">{c.unread}</span>}
+        </span>
+      </span>
+    </button>
+  );
+});
 
 function NewDM({ open, onOpenChange, convs, onCreated }) {
   const { users, me, t: tr } = useApp();
@@ -129,6 +157,11 @@ export default function Messages() {
     load();
   }, [me?.user_id, me?.department, load]);
 
+  const cidRef = useRef(cid);
+  cidRef.current = cid;
+  const loadRef = useRef(load);
+  loadRef.current = load;
+
   // Clear unread badge in 0ms when opening a conversation
   const handleRead = useCallback((readCid) => {
     if (!readCid) return;
@@ -137,9 +170,7 @@ export default function Messages() {
       const target = list.find((c) => c && c.id === readCid);
       if (!target || !target.unread) return list;
       const next = list.map((c) => (c && c.id === readCid ? { ...c, unread: 0 } : c));
-      if (me?.user_id) {
-        try { localStorage.setItem(`circle_convs_cache_${me.user_id}`, JSON.stringify(next)); } catch {}
-      }
+      saveConversationListCache(next, me?.user_id);
       return next;
     });
   }, [me?.user_id]);
@@ -154,15 +185,14 @@ export default function Messages() {
     removeGroupFromCache(leftCid, me?.user_id);
     setConvs((prev) => {
       const next = (Array.isArray(prev) ? prev : []).filter((c) => c && c.id !== leftCid);
-      if (me?.user_id) {
-        try { localStorage.setItem(`circle_convs_cache_${me.user_id}`, JSON.stringify(next)); } catch {}
-      }
+      saveConversationListCache(next, me?.user_id);
       return next;
     });
-    load();
-  }, [me?.user_id, load]);
+    loadRef.current();
+  }, [me?.user_id]);
 
-  useEffect(() => subscribe((e) => { 
+  useEffect(() => subscribe((e) => {
+    const activeCid = cidRef.current;
     if (e.type === "message:new" && e.data) {
       const d = e.data;
       if (Array.isArray(d?.member_ids) && me?.user_id && !d.member_ids.includes(me.user_id)) {
@@ -175,8 +205,6 @@ export default function Messages() {
         const idx = list.findIndex((c) => c && c.id === d.conversation_id);
         if (idx !== -1) {
           foundInList = true;
-          const curMsgs = Array.isArray(list[idx].messages) ? list[idx].messages : [];
-          const nextMsgs = curMsgs.some((m) => m.id === d.id) ? curMsgs : [...curMsgs, d];
           const previewVal = d.type === "sticker"
             ? t("messages_sticker_preview", "[Stiker]")
             : d.type === "sticky_note"
@@ -184,21 +212,18 @@ export default function Messages() {
             : (d.text || t("messages_new_msg_preview", "Pesan baru"));
           const updated = {
             ...list[idx],
-            messages: nextMsgs,
             last_message_preview: previewVal,
             last_message_at: d.created_at || new Date().toISOString(),
-            unread: d.sender_id !== me?.user_id && cid !== d.conversation_id ? (list[idx].unread || 0) + 1 : 0
+            unread: d.sender_id !== me?.user_id && activeCid !== d.conversation_id ? (list[idx].unread || 0) + 1 : 0
           };
           const next = [updated, ...list.filter((c) => c && c.id !== d.conversation_id)];
-          if (me?.user_id) {
-            try { localStorage.setItem(`circle_convs_cache_${me.user_id}`, JSON.stringify(next)); } catch {}
-          }
+          saveConversationListCache(next, me?.user_id);
           return next;
         }
         return list;
       });
       if (!foundInList) {
-        load();
+        loadRef.current();
       }
     } else if (e.type === "message:update") {
       updateMessageInCache(e.data);
@@ -218,9 +243,7 @@ export default function Messages() {
         removeConversationFromCache(d.id, me?.user_id);
         setConvs((prev) => {
           const next = (Array.isArray(prev) ? prev : []).filter((c) => c && c.id !== d.id);
-          if (me?.user_id) {
-            try { localStorage.setItem(`circle_convs_cache_${me.user_id}`, JSON.stringify(next)); } catch {}
-          }
+          saveConversationListCache(next, me?.user_id);
           return next;
         });
         return;
@@ -232,18 +255,14 @@ export default function Messages() {
         const next = idx !== -1
           ? list.map((c, i) => (i === idx ? { ...c, ...d } : c))
           : [d, ...list];
-        if (me?.user_id) {
-          try { localStorage.setItem(`circle_convs_cache_${me.user_id}`, JSON.stringify(next)); } catch {}
-        }
+        saveConversationListCache(next, me?.user_id);
         return next;
       });
     } else if (e.type === "group:deleted" && e.id) {
       removeConversationFromCache(e.id, me?.user_id);
       setConvs((prev) => {
         const next = (Array.isArray(prev) ? prev : []).filter((c) => c && c.id !== e.id);
-        if (me?.user_id) {
-          try { localStorage.setItem(`circle_convs_cache_${me.user_id}`, JSON.stringify(next)); } catch {}
-        }
+        saveConversationListCache(next, me?.user_id);
         return next;
       });
     } else if (e.type === "conversation:deleted" && e.id) {
@@ -259,17 +278,15 @@ export default function Messages() {
         if (e.conv_type === "group") removeGroupFromCache(e.id, me?.user_id);
         setConvs((prev) => {
           const next = (Array.isArray(prev) ? prev : []).filter((c) => c && c.id !== e.id);
-          if (me?.user_id) {
-            try { localStorage.setItem(`circle_convs_cache_${me.user_id}`, JSON.stringify(next)); } catch {}
-          }
+          saveConversationListCache(next, me?.user_id);
           return next;
         });
-        if (cid === e.id) navigate("/messages", { replace: true });
+        if (activeCid === e.id) navigate("/messages", { replace: true });
       }
     } else if (["conversation:new", "conversations:changed", "access_requests:changed"].includes(e.type)) {
-      load();
+      loadRef.current();
     }
-  }), [subscribe, me?.user_id, cid, load, handleRead, navigate]);
+  }), [subscribe, me?.user_id, handleRead, navigate, t]);
 
   const safeConvs = Array.isArray(convs) ? convs : [];
   const named = useMemo(() => safeConvs
@@ -339,7 +356,19 @@ export default function Messages() {
       return (a.title || "").localeCompare(b.title || "");
     }), [safeConvs, userMap, me, ws?.assistant_name, ws?.assistant_avatar]);
 
-  const list = named.filter((c) => (tab === "all" || (tab === "dm" ? c.type === "dm" : c.type === "group")) && (c.title || "").toLowerCase().includes(q.toLowerCase()));
+  const list = useMemo(
+    () => named.filter((c) => (tab === "all" || (tab === "dm" ? c.type === "dm" : c.type === "group")) && (c.title || "").toLowerCase().includes(q.toLowerCase())),
+    [named, tab, q]
+  );
+
+  const activeConvHint = useMemo(() => (cid ? named.find((c) => c.id === cid) || null : null), [cid, named]);
+
+  const handleSelectConv = useCallback((c) => {
+    if (!c?.id || c.id === cidRef.current) return;
+    playSound("click");
+    upsertConversationInCache(c, me?.user_id);
+    navigate(`/messages/${c.id}`);
+  }, [me?.user_id, navigate]);
 
   useEffect(() => {
     if (!cid && searchParams.get("reviseTask") && named.length > 0) {
@@ -445,8 +474,10 @@ export default function Messages() {
 
   const isDeleteTargetCircle = Boolean(deleteTarget && String(deleteTarget.id || "").startsWith("conv_circle_"));
 
+  const emptyMsgLabel = t("messages_no_messages_yet", "Belum ada pesan");
+
   return (
-    <div className={`flex w-full max-w-full min-w-0 overflow-hidden overscroll-none ${cid ? "h-[100dvh] max-h-[100dvh]" : "h-full max-h-full pb-[calc(3.5rem+env(safe-area-inset-bottom))] md:pb-0"} md:h-[100dvh] md:max-h-[100dvh] animate-crossfade`} data-testid="messages-page">
+    <div className={`flex w-full max-w-full min-w-0 overflow-hidden overscroll-none ${cid ? "h-[100dvh] max-h-[100dvh]" : "h-full max-h-full pb-[calc(3.5rem+env(safe-area-inset-bottom))] md:pb-0"} md:h-[100dvh] md:max-h-[100dvh]`} data-testid="messages-page">
       <aside className={`${cid ? "hidden lg:flex" : "flex"} h-full max-h-full w-full max-w-full min-w-0 lg:w-[320px] shrink-0 flex-col overflow-hidden border-r bg-surface`}>
         <div className="shrink-0 p-3 sm:p-4 pb-2">
           <div className="flex items-center justify-between"><h1 className="text-xl sm:text-2xl font-bold tracking-tight">{t("messages_title", "Pesan")}</h1>
@@ -458,31 +489,20 @@ export default function Messages() {
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-y-contain px-2 pb-2 scroll-thin">
           {list.map((c) => (
-            <button
+            <ConversationRow
               key={c.id}
-              onClick={() => { playSound("click"); navigate(`/messages/${c.id}`); }}
-              onContextMenu={(e) => openContextMenu(e, c)}
-              data-testid={`conversation-item-${c.id}`}
-              className={`flex w-full items-center gap-3 rounded-2xl p-2.5 text-left transition-colors cursor-pointer ${cid === c.id ? "bg-soft-red" : "hover:bg-surface2"}`}
-            >
-              {c.other ? <Avatar user={c.other} size={42} /> : <GroupIcon c={c} size={42} />}
-              <span className="min-w-0 flex-1">
-                <span className="flex items-center justify-between gap-2">
-                  <span className="flex items-center gap-1 min-w-0">
-                    <span className="truncate text-sm font-semibold leading-snug">{c.title}</span>
-                    {c.is_verified && <ShieldCheck size={13} className="shrink-0 text-blue-500 fill-blue-500/10" />}
-                  </span>
-                  <span className="shrink-0 text-[10px] text-sub">{fmtTime(c.last_message_at)}</span>
-                </span>
-                <span className="flex items-center justify-between gap-2"><span className="truncate text-xs text-sub leading-snug">{c.last_message_preview || t("messages_no_messages_yet", "Belum ada pesan")}</span>{c.unread > 0 && <span className="rounded-full bg-brand px-1.5 text-[10px] font-bold text-white" data-testid="conversation-unread">{c.unread}</span>}</span>
-              </span>
-            </button>
+              c={c}
+              active={cid === c.id}
+              onSelect={handleSelectConv}
+              onContextMenu={openContextMenu}
+              emptyLabel={emptyMsgLabel}
+            />
           ))}
           {!list.length && <Empty icon={MessageCircle} title={t("messages_empty_list_title", "Belum ada obrolan")} text={t("messages_empty_list_desc", "Mulai pesan langsung atau gabung ke grup.")} />}
         </div>
       </aside>
       <section className={`${cid ? "flex" : "hidden lg:flex"} h-full max-h-full min-w-0 flex-1 overflow-hidden`}>
-        {cid ? <ChatView cid={cid} onChange={load} onRead={handleRead} onLeft={handleLeftGroup} /> : <div className="flex flex-1 items-center justify-center"><Empty icon={MessageCircle} title={t("messages_empty_title", "Pilih obrolan")} text={t("messages_empty_desc", "Pesan Anda bersifat privat untuk anggota dalam obrolan terkait.")} /></div>}
+        {cid ? <ChatView key={cid} cid={cid} initialConv={activeConvHint} onChange={load} onRead={handleRead} onLeft={handleLeftGroup} /> : <div className="flex flex-1 items-center justify-center"><Empty icon={MessageCircle} title={t("messages_empty_title", "Pilih obrolan")} text={t("messages_empty_desc", "Pesan Anda bersifat privat untuk anggota dalam obrolan terkait.")} /></div>}
       </section>
       <NewDM open={dm} onOpenChange={setDm} convs={convs} onCreated={(newConv) => setConvs((prev) => [newConv, ...(prev || []).filter((c) => c.id !== newConv.id)])} />
 
