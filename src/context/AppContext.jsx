@@ -184,32 +184,92 @@ export function AppProvider({ children }) {
     return true;
   }, []);
 
-  const userDeadlinesToday = useMemo(() => {
+  const { userDeadlinesToday, userDeadlineReasons } = useMemo(() => {
     const set = new Set();
-    const today = new Date();
-    const todayY = today.getFullYear();
-    const todayM = today.getMonth();
-    const todayD = today.getDate();
+    const reasons = {};
+    const statsByUser = new Map();
+    const now = new Date();
+    const nowMs = now.getTime();
+    const todayY = now.getFullYear();
+    const todayM = now.getMonth();
+    const todayD = now.getDate();
+
+    const doneKeys = new Set(["done"]);
+    if (Array.isArray(ws?.task_statuses)) {
+      ws.task_statuses.forEach((s) => {
+        if (s && typeof s === "object" && s.is_done && s.key) doneKeys.add(s.key);
+      });
+    }
+
+    const ensureUserStat = (uid) => {
+      let entry = statsByUser.get(uid);
+      if (!entry) {
+        entry = { active: 0, overdue: 0, today: 0, soon24h: 0, dueByTomorrow: 0 };
+        statsByUser.set(uid, entry);
+      }
+      return entry;
+    };
 
     (tasks || []).forEach((item) => {
-      if (!item || item.status === "done" || !item.deadline) return;
-      try {
-        const dl = new Date(item.deadline);
-        if (isNaN(dl.getTime())) return;
+      if (!item || item.archived || doneKeys.has(item.status)) return;
 
-        const isToday = dl.getFullYear() === todayY && dl.getMonth() === todayM && dl.getDate() === todayD;
-        const isOverdue = dl < today;
+      const assignees = new Set();
+      if (item.assignee_id) assignees.add(item.assignee_id);
+      if (Array.isArray(item.assignee_ids)) {
+        item.assignee_ids.forEach((id) => { if (id) assignees.add(id); });
+      }
+      if (Array.isArray(item.assignees)) {
+        item.assignees.forEach((a) => {
+          const uid = typeof a === "string" ? a : a?.user_id;
+          if (uid) assignees.add(uid);
+        });
+      }
+      if (assignees.size === 0) return;
 
-        if (isToday || isOverdue) {
-          if (item.assignee_id) set.add(item.assignee_id);
-          if (Array.isArray(item.assignee_ids)) {
-            item.assignee_ids.forEach((id) => set.add(id));
+      let isOverdue = false;
+      let isToday = false;
+      let isSoon24h = false;
+      let isDueByTomorrow = false;
+
+      if (item.deadline) {
+        try {
+          const dl = new Date(item.deadline);
+          if (!isNaN(dl.getTime())) {
+            const diffMs = dl.getTime() - nowMs;
+            const hoursLeft = diffMs / 3600000;
+            isToday = dl.getFullYear() === todayY && dl.getMonth() === todayM && dl.getDate() === todayD;
+            isOverdue = diffMs < 0;
+            isSoon24h = diffMs >= 0 && hoursLeft <= 24;
+            isDueByTomorrow = diffMs < 0 || hoursLeft <= 48;
           }
-        }
-      } catch {}
+        } catch {}
+      }
+
+      assignees.forEach((uid) => {
+        const st = ensureUserStat(uid);
+        st.active += 1;
+        if (isOverdue) st.overdue += 1;
+        if (isToday) st.today += 1;
+        if (isSoon24h) st.soon24h += 1;
+        if (isDueByTomorrow) st.dueByTomorrow += 1;
+      });
     });
-    return set;
-  }, [tasks]);
+
+    statsByUser.forEach((st, uid) => {
+      const isPressure = st.overdue > 0 || st.dueByTomorrow >= 5 || st.active >= 8;
+      if (st.overdue > 0 || st.today > 0 || st.soon24h > 0 || isPressure) {
+        set.add(uid);
+        const parts = [];
+        if (st.overdue > 0) parts.push(`${st.overdue} tugas overdue`);
+        if (st.today > 0) parts.push(`${st.today} deadline hari ini`);
+        else if (st.soon24h > 0) parts.push(`${st.soon24h} deadline < 24 jam`);
+        if (st.dueByTomorrow >= 5 || st.active >= 8) parts.push(`Under Pressure (${st.active} tugas aktif)`);
+        reasons[uid] = parts.join(" · ") || "Ada deadline mendesak / Under Pressure";
+      }
+    });
+
+    return { userDeadlinesToday: set, userDeadlineReasons: reasons };
+  }, [tasks, ws?.task_statuses]);
 
   const hasDeadlineToday = useCallback((userId) => {
     return Boolean(userId && userDeadlinesToday.has(userId));
@@ -1056,7 +1116,7 @@ export function AppProvider({ children }) {
   const value = useMemo(() => {
     return {
       session, setSession, me, ws, prefs, users, userMap, labels, labelMap, online, unread, setUnread,
-      tasks, userDeadlinesToday, hasDeadlineToday,
+      tasks, userDeadlinesToday, userDeadlineReasons, hasDeadlineToday,
       reloadTasks: () => api.get("/tasks").then((r) => {
         if (Array.isArray(r.data)) {
           applyServerTasksSafely(r.data);
@@ -1185,7 +1245,7 @@ export function AppProvider({ children }) {
       syncCloudNow,
       connectCloudGoogle,
     };
-  }, [session, setSession, me, ws, prefs, users, userMap, labels, labelMap, statuses, effectiveCopywriting, t, online, unread, topNotif, themeDraft, tasks, userDeadlinesToday, hasDeadlineToday, checkAuth, loadAll, cloudSyncStatus, syncCloudNow, connectCloudGoogle]);
+  }, [session, setSession, me, ws, prefs, users, userMap, labels, labelMap, statuses, effectiveCopywriting, t, online, unread, topNotif, themeDraft, tasks, userDeadlinesToday, userDeadlineReasons, hasDeadlineToday, checkAuth, loadAll, cloudSyncStatus, syncCloudNow, connectCloudGoogle]);
 
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
 }

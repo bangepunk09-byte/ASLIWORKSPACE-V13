@@ -54,7 +54,7 @@ export function getAvailabilityStatusMeta(status) {
 }
 
 export const Avatar = memo(function Avatar({ user, size = 36, showStatus = true, className = "", ringDeadline = true }) {
-  const { online, ws, me, userMap, users, userDeadlinesToday, hasDeadlineToday, t } = useApp() || {};
+  const { online, ws, me, userMap, users, userDeadlinesToday, userDeadlineReasons, hasDeadlineToday, t } = useApp() || {};
   const tr = t || ((_k, fb) => fb || _k);
   const isCircleBot = user?.user_id === "user_circle_assistant" || user?.role === "assistant";
   const liveUser = (!isCircleBot && user?.user_id)
@@ -92,11 +92,10 @@ export const Avatar = memo(function Avatar({ user, size = 36, showStatus = true,
     !isCircleBot &&
     (hasDeadlineToday ? hasDeadlineToday(user.user_id) : userDeadlinesToday?.has(user.user_id))
   );
+  const deadlineReason = hasDeadline ? userDeadlineReasons?.[user.user_id] : "";
 
   const ringClass = (ringDeadline && user?.user_id && !isCircleBot && size >= 24)
-    ? (hasDeadline
-        ? "ring-[2px] ring-red-500 ring-offset-2 ring-offset-[var(--c-surface)] shadow-[0_0_8px_rgba(239,68,68,0.55)]"
-        : "ring-[2px] ring-emerald-500 ring-offset-2 ring-offset-[var(--c-surface)] shadow-[0_0_6px_rgba(16,185,129,0.3)]")
+    ? (hasDeadline ? "avatar-deadline-ring" : "avatar-safe-ring")
     : "";
 
   return (
@@ -105,7 +104,7 @@ export const Avatar = memo(function Avatar({ user, size = 36, showStatus = true,
       style={{ width: size, height: size }}
       title={
         user?.user_id && !isCircleBot
-          ? `${name} (${statusLabel}) · ${hasDeadline ? tr("common_deadline_today_tip", "Ada deadline tugas hari ini!") : tr("common_deadline_safe_tip", "Bebas deadline (Aman)")}`
+          ? `${name} (${statusLabel}) · ${hasDeadline ? (deadlineReason || tr("common_deadline_today_tip", "Ada deadline tugas hari ini!")) : tr("common_deadline_safe_tip", "Bebas deadline (Aman)")}`
           : name
       }
     >

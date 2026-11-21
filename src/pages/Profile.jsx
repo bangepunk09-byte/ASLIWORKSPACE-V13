@@ -678,7 +678,7 @@ export default function Profile() {
         <div className="px-4 pb-5 pt-3.5 sm:px-8 sm:pb-6 sm:pt-4">
           <div className="flex flex-col gap-3.5 sm:flex-row sm:items-start sm:justify-between sm:gap-5">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-5 min-w-0 flex-1">
-              <div className="-mt-14 sm:-mt-16 w-fit shrink-0 rounded-full border-4 border-[var(--c-surface)] bg-[var(--c-surface)] shadow-sm">
+              <div className="-mt-14 sm:-mt-16 w-fit shrink-0 rounded-full p-1 bg-[var(--c-surface)] shadow-sm">
                 <Avatar user={p} size={96} />
               </div>
               <div className="min-w-0 flex-1">
