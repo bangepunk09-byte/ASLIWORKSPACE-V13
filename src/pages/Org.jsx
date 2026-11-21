@@ -61,6 +61,7 @@ try {
 } catch {}
 
 function UnitDialog({ state, setState, units, levels, humanUsers, divisions, onDone }) {
+  const { t: tr } = useApp();
   const [f, setF] = useState({});
   const [selectedMembers, setSelectedMembers] = useState([]);
   const [saving, setSaving] = useState(false);
@@ -141,13 +142,13 @@ function UnitDialog({ state, setState, units, levels, humanUsers, divisions, onD
     <Dialog open onOpenChange={() => setState(null)}>
       <DialogContent className="bg-surface rounded-3xl max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{state.unit ? "Edit Unit & Divisi Organisasi" : "Tambah Unit / Divisi Baru"}</DialogTitle>
+          <DialogTitle>{state.unit ? tr("org_unit_edit_title", "Edit Unit & Divisi Organisasi") : tr("org_unit_add_title", "Tambah Unit / Divisi Baru")}</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-3.5 pt-1">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-xs font-semibold text-sub">Nama Unit / Divisi *</label>
+              <label className="mb-1 block text-xs font-semibold text-sub">{tr("org_unit_name_label", "Nama Unit / Divisi *")}</label>
               <input
                 value={f.name || ""}
                 onChange={(e) =>
@@ -157,19 +158,19 @@ function UnitDialog({ state, setState, units, levels, humanUsers, divisions, onD
                     division: !prev.division || prev.division === prev.name ? e.target.value : prev.division
                   }))
                 }
-                placeholder="Mis. Engineering, Marketing"
+                placeholder={tr("org_unit_name_ph", "Mis. Engineering, Marketing")}
                 className={inp}
                 data-testid="unit-name-input"
               />
             </div>
 
             <div>
-              <label className="mb-1 block text-xs font-semibold text-sub">Tag Divisi Terhubung</label>
+              <label className="mb-1 block text-xs font-semibold text-sub">{tr("org_unit_division_label", "Tag Divisi Terhubung")}</label>
               <input
                 list="org-divisions-datalist"
                 value={f.division || ""}
                 onChange={(e) => setF({ ...f, division: e.target.value })}
-                placeholder="Nama divisi"
+                placeholder={tr("org_unit_division_ph", "Nama divisi")}
                 className={inp}
                 data-testid="unit-division-input"
               />
@@ -182,11 +183,11 @@ function UnitDialog({ state, setState, units, levels, humanUsers, divisions, onD
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-semibold text-sub">Deskripsi Fokus Unit</label>
+            <label className="mb-1 block text-xs font-semibold text-sub">{tr("org_unit_desc_label", "Deskripsi Fokus Unit")}</label>
             <input
               value={f.description || ""}
               onChange={(e) => setF({ ...f, description: e.target.value })}
-              placeholder="Deskripsi singkat tanggung jawab divisi / unit..."
+              placeholder={tr("org_unit_desc_ph", "Deskripsi singkat tanggung jawab divisi / unit...")}
               className={inp}
               data-testid="unit-desc-input"
             />
@@ -194,11 +195,11 @@ function UnitDialog({ state, setState, units, levels, humanUsers, divisions, onD
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-xs font-semibold text-sub">Level Hierarki</label>
+              <label className="mb-1 block text-xs font-semibold text-sub">{tr("org_unit_level_label", "Level Hierarki")}</label>
               <AppSelect
                 value={f.level || ""}
                 onChange={(e) => setF({ ...f, level: e.target.value })}
-                placeholder="Pilih level"
+                placeholder={tr("org_unit_level_ph", "Pilih level")}
                 className={inp}
                 data-testid="unit-level-select"
               >
@@ -209,15 +210,15 @@ function UnitDialog({ state, setState, units, levels, humanUsers, divisions, onD
             </div>
 
             <div>
-              <label className="mb-1 block text-xs font-semibold text-sub">Unit Induk</label>
+              <label className="mb-1 block text-xs font-semibold text-sub">{tr("org_unit_parent_label", "Unit Induk")}</label>
               <AppSelect
                 value={f.parent_id || ""}
                 onChange={(e) => setF({ ...f, parent_id: e.target.value })}
-                placeholder="Tanpa Induk"
+                placeholder={tr("org_unit_no_parent", "Tanpa Induk")}
                 className={inp}
                 data-testid="unit-parent-select"
               >
-                <option value="">Tanpa Induk</option>
+                <option value="">{tr("org_unit_no_parent", "Tanpa Induk")}</option>
                 {units
                   .filter((u) => u.id !== state.unit?.id)
                   .map((u) => (
@@ -229,15 +230,15 @@ function UnitDialog({ state, setState, units, levels, humanUsers, divisions, onD
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-xs font-semibold text-sub">Kepala Unit / Pimpinan</label>
+              <label className="mb-1 block text-xs font-semibold text-sub">{tr("org_unit_head_label", "Kepala Unit / Pimpinan")}</label>
               <AppSelect
                 value={f.head_id || ""}
                 onChange={(e) => setF({ ...f, head_id: e.target.value })}
-                placeholder="Belum ditentukan"
+                placeholder={tr("org_unit_head_ph", "Belum ditentukan")}
                 className={inp}
                 data-testid="unit-head-select"
               >
-                <option value="">Belum ditentukan</option>
+                <option value="">{tr("org_unit_head_ph", "Belum ditentukan")}</option>
                 {humanUsers.map((u) => (
                   <option key={u.user_id} value={u.user_id}>{u.name} · {u.job_title || u.department}</option>
                 ))}
@@ -245,7 +246,7 @@ function UnitDialog({ state, setState, units, levels, humanUsers, divisions, onD
             </div>
 
             <div>
-              <label className="mb-1 block text-xs font-semibold text-sub">Warna Identitas Unit</label>
+              <label className="mb-1 block text-xs font-semibold text-sub">{tr("org_unit_color_label", "Warna Identitas Unit")}</label>
               <div className="flex items-center gap-1.5 h-10">
                 {UNIT_COLORS.slice(0, 7).map((c) => (
                   <button
@@ -270,8 +271,8 @@ function UnitDialog({ state, setState, units, levels, humanUsers, divisions, onD
 
           <div>
             <label className="mb-1.5 flex items-center justify-between text-xs font-semibold text-sub">
-              <span>Anggota Unit ({selectedMembers.length} dipilih)</span>
-              <span className="text-[11px] font-normal">Otomatis menyelaraskan divisi anggota</span>
+              <span>{tr("org_unit_members_label", "Anggota Unit")} ({selectedMembers.length} {tr("directory_selected_suffix", "dipilih")})</span>
+              <span className="text-[11px] font-normal">{tr("org_unit_members_hint", "Otomatis menyelaraskan divisi anggota")}</span>
             </label>
             <div className="max-h-40 overflow-y-auto rounded-2xl border bg-surface2/60 p-2 space-y-1">
               {humanUsers.map((u) => {
@@ -306,7 +307,7 @@ function UnitDialog({ state, setState, units, levels, humanUsers, divisions, onD
               onClick={() => setState(null)}
               className="btn-ghost h-10 border px-4 text-sm font-semibold"
             >
-              Batal
+              {tr("common_cancel", "Batal")}
             </button>
             <button
               type="button"
@@ -315,7 +316,7 @@ function UnitDialog({ state, setState, units, levels, humanUsers, divisions, onD
               className="btn-accent h-10 px-5 text-sm font-semibold disabled:opacity-50"
               data-testid="unit-save-btn"
             >
-              {saving ? "Menyimpan..." : "Simpan Unit"}
+              {saving ? tr("org_unit_saving_btn", "Menyimpan...") : tr("org_unit_save_btn", "Simpan Unit")}
             </button>
           </div>
         </div>
@@ -325,6 +326,7 @@ function UnitDialog({ state, setState, units, levels, humanUsers, divisions, onD
 }
 
 function DeleteDialog({ unit, setUnit, units, counts, onDone }) {
+  const { t: tr } = useApp();
   const [to, setTo] = useState("");
   const [removeDiv, setRemoveDiv] = useState(true);
   if (!unit) return null;
@@ -347,20 +349,20 @@ function DeleteDialog({ unit, setUnit, units, counts, onDone }) {
   return (
     <Dialog open onOpenChange={() => setUnit(null)}>
       <DialogContent className="bg-surface rounded-3xl max-w-md">
-        <DialogHeader><DialogTitle>Hapus Unit “{unit.name}”?</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>{tr("org_del_title_prefix", "Hapus Unit")} “{unit.name}”?</DialogTitle></DialogHeader>
         {nonEmpty ? (
           <>
             <p className="text-sm text-sub">
-              Unit ini memiliki {counts.kids} sub-unit dan {counts.members} anggota. Pilih unit tujuan pemindahan agar tidak ada anggota yang kehilangan unit:
+              {tr("org_del_nonempty_1", "Unit ini memiliki")} {counts.kids} {tr("org_del_nonempty_2", "sub-unit dan")} {counts.members} {tr("org_del_nonempty_3", "anggota. Pilih unit tujuan pemindahan agar tidak ada anggota yang kehilangan unit:")}
             </p>
             <AppSelect
               value={to}
               onChange={(e) => setTo(e.target.value)}
-              placeholder="Pilih unit tujuan…"
+              placeholder={tr("org_del_reassign_ph", "Pilih unit tujuan…")}
               className="h-10 w-full rounded-xl border bg-surface2 px-3 text-sm font-medium"
               data-testid="reassign-select"
             >
-              <option value="">Pilih unit tujuan…</option>
+              <option value="">{tr("org_del_reassign_ph", "Pilih unit tujuan…")}</option>
               {units
                 .filter((u) => u.id !== unit.id)
                 .map((u) => (
@@ -369,7 +371,7 @@ function DeleteDialog({ unit, setUnit, units, counts, onDone }) {
             </AppSelect>
           </>
         ) : (
-          <p className="text-sm text-sub">Unit ini kosong dan dapat dihapus dengan aman.</p>
+          <p className="text-sm text-sub">{tr("org_del_empty_desc", "Unit ini kosong dan dapat dihapus dengan aman.")}</p>
         )}
         <label className="flex items-center gap-2 text-xs text-sub cursor-pointer pt-1">
           <input
@@ -378,17 +380,17 @@ function DeleteDialog({ unit, setUnit, units, counts, onDone }) {
             onChange={(e) => setRemoveDiv(e.target.checked)}
             className="accent-[var(--c-accent)]"
           />
-          Hapus juga dari daftar divisi apabila tidak dipakai unit lain
+          {tr("org_del_remove_div", "Hapus juga dari daftar divisi apabila tidak dipakai unit lain")}
         </label>
         <div className="flex justify-end gap-2 pt-2">
-          <button onClick={() => setUnit(null)} className="btn-ghost h-10 border px-4 text-sm font-semibold">Batal</button>
+          <button onClick={() => setUnit(null)} className="btn-ghost h-10 border px-4 text-sm font-semibold">{tr("common_cancel", "Batal")}</button>
           <button
             onClick={del}
             disabled={nonEmpty && !to}
             className="h-10 rounded-full bg-rose-500 px-5 text-sm font-semibold text-white disabled:opacity-40"
             data-testid="confirm-delete-unit-btn"
           >
-            Hapus Unit
+            {tr("org_del_confirm_btn", "Hapus Unit")}
           </button>
         </div>
       </DialogContent>
@@ -398,7 +400,7 @@ function DeleteDialog({ unit, setUnit, units, counts, onDone }) {
 
 function Node({ unit, siblingsIndex, siblingsCount, tree, members, depth, ctx }) {
   const [open, setOpen] = useState(depth < 2);
-  const { userMap } = useApp();
+  const { userMap, t: tr } = useApp();
   const navigate = useNavigate();
   const kids = tree[unit.id] || [];
   const mem = members[unit.id] || [];
@@ -479,13 +481,13 @@ function Node({ unit, siblingsIndex, siblingsCount, tree, members, depth, ctx })
             </span>
             {unit.division && unit.division !== unit.name && (
               <span className="rounded-full bg-soft-blue px-2.5 py-0.5 text-[11px] font-semibold">
-                Divisi: {unit.division}
+                {tr("org_node_div_prefix", "Divisi:")} {unit.division}
               </span>
             )}
           </div>
           <p className="text-xs text-sub truncate mt-0.5">
             {unit.description ? `${unit.description} · ` : ""}
-            {total} anggota{kids.length ? ` · ${kids.length} sub-unit` : ""}
+            {total} {tr("org_node_members_unit", "anggota")}{kids.length ? ` · ${kids.length} ${tr("org_node_subunits_unit", "sub-unit")}` : ""}
           </p>
         </div>
 
@@ -598,6 +600,7 @@ function Node({ unit, siblingsIndex, siblingsCount, tree, members, depth, ctx })
 }
 
 function Table({ units, humanUsers, divisions, reload, canMove }) {
+  const { t: tr } = useApp();
   const [drafts, setDrafts] = useState({});
   const [savingId, setSavingId] = useState(null);
 
@@ -665,12 +668,12 @@ function Table({ units, humanUsers, divisions, reload, canMove }) {
       <table className="w-full min-w-[820px] text-sm">
         <thead>
           <tr className="border-b text-left text-xs font-bold uppercase tracking-wider text-sub">
-            <th className="p-3.5">Karyawan</th>
-            <th className="p-3.5">Jabatan</th>
-            <th className="p-3.5">Divisi</th>
-            <th className="p-3.5">Unit Organisasi</th>
-            <th className="p-3.5">Atasan Langsung</th>
-            {canMove && <th className="p-3.5 text-right">Aksi</th>}
+            <th className="p-3.5">{tr("org_table_col_employee", "Karyawan")}</th>
+            <th className="p-3.5">{tr("org_table_col_job", "Jabatan")}</th>
+            <th className="p-3.5">{tr("org_table_col_division", "Divisi")}</th>
+            <th className="p-3.5">{tr("org_table_col_unit", "Unit Organisasi")}</th>
+            <th className="p-3.5">{tr("org_table_col_manager", "Atasan Langsung")}</th>
+            {canMove && <th className="p-3.5 text-right">{tr("org_table_col_action", "Aksi")}</th>}
           </tr>
         </thead>
         <tbody>
@@ -697,7 +700,7 @@ function Table({ units, humanUsers, divisions, reload, canMove }) {
                     <input
                       value={d.job_title}
                       onChange={(e) => setField(u.user_id, "job_title", e.target.value)}
-                      placeholder="Jabatan..."
+                      placeholder={tr("org_table_job_ph", "Jabatan...")}
                       className="h-9 w-full rounded-xl border bg-surface2 px-2.5 text-xs outline-none focus:border-brand"
                     />
                   ) : (
@@ -709,7 +712,7 @@ function Table({ units, humanUsers, divisions, reload, canMove }) {
                     disabled={!canMove}
                     value={d.department || ""}
                     onChange={(e) => setField(u.user_id, "department", e.target.value)}
-                    placeholder="Pilih divisi"
+                    placeholder={tr("org_table_div_ph", "Pilih divisi")}
                     className="h-9 w-full rounded-xl border bg-surface2 px-2.5 text-xs font-medium"
                     data-testid={`table-dept-${u.user_id}`}
                   >
@@ -723,11 +726,11 @@ function Table({ units, humanUsers, divisions, reload, canMove }) {
                     disabled={!canMove}
                     value={d.org_unit_id || ""}
                     onChange={(e) => setField(u.user_id, "org_unit_id", e.target.value)}
-                    placeholder="Belum ditugaskan"
+                    placeholder={tr("org_table_unassigned", "Belum ditugaskan")}
                     className="h-9 w-full rounded-xl border bg-surface2 px-2.5 text-xs font-medium"
                     data-testid={`table-unit-${u.user_id}`}
                   >
-                    <option value="">Belum ditugaskan</option>
+                    <option value="">{tr("org_table_unassigned", "Belum ditugaskan")}</option>
                     {units.map((x) => (
                       <option key={x.id} value={x.id}>{x.name} · {x.level}</option>
                     ))}
@@ -738,11 +741,11 @@ function Table({ units, humanUsers, divisions, reload, canMove }) {
                     disabled={!canMove}
                     value={d.manager_id || ""}
                     onChange={(e) => setField(u.user_id, "manager_id", e.target.value)}
-                    placeholder="Tidak ada"
+                    placeholder={tr("org_table_no_manager", "Tidak ada")}
                     className="h-9 w-full rounded-xl border bg-surface2 px-2.5 text-xs font-medium"
                     data-testid={`table-manager-${u.user_id}`}
                   >
-                    <option value="">Tidak ada</option>
+                    <option value="">{tr("org_table_no_manager", "Tidak ada")}</option>
                     {humanUsers
                       .filter((x) => x.user_id !== u.user_id)
                       .map((x) => (
@@ -760,7 +763,7 @@ function Table({ units, humanUsers, divisions, reload, canMove }) {
                       data-testid={`table-save-${u.user_id}`}
                     >
                       <Check size={13} />
-                      {savingId === u.user_id ? "Menyimpan..." : "Simpan"}
+                      {savingId === u.user_id ? tr("org_table_saving", "Menyimpan...") : tr("org_table_save", "Simpan")}
                     </button>
                   </td>
                 )}
@@ -958,14 +961,14 @@ export default function Org() {
                 data-testid="org-export-btn"
               >
                 <Download size={15} />
-                Ekspor CSV
+                {t("org_export_btn", "Ekspor CSV")}
               </GhostButton>
             )}
             {isAdmin && (
               <>
                 <GhostButton onClick={() => fileRef.current.click()} data-testid="org-import-btn">
                   <Upload size={15} />
-                  Impor CSV
+                  {t("org_import_btn", "Impor CSV")}
                 </GhostButton>
                 <input ref={fileRef} type="file" accept=".csv" hidden onChange={importCsv} />
                 <button
@@ -985,19 +988,19 @@ export default function Org() {
       {/* Summary Bar */}
       <div className="mb-5 grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3">
         <div className="rounded-2xl border bg-surface p-3 sm:p-3.5">
-          <p className="text-[11px] sm:text-xs font-semibold text-sub">Total Unit & Divisi</p>
+          <p className="text-[11px] sm:text-xs font-semibold text-sub">{t("org_stat_units", "Total Unit & Divisi")}</p>
           <p className="mt-1 text-xl sm:text-2xl font-extrabold text-ink tabular-nums">{units.length}</p>
         </div>
         <div className="rounded-2xl border bg-surface p-3 sm:p-3.5">
-          <p className="text-[11px] sm:text-xs font-semibold text-sub">Divisi Terdaftar</p>
+          <p className="text-[11px] sm:text-xs font-semibold text-sub">{t("org_stat_divisions", "Divisi Terdaftar")}</p>
           <p className="mt-1 text-xl sm:text-2xl font-extrabold text-ink tabular-nums">{(ws?.divisions || []).length}</p>
         </div>
         <div className="rounded-2xl border bg-surface p-3 sm:p-3.5">
-          <p className="text-[11px] sm:text-xs font-semibold text-sub">Personel Aktif</p>
+          <p className="text-[11px] sm:text-xs font-semibold text-sub">{t("org_stat_members", "Personel Aktif")}</p>
           <p className="mt-1 text-xl sm:text-2xl font-extrabold text-ink tabular-nums">{humanUsers.length}</p>
         </div>
         <div className="rounded-2xl border bg-surface p-3 sm:p-3.5">
-          <p className="text-[11px] sm:text-xs font-semibold text-sub">Level Hierarki</p>
+          <p className="text-[11px] sm:text-xs font-semibold text-sub">{t("org_stat_levels", "Level Hierarki")}</p>
           <p className="mt-1 text-xs sm:text-sm font-bold text-ink truncate">{levels.join(" → ")}</p>
         </div>
       </div>
@@ -1006,9 +1009,9 @@ export default function Org() {
       <div className="mb-5 flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2.5">
         <div className="flex w-full sm:w-auto overflow-x-auto rounded-2xl sm:rounded-full border bg-surface p-1 text-xs sm:text-sm font-semibold scroll-thin">
           {[
-            ["chart", "Bagan Hierarki"],
-            ["grid", "Kartu Divisi"],
-            ["table", "Tabel Manajemen & Penempatan"]
+            ["chart", t("org_view_chart", "Bagan Hierarki")],
+            ["grid", t("org_view_grid", "Kartu Divisi")],
+            ["table", t("org_view_table", "Tabel Manajemen & Penempatan")]
           ].map(([v, label]) => (
             <button
               key={v}
@@ -1029,7 +1032,7 @@ export default function Org() {
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="Cari divisi, unit, atau nama personel..."
+              placeholder={t("org_search_ph", "Cari divisi, unit, atau nama personel...")}
               className="flex-1 min-w-0 bg-transparent text-sm outline-none"
               data-testid="org-search-input"
             />
@@ -1055,7 +1058,7 @@ export default function Org() {
             <div className="mt-6 rounded-2xl border border-dashed bg-surface/60 p-4">
               <p className="mb-3 flex items-center gap-2 text-sm font-bold text-ink">
                 <UserPlus size={16} className="text-brand" />
-                Belum Ditugaskan ke Unit ({unassigned.length})
+                {t("org_unassigned_title", "Belum Ditugaskan ke Unit")} ({unassigned.length})
               </p>
               <div className="flex flex-wrap gap-2.5">
                 {unassigned.map((u) => (
@@ -1070,12 +1073,12 @@ export default function Org() {
                     <Avatar user={u} size={26} showStatus={false} />
                     <div className="min-w-0">
                       <span className="font-bold text-ink block truncate">{u.name}</span>
-                      <span className="text-[10px] text-sub block truncate">{u.department || "Tanpa divisi"}</span>
+                      <span className="text-[10px] text-sub block truncate">{u.department || t("org_no_division", "Tanpa divisi")}</span>
                     </div>
                     {isManager && (
                       <AppSelect
                         value=""
-                        placeholder="Pilih Unit..."
+                        placeholder={t("org_pick_unit_ph", "Pilih Unit...")}
                         onChange={(e) => e.target.value && quickAssignMember(u.user_id, e.target.value)}
                         className="sm:ml-2 h-8 min-w-0 rounded-xl border bg-surface2 px-2.5 text-[11px] font-semibold"
                       >
@@ -1125,7 +1128,7 @@ export default function Org() {
                           <h4 className="font-bold text-ink truncate leading-snug py-0.5">{unit.name}</h4>
                           <p className="text-xs text-sub">
                             {unit.level}
-                            {parentUnit ? ` · Induk: ${parentUnit.name}` : " · Unit Utama"}
+                            {parentUnit ? ` · ${t("org_grid_parent_prefix", "Induk:")} ${parentUnit.name}` : ` · ${t("org_grid_root_label", "Unit Utama")}`}
                           </p>
                         </div>
                       </div>
@@ -1156,7 +1159,7 @@ export default function Org() {
                     <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
                       <span className="inline-flex items-center gap-1 rounded-full bg-surface2 px-2.5 py-1 font-semibold text-ink">
                         <Building2 size={12} />
-                        Divisi: {unit.division || unit.name}
+                        {t("org_node_div_prefix", "Divisi:")} {unit.division || unit.name}
                       </span>
                       {headUser && (
                         <span className="inline-flex items-center gap-1 rounded-full bg-soft-yellow px-2.5 py-1 font-semibold">
@@ -1170,14 +1173,14 @@ export default function Org() {
                   <div className="mt-4 flex items-center justify-between border-t pt-3.5 text-xs">
                     <span className="flex items-center gap-1.5 font-semibold text-sub">
                       <Users size={14} />
-                      {unitMembers.length} anggota langsung ({totals[unit.id] || 0} total)
+                      {unitMembers.length} {t("org_grid_direct_members", "anggota langsung")} ({totals[unit.id] || 0} {t("org_grid_total_suffix", "total")})
                     </span>
                     {isAdmin && (
                       <button
                         onClick={() => setDlg({ unit })}
                         className="font-bold text-brand hover:underline cursor-pointer"
                       >
-                        Atur Anggota →
+                        {t("org_grid_manage_members", "Atur Anggota →")}
                       </button>
                     )}
                   </div>

@@ -18,7 +18,7 @@ function Row({ onClick, children, testid }) {
 export default function SearchDialog({ open, onOpenChange }) {
   const [q, setQ] = useState("");
   const [res, setRes] = useState(null);
-  const { ws } = useApp();
+  const { ws, t: tr } = useApp();
   const navigate = useNavigate();
   useEffect(() => {
     const qTrim = q.trim();
@@ -57,21 +57,21 @@ export default function SearchDialog({ open, onOpenChange }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-xl gap-0 overflow-hidden bg-surface p-0 rounded-3xl">
-        <DialogTitle className="sr-only">Pencarian Global</DialogTitle>
+        <DialogTitle className="sr-only">{tr("search_title", "Pencarian Global")}</DialogTitle>
         <div className="flex items-center gap-2 border-b px-4"><Search size={18} className="text-sub" />
-          <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari direktori, karyawan, pesan, grup, tugas, proyek…" className="h-14 flex-1 bg-transparent text-[15px] outline-none" data-testid="global-search-input" />
+          <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={tr("search_placeholder", "Cari direktori, karyawan, pesan, grup, tugas, proyek…")} className="h-14 flex-1 bg-transparent text-[15px] outline-none" data-testid="global-search-input" />
         </div>
         <div className="max-h-[60vh] overflow-y-auto p-2 scroll-thin" data-testid="global-search-results">
-          {!res && <p className="p-6 text-center text-sm text-sub">Ketik kata kunci untuk mencari di seluruh workspace.</p>}
-          {empty && <p className="p-6 text-center text-sm text-sub">Tidak ada hasil untuk “{q}”.</p>}
-          {res?.drive_shortcuts?.length > 0 && <Section title="Direktori Drive">{res.drive_shortcuts.map((d) => <Row key={d.id} testid={`search-drive-${d.id}`} onClick={() => go(`/directory`)}><HardDrive size={16} className="text-brand" /><span className="flex-1 truncate font-medium">{d.name}</span><span className="text-xs text-sub">{d.category}</span></Row>)}</Section>}
-          {res?.employees?.length > 0 && <Section title="Karyawan">{res.employees.map((e) => <Row key={e.user_id} testid={`search-employee-${e.user_id}`} onClick={() => go(`/people/${e.user_id}`)}><Avatar user={e} size={28} showStatus={false} /><span className="flex-1">{e.name}</span><span className="text-xs text-sub">{e.job_title}</span></Row>)}</Section>}
-          {res?.tasks?.length > 0 && <Section title="Tugas">{res.tasks.map((t) => <Row key={t.id} testid={`search-task-${t.id}`} onClick={() => go(`/tasks?task=${t.id}`)}><CheckSquare size={16} className="text-sub" /><span className="text-xs text-sub">{t.number_str}</span><span className="flex-1 truncate">{t.title}</span><StatusBadge status={t.status} /></Row>)}</Section>}
-          {res?.groups?.length > 0 && <Section title="Grup">{res.groups.map((g) => <Row key={g.id} onClick={() => go(`/messages/${g.id}`)}><Hash size={16} className="text-sub" /><span className="flex-1">{g.name}</span></Row>)}</Section>}
-          {res?.messages?.length > 0 && <Section title="Pesan">{res.messages.map((m) => <Row key={m.id} onClick={() => go(`/messages/${m.conversation_id}`)}><MessageCircle size={16} className="text-sub" /><span className="flex-1 truncate">{m.text}</span></Row>)}</Section>}
-          {res?.projects?.length > 0 && <Section title="Proyek">{res.projects.map((p) => <Row key={p.id} onClick={() => go(`/projects/${p.id}`)}><FolderKanban size={16} className="text-sub" /><span className="flex-1">{p.name}</span></Row>)}</Section>}
-          {res?.polls?.length > 0 && <Section title="Polling">{res.polls.map((p) => <Row key={p.id} onClick={() => go(`/messages/${p.conversation_id}`)}><BarChart3 size={16} className="text-sub" /><span className="flex-1 truncate">{p.question}</span></Row>)}</Section>}
-          {res?.marketplace_listings?.length > 0 && <Section title="Marketplace Karyawan">{res.marketplace_listings.map((item) => <Row key={item.id} onClick={() => go(`/marketplace/${item.id}`)}><ShoppingBag size={16} className="text-brand" /><span className="flex-1 truncate font-medium">{item.title}</span><span className="text-xs font-bold text-ink tabular-nums">Rp {Number(item.price || 0).toLocaleString("id-ID")}</span></Row>)}</Section>}
+          {!res && <p className="p-6 text-center text-sm text-sub">{tr("search_hint", "Ketik kata kunci untuk mencari di seluruh workspace.")}</p>}
+          {empty && <p className="p-6 text-center text-sm text-sub">{tr("search_empty", "Tidak ada hasil untuk")} “{q}”.</p>}
+          {res?.drive_shortcuts?.length > 0 && <Section title={tr("search_sec_drive", "Direktori Drive")}>{res.drive_shortcuts.map((d) => <Row key={d.id} testid={`search-drive-${d.id}`} onClick={() => go(`/directory`)}><HardDrive size={16} className="text-brand" /><span className="flex-1 truncate font-medium">{d.name}</span><span className="text-xs text-sub">{d.category}</span></Row>)}</Section>}
+          {res?.employees?.length > 0 && <Section title={tr("search_sec_employees", "Karyawan")}>{res.employees.map((e) => <Row key={e.user_id} testid={`search-employee-${e.user_id}`} onClick={() => go(`/people/${e.user_id}`)}><Avatar user={e} size={28} showStatus={false} /><span className="flex-1">{e.name}</span><span className="text-xs text-sub">{e.job_title}</span></Row>)}</Section>}
+          {res?.tasks?.length > 0 && <Section title={tr("search_sec_tasks", "Tugas")}>{res.tasks.map((t) => <Row key={t.id} testid={`search-task-${t.id}`} onClick={() => go(`/tasks?task=${t.id}`)}><CheckSquare size={16} className="text-sub" /><span className="text-xs text-sub">{t.number_str}</span><span className="flex-1 truncate">{t.title}</span><StatusBadge status={t.status} /></Row>)}</Section>}
+          {res?.groups?.length > 0 && <Section title={tr("search_sec_groups", "Grup")}>{res.groups.map((g) => <Row key={g.id} onClick={() => go(`/messages/${g.id}`)}><Hash size={16} className="text-sub" /><span className="flex-1">{g.name}</span></Row>)}</Section>}
+          {res?.messages?.length > 0 && <Section title={tr("search_sec_messages", "Pesan")}>{res.messages.map((m) => <Row key={m.id} onClick={() => go(`/messages/${m.conversation_id}`)}><MessageCircle size={16} className="text-sub" /><span className="flex-1 truncate">{m.text}</span></Row>)}</Section>}
+          {res?.projects?.length > 0 && <Section title={tr("search_sec_projects", "Proyek")}>{res.projects.map((p) => <Row key={p.id} onClick={() => go(`/projects/${p.id}`)}><FolderKanban size={16} className="text-sub" /><span className="flex-1">{p.name}</span></Row>)}</Section>}
+          {res?.polls?.length > 0 && <Section title={tr("search_sec_polls", "Polling")}>{res.polls.map((p) => <Row key={p.id} onClick={() => go(`/messages/${p.conversation_id}`)}><BarChart3 size={16} className="text-sub" /><span className="flex-1 truncate">{p.question}</span></Row>)}</Section>}
+          {res?.marketplace_listings?.length > 0 && <Section title={tr("search_sec_marketplace", "Marketplace Karyawan")}>{res.marketplace_listings.map((item) => <Row key={item.id} onClick={() => go(`/marketplace/${item.id}`)}><ShoppingBag size={16} className="text-brand" /><span className="flex-1 truncate font-medium">{item.title}</span><span className="text-xs font-bold text-ink tabular-nums">Rp {Number(item.price || 0).toLocaleString("id-ID")}</span></Row>)}</Section>}
         </div>
       </DialogContent>
     </Dialog>

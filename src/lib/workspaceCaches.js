@@ -87,6 +87,55 @@ export function upsertConversationInCache(conv, userId) {
   } catch {}
 }
 
+export function removeConversationFromCache(convId, userId) {
+  if (!convId) return;
+  delete CHAT_CACHE[`conv_${convId}`];
+  delete CHAT_CACHE[`msgs_${convId}`];
+  try {
+    localStorage.removeItem(`circle_msgs_cache_${convId}`);
+    const keys = [userId ? `circle_convs_cache_${userId}` : null, "circle_convs_cache"].filter(Boolean);
+    keys.forEach((key) => {
+      const raw = localStorage.getItem(key);
+      if (!raw) return;
+      const list = JSON.parse(raw);
+      if (Array.isArray(list)) {
+        const next = list.filter((c) => c && c.id !== convId);
+        localStorage.setItem(key, JSON.stringify(next));
+      }
+    });
+  } catch {}
+}
+
+export function clearConversationMessagesCache(convId, userId) {
+  if (!convId) return;
+  CHAT_CACHE[`msgs_${convId}`] = [];
+  if (CHAT_CACHE[`conv_${convId}`]) {
+    CHAT_CACHE[`conv_${convId}`] = {
+      ...CHAT_CACHE[`conv_${convId}`],
+      messages: [],
+      last_message_preview: "",
+      unread: 0,
+    };
+  }
+  try {
+    localStorage.setItem(`circle_msgs_cache_${convId}`, "[]");
+    const keys = [userId ? `circle_convs_cache_${userId}` : null, "circle_convs_cache"].filter(Boolean);
+    keys.forEach((key) => {
+      const raw = localStorage.getItem(key);
+      if (!raw) return;
+      const list = JSON.parse(raw);
+      if (Array.isArray(list)) {
+        const next = list.map((c) =>
+          c && c.id === convId
+            ? { ...c, messages: [], last_message_preview: "", unread: 0 }
+            : c
+        );
+        localStorage.setItem(key, JSON.stringify(next));
+      }
+    });
+  } catch {}
+}
+
 export function appendMessageToCache(msg) {
   if (!msg || !msg.conversation_id) return;
   const cid = msg.conversation_id;
@@ -240,6 +289,24 @@ export function upsertGroupInCache(group, userId) {
   groupsCache = next;
   try {
     localStorage.setItem(getGroupsCacheKey(userId), JSON.stringify(next));
+  } catch {}
+  return next;
+}
+
+export function removeGroupFromCache(groupId, userId) {
+  if (!groupId) return groupsCache;
+  const next = groupsCache.filter((g) => g && g.id !== groupId);
+  groupsCache = next;
+  try {
+    const keys = [getGroupsCacheKey(userId), "circle_groups_cache"];
+    keys.forEach((key) => {
+      const raw = localStorage.getItem(key);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        localStorage.setItem(key, JSON.stringify(parsed.filter((g) => g && g.id !== groupId)));
+      }
+    });
   } catch {}
   return next;
 }

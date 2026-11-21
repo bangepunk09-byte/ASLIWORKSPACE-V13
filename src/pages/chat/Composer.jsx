@@ -31,6 +31,7 @@ function readStickerDraft() {
 }
 
 export function StickerMaker({ onCreated, onClose }) {
+  const { t: tr } = useApp();
   const initialDraft = readStickerDraft();
   const [tab, setTab] = useState(initialDraft?.tab || "custom"); // "custom" | "image"
   const [name, setName] = useState(initialDraft?.name ?? "SIAP MANDAN");
@@ -102,7 +103,7 @@ export function StickerMaker({ onCreated, onClose }) {
     <div className="w-[320px] sm:w-[360px] p-1 space-y-3" data-testid="sticker-maker-modal">
       <div className="flex items-center justify-between border-b pb-2">
         <h4 className="flex items-center gap-1.5 text-sm font-bold text-ink">
-          <Sparkles size={16} className="text-brand" /> Pembuat Stiker Kustom
+          <Sparkles size={16} className="text-brand" /> {tr("chat_sticker_maker_title", "Pembuat Stiker Kustom")}
         </h4>
         <button type="button" onClick={onClose} className="text-sub hover:text-ink"><X size={16} /></button>
       </div>
@@ -113,14 +114,14 @@ export function StickerMaker({ onCreated, onClose }) {
           onClick={() => setTab("custom")}
           className={`flex-1 rounded-lg py-1.5 transition-colors ${tab === "custom" ? "bg-surface text-brand shadow-xs" : "text-sub"}`}
         >
-          Desain Teks & Emoji
+          {tr("chat_sticker_tab_text", "Desain Teks & Emoji")}
         </button>
         <button
           type="button"
           onClick={() => setTab("image")}
           className={`flex-1 rounded-lg py-1.5 transition-colors ${tab === "image" ? "bg-surface text-brand shadow-xs" : "text-sub"}`}
         >
-          Unggah Gambar
+          {tr("chat_sticker_tab_img", "Unggah Gambar")}
         </button>
       </div>
 
@@ -128,16 +129,16 @@ export function StickerMaker({ onCreated, onClose }) {
         <div className="space-y-3">
           {/* Live Preview */}
           <div className="flex flex-col items-center justify-center p-3 rounded-2xl border bg-surface2/40">
-            <span className="text-[11px] font-bold text-sub mb-2">Live Preview:</span>
+            <span className="text-[11px] font-bold text-sub mb-2">{tr("chat_sticker_preview_label", "Live Preview:")}</span>
             <StickerTile s={{ name: name || "TEKS STIKER", emoji, bg }} size={96} />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-sub mb-1">Teks / Pesan Stiker:</label>
+            <label className="block text-xs font-semibold text-sub mb-1">{tr("chat_sticker_text_label", "Teks / Pesan Stiker:")}</label>
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="mis. SIAP MANDAN, REVISI, APPROVED"
+              placeholder={tr("chat_sticker_text_ph", "mis. SIAP MANDAN, REVISI, APPROVED")}
               maxLength={20}
               className="h-9 w-full rounded-xl border bg-surface px-3 text-xs outline-none focus:ring-1 focus:ring-brand font-semibold"
               data-testid="sticker-name-input"
@@ -145,7 +146,7 @@ export function StickerMaker({ onCreated, onClose }) {
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-sub mb-1">Pilih Ikon Emoji:</label>
+            <label className="block text-xs font-semibold text-sub mb-1">{tr("chat_sticker_emoji_label", "Pilih Ikon Emoji:")}</label>
             <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto p-1 border rounded-xl bg-surface">
               {EMOJI_LIST.map((em) => (
                 <button
@@ -161,7 +162,7 @@ export function StickerMaker({ onCreated, onClose }) {
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-sub mb-1">Warna Background:</label>
+            <label className="block text-xs font-semibold text-sub mb-1">{tr("chat_sticker_bg_label", "Warna Background:")}</label>
             <div className="flex items-center gap-1.5">
               {STICKER_COLORS.map((c) => (
                 <button
@@ -183,7 +184,7 @@ export function StickerMaker({ onCreated, onClose }) {
             className="btn-accent w-full h-9 rounded-xl text-xs font-bold shadow-xs disabled:opacity-50"
             data-testid="save-custom-sticker-btn"
           >
-            {busy ? "Menyimpan..." : "Simpan & Gunakan Stiker"}
+            {busy ? tr("chat_sticker_saving", "Menyimpan...") : tr("chat_sticker_save_btn", "Simpan & Gunakan Stiker")}
           </button>
         </div>
       ) : (
@@ -191,8 +192,8 @@ export function StickerMaker({ onCreated, onClose }) {
           <input ref={fileRef} type="file" accept="image/*" hidden onChange={handleImageUpload} />
           <div className="border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-2xl p-6 bg-surface2/30">
             <Upload size={28} className="mx-auto text-brand mb-2" />
-            <p className="text-xs font-bold text-ink">Unggah Gambar dari Perangkat</p>
-            <p className="text-[11px] text-sub mt-1">Format PNG, JPG, GIF, atau WebP</p>
+            <p className="text-xs font-bold text-ink">{tr("chat_sticker_upload_title", "Unggah Gambar dari Perangkat")}</p>
+            <p className="text-[11px] text-sub mt-1">{tr("chat_sticker_upload_desc", "Format PNG, JPG, GIF, atau WebP")}</p>
             <button
               type="button"
               disabled={busy}
@@ -200,7 +201,7 @@ export function StickerMaker({ onCreated, onClose }) {
               className="btn-accent mt-3 h-9 px-4 text-xs font-bold"
               data-testid="upload-image-sticker-btn"
             >
-              {busy ? "Mengunggah..." : "Pilih File Gambar"}
+              {busy ? tr("chat_sticker_uploading", "Mengunggah...") : tr("chat_sticker_pick_img", "Pilih File Gambar")}
             </button>
           </div>
         </div>
@@ -221,7 +222,7 @@ function normalizeStickerCategory(cat) {
 }
 
 function StickerPicker({ onPick }) {
-  const { subscribe } = useApp();
+  const { subscribe, t: tr } = useApp();
   const [data, setData] = useState(STICKERS_CACHE);
   const [cat, setCat] = useState(() => STICKERS_CACHE?.packs?.[0]?.category || "Kerja & Memes");
   const [q, setQ] = useState("");
@@ -312,7 +313,7 @@ function StickerPicker({ onPick }) {
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Cari stiker..."
+          placeholder={tr("chat_sticker_search_ph", "Cari stiker...")}
           className="h-9 flex-1 bg-transparent text-xs outline-none font-medium"
           data-testid="sticker-search-input"
         />
@@ -324,7 +325,7 @@ function StickerPicker({ onPick }) {
           data-testid="sticker-create-btn"
         >
           <Plus size={13} />
-          <span>Bikin</span>
+          <span>{tr("chat_sticker_create_btn", "Bikin")}</span>
         </button>
       </div>
 
@@ -372,13 +373,13 @@ function StickerPicker({ onPick }) {
         ))}
         {!list.length && (
           <div className="col-span-4 py-8 text-center">
-            <p className="text-xs font-semibold text-sub">Belum ada stiker di kategori ini.</p>
+            <p className="text-xs font-semibold text-sub">{tr("chat_sticker_empty", "Belum ada stiker di kategori ini.")}</p>
             <button
               type="button"
               onClick={() => setMakerOpen(true)}
               className="mt-2 inline-flex items-center gap-1 rounded-xl bg-brand/10 px-3 py-1.5 text-xs font-bold text-brand hover:bg-brand/20"
             >
-              <Plus size={13} /> Buat Stiker Sekarang
+              <Plus size={13} /> {tr("chat_sticker_create_now", "Buat Stiker Sekarang")}
             </button>
           </div>
         )}
@@ -388,7 +389,7 @@ function StickerPicker({ onPick }) {
 }
 
 export default function Composer({ conv, reply, onCancelReply, onSent, onPoll, isCircleConv, onOpenFeatureHub }) {
-  const { me, send, userMap } = useApp();
+  const { me, send, userMap, t: tr } = useApp();
   const [text, setText] = useState("");
   const [files, setFiles] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -509,6 +510,7 @@ export default function Composer({ conv, reply, onCancelReply, onSent, onPoll, i
     : [];
 
   const pickSlashCommand = (item) => {
+    playSound("pop");
     const val = item.instant ? item.command : (item.template || `${item.command} `);
     setText(val);
     setSlashIndex(0);
@@ -517,14 +519,14 @@ export default function Composer({ conv, reply, onCancelReply, onSent, onPoll, i
 
   return (
     <div className="border-t bg-surface px-3 pt-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] sm:px-4" data-testid="message-composer">
-      {reply && <div className="mb-2 flex items-center gap-2 rounded-xl bg-surface2 px-3 py-2 text-xs"><span className="flex-1 truncate">Membalas <b>{userMap[reply.sender_id]?.name}</b>: {reply.text}</span><button onClick={onCancelReply} aria-label="Batal balas"><X size={14} /></button></div>}
+      {reply && <div className="mb-2 flex items-center gap-2 rounded-xl bg-surface2 px-3 py-2 text-xs"><span className="flex-1 truncate">{tr("chat_composer_replying_prefix", "Membalas")} <b>{userMap[reply.sender_id]?.name}</b>: {reply.text}</span><button onClick={onCancelReply} aria-label={tr("common_cancel", "Batal")}><X size={14} /></button></div>}
       {files.length > 0 && (
         <div className="mb-2 flex gap-2 overflow-x-auto no-scrollbar" data-testid="composer-attachments">
           {files.map((f) => (
             <div key={f.key} className="relative flex h-16 shrink-0 items-center gap-2 rounded-xl border bg-surface2 px-2">
               {f.preview ? <img src={f.preview} alt="" className="h-12 w-12 rounded-lg object-cover" /> : <FileText size={18} className="text-sub" />}
-              <span className="max-w-[120px] truncate text-xs">{f.uploading ? "Mengunggah…" : f.name}</span>
-              <button onClick={() => setFiles(files.filter((x) => x.key !== f.key))} className="absolute -right-1 -top-1 rounded-full bg-ink p-0.5 text-[var(--c-surface)]" aria-label="Hapus lampiran"><X size={10} /></button>
+              <span className="max-w-[120px] truncate text-xs">{f.uploading ? tr("chat_composer_uploading", "Mengunggah…") : f.name}</span>
+              <button onClick={() => setFiles(files.filter((x) => x.key !== f.key))} className="absolute -right-1 -top-1 rounded-full bg-ink p-0.5 text-[var(--c-surface)]" aria-label={tr("common_delete", "Hapus")}><X size={10} /></button>
             </div>
           ))}
         </div>
@@ -533,7 +535,7 @@ export default function Composer({ conv, reply, onCancelReply, onSent, onPoll, i
       {matchingSlash.length > 0 && (
         <div className="mb-2 max-h-60 overflow-y-auto rounded-2xl border border-subtle bg-surface p-1.5 shadow-xl scroll-thin" data-testid="circle-slash-autocomplete">
           <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-sub">
-            Perintah Cepat Circle ({matchingSlash.length}) · Tab/Klik untuk pilih
+            {tr("chat_composer_slash_hint", "Perintah Cepat Circle")} ({matchingSlash.length}) {tr("chat_composer_slash_sub", "· Tab/Klik untuk pilih")}
           </div>
           {matchingSlash.map((item, idx) => (
             <button
@@ -571,7 +573,7 @@ export default function Composer({ conv, reply, onCancelReply, onSent, onPoll, i
           )}
 
           {/* Mobile consolidated '+' tools menu so textarea gets generous width */}
-          <Popover open={mobileToolsOpen} onOpenChange={(o) => { setMobileToolsOpen(o); if (o) setMobileTab("actions"); }}>
+          <Popover open={mobileToolsOpen} onOpenChange={(o) => { if (o) playSound("pop"); setMobileToolsOpen(o); if (o) setMobileTab("actions"); }}>
             <PopoverTrigger asChild>
               <button
                 type="button"
@@ -584,9 +586,9 @@ export default function Composer({ conv, reply, onCancelReply, onSent, onPoll, i
             </PopoverTrigger>
             <PopoverContent className="w-[min(20rem,calc(100vw-1.5rem))] bg-surface p-2.5 sm:hidden" align="start" sideOffset={8}>
               <div className="mb-2 flex gap-1 rounded-xl bg-surface2 p-1 text-xs font-semibold">
-                <button type="button" onClick={() => setMobileTab("actions")} className={`flex-1 rounded-lg py-1.5 transition-colors ${mobileTab === "actions" ? "bg-surface text-ink shadow-xs font-bold" : "text-sub"}`}>Menu</button>
-                <button type="button" onClick={() => setMobileTab("emoji")} className={`flex-1 rounded-lg py-1.5 transition-colors ${mobileTab === "emoji" ? "bg-surface text-ink shadow-xs font-bold" : "text-sub"}`}>Emoji</button>
-                <button type="button" onClick={() => setMobileTab("sticker")} className={`flex-1 rounded-lg py-1.5 transition-colors ${mobileTab === "sticker" ? "bg-surface text-ink shadow-xs font-bold" : "text-sub"}`}>Stiker</button>
+                <button type="button" onClick={() => setMobileTab("actions")} className={`flex-1 rounded-lg py-1.5 transition-colors ${mobileTab === "actions" ? "bg-surface text-ink shadow-xs font-bold" : "text-sub"}`}>{tr("chat_composer_mobile_menu", "Menu")}</button>
+                <button type="button" onClick={() => setMobileTab("emoji")} className={`flex-1 rounded-lg py-1.5 transition-colors ${mobileTab === "emoji" ? "bg-surface text-ink shadow-xs font-bold" : "text-sub"}`}>{tr("chat_composer_mobile_emoji", "Emoji")}</button>
+                <button type="button" onClick={() => setMobileTab("sticker")} className={`flex-1 rounded-lg py-1.5 transition-colors ${mobileTab === "sticker" ? "bg-surface text-ink shadow-xs font-bold" : "text-sub"}`}>{tr("chat_composer_mobile_sticker", "Stiker")}</button>
               </div>
               {mobileTab === "actions" && (
                 <div className={`grid gap-2 ${conv.type === "group" ? "grid-cols-3" : "grid-cols-2"}`}>
@@ -597,7 +599,7 @@ export default function Composer({ conv, reply, onCancelReply, onSent, onPoll, i
                     data-testid="mobile-attach-image-btn"
                   >
                     <ImageIcon size={18} className="text-brand" />
-                    <span>Foto</span>
+                    <span>{tr("chat_composer_photo", "Foto")}</span>
                   </button>
                   <button
                     type="button"
@@ -606,7 +608,7 @@ export default function Composer({ conv, reply, onCancelReply, onSent, onPoll, i
                     data-testid="mobile-attach-file-btn"
                   >
                     <Paperclip size={18} className="text-blue-500" />
-                    <span>File</span>
+                    <span>{tr("chat_composer_file", "File")}</span>
                   </button>
                   {conv.type === "group" && (
                     <button
@@ -616,7 +618,7 @@ export default function Composer({ conv, reply, onCancelReply, onSent, onPoll, i
                       data-testid="mobile-composer-poll-btn"
                     >
                       <BarChart3 size={18} className="text-emerald-500" />
-                      <span>Polling</span>
+                      <span>{tr("chat_composer_poll", "Polling")}</span>
                     </button>
                   )}
                 </div>
@@ -627,7 +629,7 @@ export default function Composer({ conv, reply, onCancelReply, onSent, onPoll, i
                     <button
                       key={e}
                       type="button"
-                      onClick={() => setText((t) => t + e)}
+                      onClick={() => { playSound("pop"); setText((t) => t + e); }}
                       className="flex h-8 w-full items-center justify-center rounded-lg text-lg hover:bg-surface2"
                     >
                       {e}
@@ -644,7 +646,7 @@ export default function Composer({ conv, reply, onCancelReply, onSent, onPoll, i
           {/* Desktop inline toolbar */}
           <div className="hidden sm:flex items-center">
             <Popover><PopoverTrigger asChild><button className="btn-ghost flex h-10 w-10 items-center justify-center text-sub" aria-label="Emoji" data-testid="emoji-picker-btn"><Smile size={19} /></button></PopoverTrigger>
-              <PopoverContent className="w-72 max-w-[calc(100vw-2rem)] bg-surface p-2" align="start"><div className="grid grid-cols-8 gap-1" data-testid="emoji-picker">{EMOJIS.map((e) => <button key={e} onClick={() => setText((t) => t + e)} className="h-8 rounded-lg text-lg hover:bg-surface2">{e}</button>)}</div></PopoverContent></Popover>
+              <PopoverContent className="w-72 max-w-[calc(100vw-2rem)] bg-surface p-2" align="start"><div className="grid grid-cols-8 gap-1" data-testid="emoji-picker">{EMOJIS.map((e) => <button key={e} onClick={() => { playSound("pop"); setText((t) => t + e); }} className="h-8 rounded-lg text-lg hover:bg-surface2">{e}</button>)}</div></PopoverContent></Popover>
             <Popover><PopoverTrigger asChild><button className="btn-ghost flex h-10 w-10 items-center justify-center text-sub" aria-label="Stiker" data-testid="sticker-picker-btn"><Sticker size={19} /></button></PopoverTrigger>
               <PopoverContent className="w-auto max-w-[calc(100vw-2rem)] bg-surface p-3" align="start"><StickerPicker onPick={(s) => post({ type: "sticker", sticker_id: s.id, sticker: s, reply_to: reply?.id }).then((ok) => ok && onCancelReply?.())} /></PopoverContent></Popover>
             <button type="button" onClick={() => imgRef.current.click()} className="btn-ghost flex h-10 w-10 items-center justify-center text-sub" aria-label="Lampirkan gambar" data-testid="attach-image-btn"><ImageIcon size={19} /></button>
@@ -655,7 +657,7 @@ export default function Composer({ conv, reply, onCancelReply, onSent, onPoll, i
           <input ref={imgRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
           <input ref={fileRef} type="file" multiple hidden onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} data-testid="attach-file-input" />
         </div>
-        <textarea ref={ta} rows={1} value={text} onChange={(e) => { setSlashIndex(0); onChange(e); }} placeholder={conv.archived ? "Grup ini telah diarsipkan" : circleMode ? "Tanya atau ketik / perintah…" : "Tulis pesan…"} disabled={conv.archived}
+        <textarea ref={ta} rows={1} value={text} onChange={(e) => { setSlashIndex(0); onChange(e); }} placeholder={conv.archived ? tr("chat_composer_ph_archived", "Grup ini telah diarsipkan") : circleMode ? tr("chat_composer_ph_circle", "Tanya atau ketik / perintah…") : tr("chat_composer_ph_default", "Tulis pesan…")} disabled={conv.archived}
           onKeyDown={(e) => {
             if (matchingSlash.length > 0) {
               if (e.key === "ArrowDown") { e.preventDefault(); setSlashIndex((i) => (i + 1) % matchingSlash.length); return; }

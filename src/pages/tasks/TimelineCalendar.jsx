@@ -38,7 +38,7 @@ function segmentClass(status, severity) {
 }
 
 export function Timeline({ tasks, onOpen, onPatchTask, reload, initialFilterMode = "all" }) {
-  const { labelMap, userMap, me } = useApp();
+  const { labelMap, userMap, me, t: tr } = useApp();
   const [start, setStart] = useState(() => addDays(startOfWeek(new Date(), { weekStartsOn: 1 }), -7));
   const [filterMode, setFilterMode] = useState(initialFilterMode === "bottleneck" ? "bottleneck" : "all"); // "all" | "bottleneck"
   const [expandedIds, setExpandedIds] = useState(() => new Set());
@@ -189,7 +189,7 @@ export function Timeline({ tasks, onOpen, onPatchTask, reload, initialFilterMode
               }`}
               data-testid="timeline-filter-all"
             >
-              Semua ({analyzedRows.length})
+              {tr("timeline_filter_all", "Semua")} ({analyzedRows.length})
             </button>
             <button
               type="button"
@@ -204,7 +204,7 @@ export function Timeline({ tasks, onOpen, onPatchTask, reload, initialFilterMode
               data-testid="timeline-filter-bottleneck"
             >
               <AlertTriangle size={11} />
-              Bottleneck ({bottleneckRows.length})
+              {tr("timeline_filter_bottleneck", "Bottleneck")} ({bottleneckRows.length})
             </button>
           </div>
         </div>
@@ -218,7 +218,7 @@ export function Timeline({ tasks, onOpen, onPatchTask, reload, initialFilterMode
               data-testid="timeline-expand-all"
             >
               <ChevronsUpDown size={13} className="text-brand" />
-              {allExpanded ? "Tutup Flow" : "Buka Semua Flow"}
+              {allExpanded ? tr("timeline_close_flow", "Tutup Flow") : tr("timeline_open_all_flow", "Buka Semua Flow")}
             </button>
           )}
           <div className="flex items-center gap-1">
@@ -226,7 +226,7 @@ export function Timeline({ tasks, onOpen, onPatchTask, reload, initialFilterMode
               type="button"
               onClick={() => setStart(addDays(start, -14))}
               className="btn-ghost flex h-8 w-8 items-center justify-center cursor-pointer"
-              aria-label="Sebelumnya"
+              aria-label={tr("timeline_prev", "Sebelumnya")}
               data-testid="timeline-prev"
             >
               <ChevronLeft size={16} />
@@ -236,13 +236,13 @@ export function Timeline({ tasks, onOpen, onPatchTask, reload, initialFilterMode
               onClick={() => setStart(addDays(startOfWeek(new Date(), { weekStartsOn: 1 }), -7))}
               className="btn-ghost h-8 px-2.5 text-xs font-semibold cursor-pointer"
             >
-              Hari Ini
+              {tr("timeline_today", "Hari Ini")}
             </button>
             <button
               type="button"
               onClick={() => setStart(addDays(start, 14))}
               className="btn-ghost flex h-8 w-8 items-center justify-center cursor-pointer"
-              aria-label="Berikutnya"
+              aria-label={tr("timeline_next", "Berikutnya")}
               data-testid="timeline-next"
             >
               <ChevronRight size={16} />
@@ -257,7 +257,7 @@ export function Timeline({ tasks, onOpen, onPatchTask, reload, initialFilterMode
           <div className="flex flex-wrap items-center gap-1.5" data-testid="timeline-bottleneck-radar">
             <span className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-600 dark:text-rose-400 mr-1">
               <AlertTriangle size={12} />
-              Deteksi Bottleneck:
+              {tr("timeline_bottleneck_detect", "Deteksi Bottleneck:")}
             </span>
             {bottleneckRows.slice(0, 5).map((row) => {
               const bn = row.primaryBottleneck;
@@ -290,7 +290,7 @@ export function Timeline({ tasks, onOpen, onPatchTask, reload, initialFilterMode
                 onClick={() => setFilterMode("bottleneck")}
                 className="text-[11px] font-bold text-rose-600 hover:underline px-1 cursor-pointer"
               >
-                +{bottleneckRows.length - 5} lainnya
+                +{bottleneckRows.length - 5} {tr("timeline_more_suffix", "lainnya")}
               </button>
             )}
           </div>
@@ -300,27 +300,27 @@ export function Timeline({ tasks, onOpen, onPatchTask, reload, initialFilterMode
           <div className="flex flex-wrap items-center gap-3">
             <span className="inline-flex items-center gap-1.5">
               <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
-              Selesai
+              {tr("timeline_legend_done", "Selesai")}
             </span>
             <span className="inline-flex items-center gap-1.5">
               <span className="h-2.5 w-2.5 rounded-full bg-sky-500" />
-              Sedang Dikerjakan
+              {tr("timeline_legend_active", "Sedang Dikerjakan")}
             </span>
             <span className="inline-flex items-center gap-1.5">
               <span className="h-2.5 w-2.5 rounded-full bg-slate-300 dark:bg-slate-600" />
-              Menunggu Estafet
+              {tr("timeline_legend_waiting", "Menunggu Estafet")}
             </span>
             <span className="inline-flex items-center gap-1.5">
               <span className="h-2.5 w-2.5 rounded-full bg-rose-500" />
-              Bottleneck (Telat / Kendala)
+              {tr("timeline_legend_bottleneck", "Bottleneck (Telat / Kendala)")}
             </span>
             <span className="inline-flex items-center gap-1.5">
               <span className="h-2.5 w-2.5 rounded-full bg-amber-500" />
-              Mandek &gt; 2 Hari
+              {tr("timeline_legend_stalled", "Mandek > 2 Hari")}
             </span>
           </div>
           <span className="text-[10.5px] text-sub">
-            Klik panah atau bar tugas untuk lihat detail estafet tiap checkpoint &amp; PIC
+            {tr("timeline_legend_hint", "Klik panah atau bar tugas untuk lihat detail estafet tiap checkpoint & PIC")}
           </span>
         </div>
       </div>
@@ -331,8 +331,8 @@ export function Timeline({ tasks, onOpen, onPatchTask, reload, initialFilterMode
           {/* Date Header */}
           <div className="flex border-b text-[10px] text-sub bg-surface">
             <div className="sticky left-0 z-20 w-[210px] sm:w-[290px] shrink-0 border-r bg-surface px-3 py-2 font-bold text-ink flex items-center justify-between">
-              <span>Tugas &amp; Flow PIC</span>
-              <span className="text-[10px] font-medium text-sub">Tahap</span>
+              <span>{tr("timeline_col_task_flow", "Tugas & Flow PIC")}</span>
+              <span className="text-[10px] font-medium text-sub">{tr("timeline_col_stage", "Tahap")}</span>
             </div>
             <div className="relative flex" style={{ width: W * days.length }}>
               {days.map((d, i) => {
@@ -368,15 +368,15 @@ export function Timeline({ tasks, onOpen, onPatchTask, reload, initialFilterMode
             const clampedDays = Math.max(1, clampedRightDay - clampedLeftDay);
 
             const flowSubtitle = primaryBottleneck
-              ? `Bottleneck: ${primaryBottleneck.title} · ${primaryBottleneck.picShort} (${primaryBottleneck.shortReason})`
+              ? `${tr("timeline_filter_bottleneck", "Bottleneck")}: ${primaryBottleneck.title} · ${primaryBottleneck.picShort} (${primaryBottleneck.shortReason})`
               : activeStage
-              ? `Aktif: ${activeStage.title} · ${activeStage.picShort}`
+              ? `${tr("timeline_stage_active_prefix", "Aktif:")} ${activeStage.title} · ${activeStage.picShort}`
               : isTaskDone
               ? hasCps
-                ? `Selesai · ${doneCount}/${stages.length} tahap`
-                : "Selesai"
+                ? `${tr("timeline_stage_done", "Selesai")} · ${doneCount}/${stages.length} ${tr("timeline_stage_unit", "tahap")}`
+                : tr("timeline_stage_done", "Selesai")
               : hasCps
-              ? `${doneCount}/${stages.length} tahap · ${fmtShortDay(flowStart)} – ${fmtShortDay(flowEnd)}`
+              ? `${doneCount}/${stages.length} ${tr("timeline_stage_unit", "tahap")} · ${fmtShortDay(flowStart)} – ${fmtShortDay(flowEnd)}`
               : `${fmtShortDay(flowStart)} – ${fmtShortDay(flowEnd)}`;
 
             return (
@@ -595,7 +595,7 @@ export function Timeline({ tasks, onOpen, onPatchTask, reload, initialFilterMode
                             <button
                               type="button"
                               onClick={(e) => handleToggleStageDone(t, st, e)}
-                              title={st.done ? "Buka kembali tahap ini" : "Tandai tahap selesai & lanjut ke PIC berikutnya"}
+                              title={st.done ? tr("timeline_reopen_stage_title", "Buka kembali tahap ini") : tr("timeline_done_stage_title", "Tandai tahap selesai & lanjut ke PIC berikutnya")}
                               className={`flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-full border transition-colors cursor-pointer ${
                                 st.done
                                   ? "border-emerald-500 bg-emerald-500 text-white"
@@ -738,13 +738,13 @@ export function Timeline({ tasks, onOpen, onPatchTask, reload, initialFilterMode
             <div className="p-8 text-center">
               <p className="text-sm font-semibold text-ink">
                 {filterMode === "bottleneck"
-                  ? "Tidak ada bottleneck yang terdeteksi saat ini"
-                  : "Belum ada tugas yang tampil di Timeline"}
+                  ? tr("timeline_empty_bottleneck_title", "Tidak ada bottleneck yang terdeteksi saat ini")
+                  : tr("timeline_empty_title", "Belum ada tugas yang tampil di Timeline")}
               </p>
               <p className="mt-1 text-xs text-sub">
                 {filterMode === "bottleneck"
-                  ? "Semua proyek & checkpoint berjalan sesuai jadwal."
-                  : "Tugas dengan tanggal mulai, deadline, atau checkpoint otomatis tampil di sini."}
+                  ? tr("timeline_empty_bottleneck_desc", "Semua proyek & checkpoint berjalan sesuai jadwal.")
+                  : tr("timeline_empty_desc", "Tugas dengan tanggal mulai, deadline, atau checkpoint otomatis tampil di sini.")}
               </p>
             </div>
           )}
@@ -755,7 +755,7 @@ export function Timeline({ tasks, onOpen, onPatchTask, reload, initialFilterMode
 }
 
 export function Calendar({ tasks, onOpen }) {
-  const { labelMap } = useApp();
+  const { labelMap, t: tr } = useApp();
   const [events, setEvents] = useState([]);
   const [month, setMonth] = useState(startOfMonth(new Date()));
 
@@ -799,21 +799,29 @@ export function Calendar({ tasks, onOpen }) {
       <div className="flex items-center justify-between border-b p-3">
         <p className="text-sm sm:text-base font-semibold capitalize">{format(month, "MMMM yyyy", { locale: localeId })}</p>
         <div className="flex gap-1">
-          <button onClick={() => setMonth(startOfMonth(addDays(month, -1)))} className="btn-ghost flex h-9 w-9 items-center justify-center" aria-label="Bulan sebelumnya" data-testid="calendar-prev">
+          <button onClick={() => setMonth(startOfMonth(addDays(month, -1)))} className="btn-ghost flex h-9 w-9 items-center justify-center" aria-label={tr("calendar_prev_month", "Bulan sebelumnya")} data-testid="calendar-prev">
             <ChevronLeft size={16} />
           </button>
           <button onClick={() => setMonth(startOfMonth(new Date()))} className="btn-ghost h-9 px-2.5 sm:px-3 text-xs font-semibold">
-            Hari Ini
+            {tr("calendar_today", "Hari Ini")}
           </button>
-          <button onClick={() => setMonth(startOfMonth(addDays(endOfMonth(month), 1)))} className="btn-ghost flex h-9 w-9 items-center justify-center" aria-label="Bulan berikutnya" data-testid="calendar-next">
+          <button onClick={() => setMonth(startOfMonth(addDays(endOfMonth(month), 1)))} className="btn-ghost flex h-9 w-9 items-center justify-center" aria-label={tr("calendar_next_month", "Bulan berikutnya")} data-testid="calendar-next">
             <ChevronRight size={16} />
           </button>
         </div>
       </div>
       <div className="grid grid-cols-7 border-b text-center text-[11px] font-semibold text-sub">
-        {["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"].map((d) => (
-          <div key={d} className="min-w-0 py-2">
-            {d}
+        {[
+          ["mon", "Sen"],
+          ["tue", "Sel"],
+          ["wed", "Rab"],
+          ["thu", "Kam"],
+          ["fri", "Jum"],
+          ["sat", "Sab"],
+          ["sun", "Min"],
+        ].map(([dk, dl]) => (
+          <div key={dk} className="min-w-0 py-2">
+            {tr(`calendar_day_${dk}`, dl)}
           </div>
         ))}
       </div>
@@ -855,7 +863,7 @@ export function Calendar({ tasks, onOpen }) {
                   </a>
                 )
               )}
-              {list.length > 3 && <p className="text-[10px] text-sub">+{list.length - 3} lainnya</p>}
+              {list.length > 3 && <p className="text-[10px] text-sub">+{list.length - 3} {tr("calendar_more_suffix", "lainnya")}</p>}
             </div>
           );
         })}

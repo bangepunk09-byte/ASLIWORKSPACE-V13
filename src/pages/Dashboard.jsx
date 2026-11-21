@@ -61,22 +61,22 @@ const DEFAULT_WIDGET_CONFIG = {
   density: "spacious" // 'spacious' | 'normal' | 'compact'
 };
 
-const getWidgetLabels = (t) => ({
+const getWidgetLabels = (tr) => ({
   meetings: {
-    title: t("dash_meetings_title", "Jadwal Rapat Mendatang"),
-    desc: "Agenda rapat Google Calendar & Google Meet",
+    title: tr("dash_meetings_title", "Jadwal Rapat Mendatang"),
+    desc: tr("dash_meetings_desc", "Agenda rapat Google Calendar & Google Meet"),
     icon: Video,
     color: "emerald"
   },
   tasks: {
-    title: t("dash_tasks_title", "Tugas Prioritas Hari Ini"),
-    desc: "Checklist tugas operasional & deadline aktif",
+    title: tr("dash_tasks_title", "Tugas Prioritas Hari Ini"),
+    desc: tr("dash_tasks_desc", "Checklist tugas operasional & deadline aktif"),
     icon: CheckSquare,
     color: "amber"
   },
   messages: {
-    title: t("dash_messages_title", "Sticky Notes Checklist"),
-    desc: "Catatan tempel, checklist progres %, arsip & kirim ke grup",
+    title: tr("dash_messages_title", "Sticky Notes Checklist"),
+    desc: tr("dash_messages_desc", "Catatan tempel, checklist progres %, arsip & kirim ke grup"),
     icon: StickyNote,
     color: "amber"
   }
@@ -96,7 +96,7 @@ import {
 } from "./Directory";
 
 export default function Dashboard() {
-  const { me, prefs, users, t, subscribe, tasks: ctxTasks } = useApp();
+  const { me, prefs, users, t: tr, subscribe, tasks: ctxTasks } = useApp();
   // Dashboard Data Caching & Hydration
   const [tasks, setTasks] = useState(() => {
     if (Array.isArray(ctxTasks) && ctxTasks.length > 0) return ctxTasks;
@@ -386,12 +386,12 @@ export default function Dashboard() {
   const layer = bgLayer(prefs.background, prefs.background?.file_id ? fileUrl(prefs.background.file_id) : null);
   const hour = new Date().getHours();
   const greet = hour < 12
-    ? t("dash_greeting_morning", "Selamat Pagi")
+    ? tr("dash_greeting_morning", "Selamat Pagi")
     : hour < 17
-    ? t("dash_greeting_afternoon", "Selamat Siang")
+    ? tr("dash_greeting_afternoon", "Selamat Siang")
     : hour < 21
-    ? t("dash_greeting_evening", "Selamat Sore")
-    : t("dash_greeting_night", "Selamat Malam");
+    ? tr("dash_greeting_evening", "Selamat Sore")
+    : tr("dash_greeting_night", "Selamat Malam");
 
   // Data for Column 1: Meetings
   const displayMeetings = meetings.slice(0, 3);
@@ -457,13 +457,13 @@ export default function Dashboard() {
         <div className={`flex items-center justify-between gap-2 min-w-0 border-b border-slate-100 dark:border-slate-800 ${densityStyles.cardHeader}`}>
           <span className="inline-flex min-w-0 items-center gap-1.5 sm:gap-2 rounded-full border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 px-3 sm:px-3.5 py-1 text-xs font-bold text-emerald-700 dark:text-emerald-300 shadow-xs">
             <Video size={14} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
-            <span className="truncate leading-snug py-0.5">{t("dash_meetings_title", "Jadwal Rapat Mendatang")}</span>
+            <span className="truncate leading-snug py-0.5">{tr("dash_meetings_title", "Jadwal Rapat Mendatang")}</span>
           </span>
           <Link
             to="/schedule"
             className="inline-flex shrink-0 items-center gap-1 text-xs font-bold text-sky-600 hover:text-sky-700 dark:text-sky-400 transition-colors whitespace-nowrap"
           >
-            {t("dash_view_all", "Lihat Semua")} <ChevronRight size={14} />
+            {tr("dash_view_all", "Lihat Semua")} <ChevronRight size={14} />
           </Link>
         </div>
 
@@ -472,8 +472,8 @@ export default function Dashboard() {
           {displayMeetings.length === 0 ? (
             <div className="flex flex-col items-center justify-center p-6 text-center rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-dashed">
               <CalendarDays size={24} className="text-sub mb-2 opacity-50" />
-              <p className="text-xs font-semibold text-ink">{t("dash_meetings_empty", "Tidak ada meeting hari ini")}</p>
-              <p className="text-[11px] text-sub mt-0.5">{t("dash_meetings_empty_sub", "Jadwal baru akan muncul di sini")}</p>
+              <p className="text-xs font-semibold text-ink">{tr("dash_meetings_empty", "Tidak ada meeting hari ini")}</p>
+              <p className="text-[11px] text-sub mt-0.5">{tr("dash_meetings_empty_sub", "Jadwal baru akan muncul di sini")}</p>
             </div>
           ) : (
             displayMeetings.map((m) => (
@@ -505,7 +505,7 @@ export default function Dashboard() {
                   <div className="flex items-center gap-2 text-xs font-medium text-sub">
                     <AvatarStack ids={m.attendee_ids || [me?.user_id]} max={2} size={22} />
                     <span className="text-slate-600 dark:text-slate-300 font-semibold">
-                      {(m.attendee_ids?.length || 1)} peserta
+                      {(m.attendee_ids?.length || 1)} {tr("dash_meetings_participants", "peserta")}
                     </span>
                   </div>
                   <a
@@ -515,7 +515,7 @@ export default function Dashboard() {
                     className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-1.5 text-xs font-bold shadow-sm transition-all hover:scale-102 active:scale-98"
                   >
                     <Video size={13} />
-                    <span>{t("dash_meetings_join", "Gabung")}</span>
+                    <span>{tr("dash_meetings_join", "Gabung")}</span>
                     <ExternalLink size={11} />
                   </a>
                 </div>
@@ -532,7 +532,7 @@ export default function Dashboard() {
           className="flex h-11 sm:h-12 w-full items-center justify-center gap-2 rounded-full border border-slate-200/90 dark:border-slate-700 bg-surface px-4 text-xs sm:text-sm font-bold text-emerald-700 dark:text-emerald-400 hover:border-emerald-400 shadow-xs transition-all hover:scale-[1.01] active:scale-[0.99]"
         >
           <Plus size={15} />
-          <span>{t("dash_new_schedule", "Jadwal Baru")}</span>
+          <span>{tr("dash_new_schedule", "Jadwal Baru")}</span>
         </button>
       </div>
     </div>
@@ -549,13 +549,13 @@ export default function Dashboard() {
         <div className={`flex items-center justify-between gap-2 min-w-0 border-b border-slate-100 dark:border-slate-800 ${densityStyles.cardHeader}`}>
           <span className="inline-flex min-w-0 items-center gap-1.5 sm:gap-2 rounded-full border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 sm:px-3.5 py-1 text-xs font-bold text-amber-700 dark:text-amber-300 shadow-xs">
             <CheckSquare size={14} className="text-amber-600 dark:text-amber-400 shrink-0" />
-            <span className="truncate leading-snug py-0.5">{t("dash_tasks_title", "Tugas Prioritas Hari Ini")}</span>
+            <span className="truncate leading-snug py-0.5">{tr("dash_tasks_title", "Tugas Prioritas Hari Ini")}</span>
           </span>
           <Link
             to="/tasks?kanban=1"
             className="inline-flex shrink-0 items-center gap-1 text-xs font-bold text-rose-600 hover:text-rose-700 dark:text-rose-400 transition-colors whitespace-nowrap"
           >
-            {t("dash_view_kanban", "Buka Board")} <ChevronRight size={14} />
+            {tr("dash_view_kanban", "Buka Board")} <ChevronRight size={14} />
           </Link>
         </div>
 
@@ -564,8 +564,8 @@ export default function Dashboard() {
           {todayTasks.length === 0 ? (
             <div className="flex flex-col items-center justify-center p-6 text-center rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-dashed">
               <CheckSquare size={24} className="text-sub mb-2 opacity-50" />
-              <p className="text-xs font-semibold text-ink">{t("dash_tasks_empty", "Semua tugas selesai")}</p>
-              <p className="text-[11px] text-sub mt-0.5">{t("dash_tasks_empty_sub", "Belum ada tugas prioritas aktif")}</p>
+              <p className="text-xs font-semibold text-ink">{tr("dash_tasks_empty", "Semua tugas selesai")}</p>
+              <p className="text-[11px] text-sub mt-0.5">{tr("dash_tasks_empty_sub", "Belum ada tugas prioritas aktif")}</p>
             </div>
           ) : (
             todayTasks.map((t) => {
@@ -587,10 +587,10 @@ export default function Dashboard() {
                 <div className="flex items-center justify-between gap-3 mb-2.5">
                   <div className="flex items-center gap-2">
                     <span className="rounded-full bg-sky-100 dark:bg-sky-950/60 border border-sky-200 dark:border-sky-800 px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider text-sky-700 dark:text-sky-300">
-                      {({ low: "Rendah", medium: "Sedang", high: "Tinggi", urgent: "Urgent" }[String(t.priority || "medium").toLowerCase()] || t.priority || "Sedang")}
+                      {({ low: tr("common_priority_low", "Rendah"), medium: tr("common_priority_medium", "Sedang"), high: tr("common_priority_high", "Tinggi"), urgent: tr("common_priority_urgent", "Urgent") }[String(t.priority || "medium").toLowerCase()] || t.priority || tr("common_priority_medium", "Sedang"))}
                     </span>
                     <span className="rounded-full bg-purple-100 dark:bg-purple-950/60 border border-purple-200 dark:border-purple-800 px-2.5 py-0.5 text-[10px] font-bold text-purple-700 dark:text-purple-300">
-                      {t.label || "Umum"}
+                      {t.label || tr("dash_tasks_general_label", "Umum")}
                     </span>
                   </div>
 
@@ -603,7 +603,7 @@ export default function Dashboard() {
                         ? "bg-emerald-500 text-white shadow-xs"
                         : "border-2 border-slate-300 hover:border-emerald-500 dark:border-slate-600"
                     }`}
-                    title={isDone ? "Tandai belum selesai" : "Tandai selesai"}
+                    title={isDone ? tr("dash_tasks_mark_undone", "Tandai belum selesai") : tr("dash_tasks_mark_done", "Tandai selesai")}
                   >
                     {isDone && <CheckCircle2 size={16} strokeWidth={2.5} />}
                   </button>
@@ -622,7 +622,7 @@ export default function Dashboard() {
                 <div className="mt-3.5 flex items-center justify-between text-xs font-semibold text-slate-500 dark:text-slate-400 pt-2.5 border-t border-slate-200/50 dark:border-slate-800/60">
                   <span className="flex items-center gap-1.5">
                     <Clock size={12} />
-                    <span>Deadline: {t.deadline ? t.deadline.slice(0, 10) : "Tanpa deadline"}</span>
+                    <span>Deadline: {t.deadline ? t.deadline.slice(0, 10) : tr("dash_tasks_no_deadline", "Tanpa deadline")}</span>
                   </span>
                   <span>
                     {checkpointDone}/{checkpointTotal} Checklist
@@ -642,7 +642,7 @@ export default function Dashboard() {
           className="flex h-12 w-full items-center justify-center gap-2 rounded-full border border-slate-200/90 dark:border-slate-700 bg-surface px-4 text-xs sm:text-sm font-bold text-sub hover:text-ink hover:border-slate-400 dark:hover:border-slate-500 shadow-xs transition-all hover:scale-[1.01] active:scale-[0.99]"
         >
           <Plus size={15} className="text-rose-500" />
-          <span>{t("dash_add_task_item", "Tugas Baru")}</span>
+          <span>{tr("dash_add_task_item", "Tugas Baru")}</span>
         </button>
       </div>
     </div>
@@ -678,7 +678,7 @@ export default function Dashboard() {
               data-testid="dashboard-new-task-btn"
               className="col-span-2 sm:col-span-1 h-10 w-full sm:w-auto justify-center"
             >
-              <Plus size={16} /> {t("dash_new_task")}
+              <Plus size={16} /> {tr("dash_new_task", "Tugas Baru")}
             </AccentButton>
 
             <GhostButton
@@ -686,7 +686,7 @@ export default function Dashboard() {
               data-testid="dashboard-background-btn"
               className="h-10 w-full min-w-0 sm:w-auto justify-center text-xs sm:text-sm px-2.5 sm:px-4"
             >
-              <Image size={15} className="shrink-0" /> <span className="truncate">{t("dash_background")}</span>
+              <Image size={15} className="shrink-0" /> <span className="truncate">{tr("dash_background", "Latar Dashboard")}</span>
             </GhostButton>
 
             <GhostButton
@@ -698,7 +698,7 @@ export default function Dashboard() {
               className="h-10 w-full min-w-0 sm:w-auto justify-center border-slate-200 dark:border-slate-700 font-semibold text-xs sm:text-sm px-2.5 sm:px-4 shadow-xs hover:border-slate-300 dark:hover:border-slate-600"
             >
               <SlidersHorizontal size={15} className="text-rose-500 shrink-0" />
-              <span className="truncate">{t("dash_customize_layout")}</span>
+              <span className="truncate">{tr("dash_customize_layout", "Atur Tata Letak")}</span>
             </GhostButton>
           </div>
         </div>
@@ -739,15 +739,15 @@ export default function Dashboard() {
         ) : (
           <div className="rounded-3xl border border-dashed border-slate-300 dark:border-slate-700 p-12 text-center bg-white/50 dark:bg-slate-900/50">
             <LayoutGrid size={32} className="mx-auto text-sub mb-3" />
-            <h3 className="font-bold text-ink text-lg">Semua widget utama disembunyikan</h3>
+            <h3 className="font-bold text-ink text-lg">{tr("dash_widgets_hidden_title", "Semua widget utama disembunyikan")}</h3>
             <p className="text-sub text-sm mt-1 max-w-md mx-auto">
-              Anda dapat mengaktifkan kembali widget melalui menu Atur Tata Letak di pojok kanan atas.
+              {tr("dash_widgets_hidden_desc", "Anda dapat mengaktifkan kembali widget melalui menu Atur Tata Letak di pojok kanan atas.")}
             </p>
             <button
               onClick={resetLayout}
               className="btn-accent mt-5 px-5 py-2.5 text-sm font-semibold inline-flex items-center gap-2"
             >
-              <RotateCcw size={15} /> Reset ke Tampilan Standar
+              <RotateCcw size={15} /> {tr("dash_widgets_reset_btn", "Reset ke Tampilan Standar")}
             </button>
           </div>
         )}
@@ -765,14 +765,14 @@ export default function Dashboard() {
                 <div className="flex flex-wrap items-center gap-2 min-w-0">
                   <span className="inline-flex max-w-full min-w-0 items-center gap-1.5 sm:gap-2 rounded-full border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 px-3 sm:px-3.5 py-1 text-xs font-bold text-rose-700 dark:text-rose-300">
                     <FolderKanban size={14} className="text-brand shrink-0" />
-                    <span className="truncate leading-snug py-0.5">{t("dash_drive_title", "Direktori Shortcut Google Drive")}</span>
+                    <span className="truncate leading-snug py-0.5">{tr("dash_drive_title", "Direktori Shortcut Google Drive")}</span>
                   </span>
                   <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 px-2.5 sm:px-3 py-1 text-[11px] sm:text-xs font-bold text-emerald-700 dark:text-emerald-300 shrink-0">
-                    <ShieldCheck size={13} /> Akses Anda ({accessibleDashboardShortcuts.length})
+                    <ShieldCheck size={13} /> {tr("dash_drive_your_access", "Akses Anda")} ({accessibleDashboardShortcuts.length})
                   </span>
                 </div>
                 <p className="mt-1.5 text-xs sm:text-sm text-sub break-words">
-                  {t("dash_drive_subtitle", "Akses cepat ke folder Google Drive sesuai otorisasi akun Anda.")} ({me?.name} · {me?.department || "Management"}).
+                  {tr("dash_drive_subtitle", "Akses cepat ke folder Google Drive sesuai otorisasi akun Anda.")} ({me?.name} · {me?.department || "Management"}).
                 </p>
               </div>
 
@@ -787,14 +787,14 @@ export default function Dashboard() {
                   data-testid="dashboard-add-drive-shortcut-btn"
                 >
                   <Plus size={15} className="shrink-0" />
-                  <span className="truncate">{t("dash_drive_add", "Tambah Shortcut")}</span>
+                  <span className="truncate">{tr("dash_drive_add", "Tambah Shortcut")}</span>
                 </button>
                 <Link
                   to="/directory"
                   className="inline-flex h-10 min-w-0 items-center justify-center gap-1 rounded-full border bg-surface px-2.5 sm:px-4 text-xs sm:text-sm font-bold text-sub hover:text-ink transition-colors"
                   data-testid="dashboard-open-directory-link"
                 >
-                  <span className="truncate">{t("dash_drive_manage", "Kelola Direktori")}</span>
+                  <span className="truncate">{tr("dash_drive_manage", "Kelola Direktori")}</span>
                   <ChevronRight size={14} className="shrink-0" />
                 </Link>
               </div>
@@ -815,7 +815,7 @@ export default function Dashboard() {
                         : "border bg-surface text-sub hover:text-ink"
                     }`}
                   >
-                    {cat === "ALL" ? "Semua Folder Akses Saya" : cat}
+                    {cat === "ALL" ? tr("dash_drive_all_my_folders", "Semua Folder Akses Saya") : cat}
                   </button>
                 );
               })}
@@ -824,9 +824,9 @@ export default function Dashboard() {
             {displayedDriveShortcuts.length === 0 ? (
               <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed bg-slate-50/70 dark:bg-slate-800/40 p-8 text-center">
                 <FolderKanban size={28} className="text-sub mb-2 opacity-60" />
-                <p className="text-sm font-bold text-ink">Belum ada shortcut folder untuk kategori ini</p>
+                <p className="text-sm font-bold text-ink">{tr("dash_drive_empty_title", "Belum ada shortcut folder untuk kategori ini")}</p>
                 <p className="text-xs text-sub mt-1 max-w-md">
-                  Tambahkan shortcut folder Google Drive baru atau atur hak akses member melalui halaman Direktori.
+                  {tr("dash_drive_empty_desc", "Tambahkan shortcut folder Google Drive baru atau atur hak akses member melalui halaman Direktori.")}
                 </p>
               </div>
             ) : (
@@ -904,7 +904,7 @@ export default function Dashboard() {
                           </div>
 
                           <p className="mt-2.5 sm:mt-3 line-clamp-2 text-xs sm:text-sm text-sub leading-relaxed break-words">
-                            {s.description || "Shortcut folder Google Drive terhubung langsung."}
+                            {s.description || tr("dash_drive_default_desc", "Shortcut folder Google Drive terhubung langsung.")}
                           </p>
                         </div>
 
@@ -918,7 +918,7 @@ export default function Dashboard() {
                               title="Atur siapa saja member yang punya akses"
                             >
                               <ShieldCheck size={13} className="text-brand shrink-0" />
-                              <span className="truncate">Atur Akses ({memberIds.length})</span>
+                              <span className="truncate">{tr("dash_drive_manage_access", "Atur Akses")} ({memberIds.length})</span>
                             </button>
                           </div>
 
@@ -928,7 +928,7 @@ export default function Dashboard() {
                             rel="noopener noreferrer"
                             className="btn-accent inline-flex h-8 sm:h-9 shrink-0 items-center gap-1.5 rounded-full px-3 sm:px-3.5 text-xs font-bold text-white shadow-xs whitespace-nowrap"
                           >
-                            <span>{t("dash_drive_open", "Buka Folder")}</span>
+                            <span>{tr("dash_drive_open", "Buka Folder")}</span>
                             <ExternalLink size={12} />
                           </a>
                         </div>
@@ -943,7 +943,7 @@ export default function Dashboard() {
                     className="mt-3.5 sm:hidden w-full rounded-2xl border bg-surface2/60 py-2.5 text-xs font-bold text-sub hover:text-ink transition-colors"
                     data-testid="dashboard-drive-toggle-all"
                   >
-                    {showAllMobileDrive ? "Tampilkan lebih sedikit" : `Lihat semua folder (${displayedDriveShortcuts.length})`}
+                    {showAllMobileDrive ? tr("dash_drive_show_less", "Tampilkan lebih sedikit") : `${tr("dash_drive_show_all_prefix", "Lihat semua folder")} (${displayedDriveShortcuts.length})`}
                   </button>
                 )}
               </>
@@ -963,9 +963,9 @@ export default function Dashboard() {
                 <SlidersHorizontal size={20} />
               </span>
               <div>
-                <SheetTitle className="text-lg font-bold">Atur Tata Letak Widget</SheetTitle>
+                <SheetTitle className="text-lg font-bold">{tr("dash_layout_title", "Atur Tata Letak Widget")}</SheetTitle>
                 <SheetDescription className="text-xs text-sub mt-0.5">
-                  Atur urutan kartu, visibilitas widget, dan kerapatan tampilan dashboard Anda.
+                  {tr("dash_layout_desc", "Atur urutan kartu, visibilitas widget, dan kerapatan tampilan dashboard Anda.")}
                 </SheetDescription>
               </div>
             </div>
@@ -974,13 +974,13 @@ export default function Dashboard() {
           {/* Section 1: Kerapatan & Jarak Tampilan (Spacing Audit) */}
           <div className="space-y-3">
             <label className="block text-xs font-bold uppercase tracking-wider text-sub">
-              Kerapatan Margin & Spacing
+              {tr("dash_layout_density_label", "Kerapatan Margin & Spacing")}
             </label>
             <div className="grid grid-cols-3 gap-2.5">
               {[
-                { id: "spacious", label: "Lega & Luas", desc: "Margin lega", badge: "Lega" },
-                { id: "normal", label: "Standar", desc: "Proporsional", badge: "Normal" },
-                { id: "compact", label: "Kompak", desc: "Hemat ruang", badge: "Padat" }
+                { id: "spacious", label: tr("dash_layout_density_spacious", "Lega & Luas"), desc: tr("dash_layout_density_spacious_desc", "Margin lega") },
+                { id: "normal", label: tr("dash_layout_density_normal", "Standar"), desc: tr("dash_layout_density_normal_desc", "Proporsional") },
+                { id: "compact", label: tr("dash_layout_density_compact", "Kompak"), desc: tr("dash_layout_density_compact_desc", "Hemat ruang") }
               ].map((d) => {
                 const active = (widgetLayout.density || "spacious") === d.id;
                 return (
@@ -1007,13 +1007,13 @@ export default function Dashboard() {
           {/* Section 2: Format Tata Letak Grid */}
           <div className="space-y-3">
             <label className="block text-xs font-bold uppercase tracking-wider text-sub">
-              Format Kolom Grid
+              {tr("dash_layout_grid_label", "Format Kolom Grid")}
             </label>
             <div className="grid grid-cols-3 gap-2.5">
               {[
-                { id: "3col", label: "3 Kolom", icon: LayoutGrid, desc: "Seimbang" },
-                { id: "2col", label: "2 Kolom", icon: Columns, desc: "Lebar" },
-                { id: "focus", label: "1 Kolom", icon: Maximize2, desc: "Fokus" }
+                { id: "3col", label: tr("dash_layout_grid_3col", "3 Kolom"), icon: LayoutGrid, desc: tr("dash_layout_grid_3col_desc", "Seimbang") },
+                { id: "2col", label: tr("dash_layout_grid_2col", "2 Kolom"), icon: Columns, desc: tr("dash_layout_grid_2col_desc", "Lebar") },
+                { id: "focus", label: tr("dash_layout_grid_focus", "1 Kolom"), icon: Maximize2, desc: tr("dash_layout_grid_focus_desc", "Fokus") }
               ].map((style) => {
                 const active = (widgetLayout.gridStyle || "3col") === style.id;
                 const Icon = style.icon;
@@ -1043,14 +1043,14 @@ export default function Dashboard() {
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <label className="block text-xs font-bold uppercase tracking-wider text-sub">
-                Urutan & Visibilitas 3 Widget Utama
+                {tr("dash_layout_order_label", "Urutan & Visibilitas 3 Widget Utama")}
               </label>
-              <span className="text-[11px] text-sub">Geser urutan posisi:</span>
+              <span className="text-[11px] text-sub">{tr("dash_layout_order_hint", "Geser urutan posisi:")}</span>
             </div>
 
             <div className="space-y-2.5">
               {widgetLayout.columns.map((colKey, index) => {
-                const meta = getWidgetLabels(t)[colKey];
+                const meta = getWidgetLabels(tr)[colKey];
                 const Icon = meta.icon;
                 const isVisible = widgetLayout.visible[colKey] !== false;
                 const isFirst = index === 0;
@@ -1109,7 +1109,7 @@ export default function Dashboard() {
                         }`}
                       >
                         {isVisible ? <Eye size={13} /> : <EyeOff size={13} />}
-                        <span>{isVisible ? "Tampil" : "Disembunyikan"}</span>
+                        <span>{isVisible ? tr("dash_layout_visible_on", "Tampil") : tr("dash_layout_visible_off", "Disembunyikan")}</span>
                       </button>
                     </div>
                   </div>
@@ -1121,32 +1121,32 @@ export default function Dashboard() {
           {/* Section 4: Widget Analitik & Tim */}
           <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800">
             <label className="block text-xs font-bold uppercase tracking-wider text-sub">
-              Widget Analitik & Performa Tim
+              {tr("dash_layout_analytics_label", "Widget Analitik & Performa Tim")}
             </label>
             <div className="space-y-2.5">
               {[
                 {
                   key: "performance",
-                  title: "Performa & Monitoring Bulanan",
-                  desc: "Grafik tugas selesai, overdue, dan ketepatan waktu",
+                  title: tr("dash_layout_perf_title", "Performa & Monitoring Bulanan"),
+                  desc: tr("dash_layout_perf_desc", "Grafik tugas selesai, overdue, dan ketepatan waktu"),
                   icon: TrendingUp
                 },
                 {
                   key: "bottleneck",
-                  title: "Rekap Bottleneck Proyek",
-                  desc: "Ringkasan proyek tersendat, kendala aktif, dan PIC terkait",
+                  title: tr("dash_layout_bn_title", "Rekap Bottleneck Proyek"),
+                  desc: tr("dash_layout_bn_desc", "Ringkasan proyek tersendat, kendala aktif, dan PIC terkait"),
                   icon: AlertTriangle
                 },
                 {
                   key: "personnel",
-                  title: "Kapasitas & Beban Kerja Personel",
-                  desc: "Kartu beban kerja anggota tim dan indikator tekanan",
+                  title: tr("dash_layout_pers_title", "Kapasitas & Beban Kerja Personel"),
+                  desc: tr("dash_layout_pers_desc", "Kartu beban kerja anggota tim dan indikator tekanan"),
                   icon: BarChart3
                 },
                 {
                   key: "drive_directory",
-                  title: "Direktori Shortcut Google Drive",
-                  desc: "Tampilkan shortcut folder Google Drive sesuai hak akses Anda",
+                  title: tr("dash_layout_drive_title", "Direktori Shortcut Google Drive"),
+                  desc: tr("dash_layout_drive_desc", "Tampilkan shortcut folder Google Drive sesuai hak akses Anda"),
                   icon: FolderKanban
                 }
               ].map((item) => {
@@ -1180,7 +1180,7 @@ export default function Dashboard() {
                       }`}
                     >
                       {isVisible ? <Eye size={13} /> : <EyeOff size={13} />}
-                      <span>{isVisible ? "Tampil" : "Disembunyikan"}</span>
+                      <span>{isVisible ? tr("dash_layout_visible_on", "Tampil") : tr("dash_layout_visible_off", "Disembunyikan")}</span>
                     </button>
                   </div>
                 );
@@ -1194,7 +1194,7 @@ export default function Dashboard() {
               onClick={resetLayout}
               className="inline-flex items-center gap-1.5 text-xs font-bold text-sub hover:text-ink px-3 py-2 rounded-xl transition-colors"
             >
-              <RotateCcw size={14} /> Reset Default
+              <RotateCcw size={14} /> {tr("dash_layout_reset_btn", "Reset Default")}
             </button>
             <button
               onClick={() => {
@@ -1204,7 +1204,7 @@ export default function Dashboard() {
               }}
               className="btn-accent px-5 py-2.5 text-xs font-bold shadow-md inline-flex items-center gap-2"
             >
-              <Check size={14} /> Simpan & Terapkan
+              <Check size={14} /> {tr("dash_layout_save_btn", "Simpan & Terapkan")}
             </button>
           </div>
         </SheetContent>
@@ -1214,7 +1214,7 @@ export default function Dashboard() {
       <Sheet open={bgOpen} onOpenChange={setBgOpen}>
         <SheetContent className="w-full overflow-y-auto bg-surface sm:max-w-md">
           <SheetHeader>
-            <SheetTitle>Latar Dashboard</SheetTitle>
+            <SheetTitle>{tr("dash_background", "Latar Dashboard")}</SheetTitle>
           </SheetHeader>
           <BackgroundEditor />
         </SheetContent>

@@ -56,12 +56,13 @@ export function CommentMentionInput({
   mentionIds = [],
   onMentionIdsChange,
   onSubmit,
-  placeholder = "Tulis komentar… ketik @Nama untuk menyebut rekan",
+  placeholder,
   testid = "task-comment-input",
   rightSlot = null,
   textareaClassName = "min-h-[44px] flex-1 rounded-xl border bg-surface2 p-2.5 text-sm outline-none focus:ring-1 focus:ring-brand",
 }) {
-  const { users, userMap } = useApp();
+  const { users, userMap, t: tr } = useApp();
+  const resolvedPlaceholder = placeholder ?? tr("task_comment_ph", "Tulis komentar… ketik @Nama untuk menyebut rekan");
   const textareaRef = useRef(null);
   const containerRef = useRef(null);
   const [mentionQuery, setMentionQuery] = useState(null);
@@ -202,7 +203,7 @@ export function CommentMentionInput({
           data-testid={`${testid}-mention-dropdown`}
         >
           <div className="flex items-center justify-between px-2.5 py-1 text-[11px] font-bold text-sub">
-            <span>Pilih rekan untuk di-tag (otomatis kirim notifikasi)</span>
+            <span>{tr("cp_mention_hdr", "Pilih rekan untuk di-tag (otomatis kirim notifikasi)")}</span>
             <button
               type="button"
               onClick={() => {
@@ -236,12 +237,12 @@ export function CommentMentionInput({
                   <div className="min-w-0">
                     <p className="truncate font-semibold text-ink">{u.name}</p>
                     <p className="truncate text-[10px] text-sub">
-                      {u.department || u.division || u.job_title || "Anggota Tim"}
+                      {u.department || u.division || u.job_title || tr("cp_team_member_fallback", "Anggota Tim")}
                     </p>
                   </div>
                 </div>
                 <span className="shrink-0 rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-bold text-brand">
-                  {isAlreadyTagged ? "Sudah di-tag" : `@${u.name.split(" ")[0]}`}
+                  {isAlreadyTagged ? tr("cp_already_tagged", "Sudah di-tag") : `@${u.name.split(" ")[0]}`}
                 </span>
               </button>
             );
@@ -255,7 +256,7 @@ export function CommentMentionInput({
           value={value}
           onChange={handleTextChange}
           onKeyDown={handleKeyDown}
-          placeholder={placeholder}
+          placeholder={resolvedPlaceholder}
           className={textareaClassName}
           data-testid={testid}
         />
@@ -276,17 +277,17 @@ export function CommentMentionInput({
                 ? "border-brand bg-brand text-white"
                 : "border-slate-200 bg-surface text-sub hover:border-brand hover:text-brand dark:border-slate-700"
             }`}
-            title="Tag nama rekan agar menerima notifikasi"
+            title={tr("cp_tag_name_title", "Tag nama rekan agar menerima notifikasi")}
             data-testid={`${testid}-tag-btn`}
           >
             <AtSign size={11} />
-            <span>Tag Nama</span>
+            <span>{tr("cp_tag_name_btn", "Tag Nama")}</span>
           </button>
 
           {resolvedMentions.length > 0 && (
             <div className="flex flex-wrap items-center gap-1" data-testid={`${testid}-tagged-list`}>
               <span className="inline-flex items-center gap-1 text-[11px] font-medium text-sub">
-                <Bell size={11} className="text-brand" /> Notif ke:
+                <Bell size={11} className="text-brand" /> {tr("cp_notif_to_label", "Notif ke:")}
               </span>
               {resolvedMentions.map((uid) => {
                 const u = userMap?.[uid] || humanUsers.find((x) => x.user_id === uid);
@@ -344,7 +345,7 @@ function readCachedTemplates() {
 }
 
 export function useCheckpointTemplates() {
-  const { ws, prefs, savePrefs, setSession } = useApp();
+  const { ws, prefs, savePrefs, setSession, t: tr } = useApp();
   const [customTemplates, setCustomTemplates] = useState(() => {
     if (Array.isArray(ws?.checkpoint_templates) && ws.checkpoint_templates.length > 0) {
       return ws.checkpoint_templates;
@@ -388,11 +389,11 @@ export function useCheckpointTemplates() {
       .map((x) => String(x || "").trim())
       .filter(Boolean);
     if (!cleanLabel) {
-      toast.error("Nama template wajib diisi");
+      toast.error(tr("cp_tpl_name_required", "Nama template wajib diisi"));
       return false;
     }
     if (cleanItems.length === 0) {
-      toast.error("Tambahkan minimal 1 tahap checkpoint untuk template");
+      toast.error(tr("cp_tpl_stage_required", "Tambahkan minimal 1 tahap checkpoint untuk template"));
       return false;
     }
     const newTpl = {
@@ -403,7 +404,7 @@ export function useCheckpointTemplates() {
     };
     const next = [...customTemplates, newTpl];
     await persistTemplates(next);
-    toast.success(`Template "${cleanLabel}" berhasil disimpan!`);
+    toast.success(`${tr("cp_tpl_saved_prefix", "Template")} "${cleanLabel}" ${tr("cp_tpl_saved_suffix", "berhasil disimpan!")}`);
     return newTpl;
   };
 
@@ -411,7 +412,7 @@ export function useCheckpointTemplates() {
     const target = customTemplates.find((t) => t.id === id);
     const next = customTemplates.filter((t) => t.id !== id);
     await persistTemplates(next);
-    if (target) toast.success(`Template "${target.label}" dihapus`);
+    if (target) toast.success(`${tr("cp_tpl_saved_prefix", "Template")} "${target.label}" ${tr("cp_tpl_deleted_suffix", "dihapus")}`);
   };
 
   return {
@@ -423,6 +424,7 @@ export function useCheckpointTemplates() {
 }
 
 export function CheckpointPresetBar({ onApply, currentCheckpoints = [], testidPrefix = "preset-btn" }) {
+  const { t: tr } = useApp();
   const { allPresets, addTemplate, removeTemplate } = useCheckpointTemplates();
   const [creating, setCreating] = useState(false);
   const [tplName, setTplName] = useState("");
@@ -434,7 +436,7 @@ export function CheckpointPresetBar({ onApply, currentCheckpoints = [], testidPr
       .map((c) => (typeof c === "string" ? c : c?.title || "").trim())
       .filter(Boolean);
     setTplName("");
-    setTplItems(existingTitles.length > 0 ? existingTitles : ["Tahap 1", "Tahap 2"]);
+    setTplItems(existingTitles.length > 0 ? existingTitles : [`${tr("cp_stage_num_prefix", "Tahap")} 1`, `${tr("cp_stage_num_prefix", "Tahap")} 2`]);
     setStageInput("");
     setCreating(true);
   };
@@ -465,7 +467,7 @@ export function CheckpointPresetBar({ onApply, currentCheckpoints = [], testidPr
       <div className="flex flex-wrap items-center justify-between gap-2 mb-2 min-w-0">
         <p className="flex items-center gap-1.5 text-xs font-semibold text-sub">
           <Sparkles size={13} className="text-brand shrink-0" />
-          <span>Tambah preset checkpoint instan:</span>
+          <span>{tr("cp_preset_hdr", "Tambah preset checkpoint instan:")}</span>
         </p>
         <div className="flex items-center gap-1.5">
           {currentCheckpoints.length > 0 && !creating && (
@@ -476,7 +478,7 @@ export function CheckpointPresetBar({ onApply, currentCheckpoints = [], testidPr
               data-testid="save-current-as-template-btn"
             >
               <BookmarkPlus size={12} />
-              <span>Simpan jadi Template</span>
+              <span>{tr("cp_save_as_tpl_btn", "Simpan jadi Template")}</span>
             </button>
           )}
           <button
@@ -492,7 +494,7 @@ export function CheckpointPresetBar({ onApply, currentCheckpoints = [], testidPr
             data-testid="create-checkpoint-template-btn"
           >
             <Plus size={12} />
-            <span>{creating ? "Tutup" : "Buat Template"}</span>
+            <span>{creating ? tr("cp_close_tpl_btn", "Tutup") : tr("cp_create_tpl_btn", "Buat Template")}</span>
           </button>
         </div>
       </div>
@@ -510,7 +512,7 @@ export function CheckpointPresetBar({ onApply, currentCheckpoints = [], testidPr
               data-testid={`${testidPrefix}-${String(p.label).toLowerCase().replace(/[^a-z0-9]/g, "-")}`}
             >
               <span>{p.label}</span>
-              <span className="text-[10px] text-sub font-normal">+{p.items.length} tahap</span>
+              <span className="text-[10px] text-sub font-normal">+{p.items.length} {tr("cp_stage_unit", "tahap")}</span>
             </button>
             {!p.builtin && (
               <button
@@ -519,7 +521,7 @@ export function CheckpointPresetBar({ onApply, currentCheckpoints = [], testidPr
                   e.stopPropagation();
                   removeTemplate(p.id);
                 }}
-                title="Hapus template"
+                title={tr("cp_delete_tpl_title", "Hapus template")}
                 className="pr-2 pl-0.5 text-sub hover:text-rose-500 transition-colors cursor-pointer"
                 data-testid={`delete-template-${p.id}`}
               >
@@ -533,7 +535,7 @@ export function CheckpointPresetBar({ onApply, currentCheckpoints = [], testidPr
       {creating && (
         <div className="mt-3 space-y-2.5 rounded-xl border bg-surface p-3 shadow-xs" data-testid="checkpoint-template-builder">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-ink">Buat Template Checkpoint Sendiri</span>
+            <span className="text-xs font-bold text-ink">{tr("cp_tpl_builder_title", "Buat Template Checkpoint Sendiri")}</span>
             <button
               type="button"
               onClick={() => setCreating(false)}
@@ -545,7 +547,7 @@ export function CheckpointPresetBar({ onApply, currentCheckpoints = [], testidPr
           <input
             value={tplName}
             onChange={(e) => setTplName(e.target.value)}
-            placeholder="Nama template, mis. 🚀 Kampanye Sosmed"
+            placeholder={tr("cp_tpl_name_ph", "Nama template, mis. 🚀 Kampanye Sosmed")}
             className="h-8 w-full rounded-lg border bg-surface2 px-2.5 text-xs font-semibold text-ink outline-none focus:border-brand"
             data-testid="template-name-input"
           />
@@ -560,7 +562,7 @@ export function CheckpointPresetBar({ onApply, currentCheckpoints = [], testidPr
                   onChange={(e) =>
                     setTplItems((prev) => prev.map((x, i) => (i === idx ? e.target.value : x)))
                   }
-                  placeholder={`Nama tahap ${idx + 1}…`}
+                  placeholder={`${tr("cp_tpl_stage_ph_prefix", "Nama tahap")} ${idx + 1}…`}
                   className="h-7 flex-1 rounded-lg border bg-surface2 px-3 text-xs text-ink outline-none focus:border-brand"
                   data-testid={`template-stage-input-${idx}`}
                 />
@@ -569,7 +571,7 @@ export function CheckpointPresetBar({ onApply, currentCheckpoints = [], testidPr
                     type="button"
                     onClick={() => setTplItems((prev) => prev.filter((_, i) => i !== idx))}
                     className="text-sub hover:text-rose-500 p-1 cursor-pointer"
-                    title="Hapus tahap"
+                    title={tr("cp_tpl_remove_stage_title", "Hapus tahap")}
                   >
                     <X size={12} />
                   </button>
@@ -587,7 +589,7 @@ export function CheckpointPresetBar({ onApply, currentCheckpoints = [], testidPr
                   addStageToDraft();
                 }
               }}
-              placeholder="Ketik tahap baru lalu klik + Tahap…"
+              placeholder={tr("cp_tpl_new_stage_ph", "Ketik tahap baru lalu klik + Tahap…")}
               className="h-8 flex-1 rounded-lg border bg-surface2 px-2.5 text-xs text-ink outline-none focus:border-brand"
               data-testid="template-new-stage-input"
             />
@@ -600,7 +602,7 @@ export function CheckpointPresetBar({ onApply, currentCheckpoints = [], testidPr
               className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border bg-surface2 px-2.5 text-xs font-semibold text-ink hover:bg-surface cursor-pointer"
               data-testid="template-add-stage-btn"
             >
-              <Plus size={12} /> Tahap
+              <Plus size={12} /> {tr("cp_tpl_add_stage_btn", "Tahap")}
             </button>
           </div>
           <div className="flex items-center justify-end gap-2 pt-1">
@@ -609,7 +611,7 @@ export function CheckpointPresetBar({ onApply, currentCheckpoints = [], testidPr
               onClick={() => setCreating(false)}
               className="h-8 rounded-lg border px-3 text-xs font-semibold text-sub hover:bg-surface2 cursor-pointer"
             >
-              Batal
+              {tr("cp_tpl_cancel_btn", "Batal")}
             </button>
             <button
               type="button"
@@ -617,7 +619,7 @@ export function CheckpointPresetBar({ onApply, currentCheckpoints = [], testidPr
               className="btn-accent h-8 rounded-lg px-3.5 text-xs font-semibold cursor-pointer"
               data-testid="template-save-btn"
             >
-              Simpan Template
+              {tr("cp_tpl_save_btn", "Simpan Template")}
             </button>
           </div>
         </div>
@@ -640,7 +642,7 @@ export function ProgressBar({ value, small }) {
 }
 
 export function CommentItem({ c, t, reload, showCheckpoint }) {
-  const { userMap } = useApp();
+  const { userMap, t: tr } = useApp();
   const cp = showCheckpoint && c.checkpoint_id && (t.checkpoints || []).find((x) => x.id === c.checkpoint_id);
   const issue = c.kind === "issue";
   const toggle = () => api.patch(`/tasks/${t.id}/comments/${c.id}`, { resolved: !c.resolved }).then(reload).catch((e) => toast.error(errMsg(e)));
@@ -658,14 +660,14 @@ export function CommentItem({ c, t, reload, showCheckpoint }) {
           {cp && <span className="rounded-full bg-surface px-2 py-0.5 text-[10px] font-semibold text-sub">↳ {cp.title}</span>}
           {issue && (
             <span className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${c.resolved ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" : "bg-rose-500 text-white"}`} data-testid={`comment-issue-badge-${c.id}`}>
-              <AlertTriangle size={10} />{c.resolved ? "Kendala selesai" : "Kendala"}
+              <AlertTriangle size={10} />{c.resolved ? tr("cp_issue_resolved", "Kendala selesai") : tr("cp_issue_active", "Kendala")}
             </span>
           )}
         </p>
         <p className="whitespace-pre-wrap text-sm"><MentionText text={c.text} mentionIds={c.mention_ids} /></p>
         {issue && (
           <button onClick={toggle} className="mt-1 flex items-center gap-1 text-xs font-semibold text-brand hover:underline" data-testid={`comment-resolve-${c.id}`}>
-            {c.resolved ? <><RotateCcw size={11} />Buka lagi</> : <><CheckCircle2 size={11} />Tandai selesai</>}
+            {c.resolved ? <><RotateCcw size={11} />{tr("cp_reopen_btn", "Buka lagi")}</> : <><CheckCircle2 size={11} />{tr("cp_mark_done_btn", "Tandai selesai")}</>}
           </button>
         )}
       </div>
@@ -674,7 +676,7 @@ export function CommentItem({ c, t, reload, showCheckpoint }) {
 }
 
 function Thread({ t, cp, reload }) {
-  const { users, userMap, me } = useApp();
+  const { users, userMap, me, t: tr } = useApp();
   const [text, setText] = useState("");
   const [mentionIds, setMentionIds] = useState([]);
   const [issue, setIssue] = useState(false);
@@ -696,7 +698,7 @@ function Thread({ t, cp, reload }) {
         .map((uid) => userMap?.[uid]?.name)
         .filter(Boolean);
       if (notifiedNames.length > 0) {
-        toast.success(`Komentar terkirim · Notifikasi dikirim ke ${notifiedNames.join(", ")}`);
+        toast.success(`${tr("task_comment_sent_notif_prefix", "Komentar terkirim · Notifikasi dikirim ke")} ${notifiedNames.join(", ")}`);
       }
       setText("");
       setMentionIds([]);
@@ -711,14 +713,14 @@ function Thread({ t, cp, reload }) {
   return (
     <div className="border-t bg-surface2/40 p-3" data-testid={`checkpoint-thread-${cp.id}`}>
       {list.map((c) => <CommentItem key={c.id} c={c} t={t} reload={reload} />)}
-      {!list.length && <p className="mb-2 text-xs text-sub">Belum ada laporan untuk checkpoint ini.</p>}
+      {!list.length && <p className="mb-2 text-xs text-sub">{tr("cp_thread_empty", "Belum ada laporan untuk checkpoint ini.")}</p>}
       <CommentMentionInput
         value={text}
         onChange={setText}
         mentionIds={mentionIds}
         onMentionIdsChange={setMentionIds}
         onSubmit={send}
-        placeholder={issue ? "Ceritakan kendalanya… ketik @Nama untuk tag rekan" : "Tulis progres atau diskusi… ketik @Nama untuk tag rekan"}
+        placeholder={issue ? tr("cp_thread_issue_ph", "Ceritakan kendalanya… ketik @Nama untuk tag rekan") : tr("cp_thread_normal_ph", "Tulis progres atau diskusi… ketik @Nama untuk tag rekan")}
         testid={`checkpoint-comment-input-${cp.id}`}
         textareaClassName="min-h-[60px] w-full rounded-xl border bg-surface p-2.5 text-sm outline-none focus:ring-1 focus:ring-brand"
       />
@@ -728,7 +730,7 @@ function Thread({ t, cp, reload }) {
           className={`flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold transition-colors ${issue ? "border-rose-400 bg-rose-500 text-white" : "text-sub hover:text-ink"}`}
           data-testid={`checkpoint-issue-toggle-${cp.id}`}
         >
-          <Flag size={12} />Laporkan kendala
+          <Flag size={12} />{tr("cp_report_issue_btn", "Laporkan kendala")}
         </button>
         <button
           onClick={send}
@@ -736,7 +738,7 @@ function Thread({ t, cp, reload }) {
           className="btn-accent h-8 px-4 text-xs font-semibold disabled:opacity-40"
           data-testid={`checkpoint-comment-submit-${cp.id}`}
         >
-          {busy ? "Mengirim…" : "Kirim"}
+          {busy ? tr("cp_sending_btn", "Mengirim…") : tr("cp_send_btn", "Kirim")}
         </button>
       </div>
     </div>
@@ -744,7 +746,7 @@ function Thread({ t, cp, reload }) {
 }
 
 export default function Checkpoints({ t, ro, patch, reload, members, emptyMessage }) {
-  const { userMap, me } = useApp();
+  const { userMap, me, t: tr } = useApp();
   const defaultTaskPic = t.assignee_id || t.assignee_ids?.[0] || null;
   const rawCps = t.checkpoints || [];
   const cps = rawCps.map((c, i) => {
@@ -797,12 +799,12 @@ export default function Checkpoints({ t, ro, patch, reload, members, emptyMessag
       const reachedCp = nextList[nextActiveIdx];
       if (reachedCp?.assignee_id) {
         const picName = userMap[reachedCp.assignee_id]?.name || "PIC";
-        notifToast = `Notifikasi dikirim ke ${picName}: "Tugas "${t.title}" sudah siap dikerjakan, semangat ya!"`;
+        notifToast = `${tr("cp_ready_notif_prefix", "Notifikasi dikirim ke")} ${picName}: "${tr("cp_ready_notif_msg_prefix", "Tugas")} "${t.title}" ${tr("cp_ready_notif_msg_suffix", "sudah siap dikerjakan, semangat ya!")}"`;
       }
     }
     if (ch.assignee_id && targetIdx === nextActiveIdx && !nextList[targetIdx]?.done) {
       const picName = userMap[ch.assignee_id]?.name || "PIC";
-      notifToast = `Notifikasi dikirim ke ${picName}: "Tugas "${t.title}" sudah siap dikerjakan, semangat ya!"`;
+      notifToast = `${tr("cp_ready_notif_prefix", "Notifikasi dikirim ke")} ${picName}: "${tr("cp_ready_notif_msg_prefix", "Tugas")} "${t.title}" ${tr("cp_ready_notif_msg_suffix", "sudah siap dikerjakan, semangat ya!")}"`;
     }
 
     save(nextList, notifToast);
@@ -815,9 +817,9 @@ export default function Checkpoints({ t, ro, patch, reload, members, emptyMessag
     try {
       await api.post(`/tasks/${t.id}/checkpoints/${cp.id}/notify`);
       const picName = userMap[cp.assignee_id]?.name || "PIC";
-      toast.success(`Notifikasi dikirim ke ${picName}: "Tugas "${t.title}" sudah siap dikerjakan, semangat ya!"`);
+      toast.success(`${tr("cp_ready_notif_prefix", "Notifikasi dikirim ke")} ${picName}: "${tr("cp_ready_notif_msg_prefix", "Tugas")} "${t.title}" ${tr("cp_ready_notif_msg_suffix", "sudah siap dikerjakan, semangat ya!")}"`);
     } catch (e) {
-      toast.error(errMsg(e, "Gagal mengirim notifikasi"));
+      toast.error(errMsg(e, tr("cp_notify_err", "Gagal mengirim notifikasi")));
     } finally {
       setPingingId(null);
     }
@@ -837,7 +839,7 @@ export default function Checkpoints({ t, ro, patch, reload, members, emptyMessag
     };
     const notifToast =
       isFirstUncompleted && effectivePic
-        ? `Notifikasi dikirim ke ${userMap[effectivePic]?.name || "PIC"}: "Tugas "${t.title}" sudah siap dikerjakan, semangat ya!"`
+        ? `${tr("cp_ready_notif_prefix", "Notifikasi dikirim ke")} ${userMap[effectivePic]?.name || "PIC"}: "${tr("cp_ready_notif_msg_prefix", "Tugas")} "${t.title}" ${tr("cp_ready_notif_msg_suffix", "sudah siap dikerjakan, semangat ya!")}"`
         : undefined;
     save([...cps, newCp], notifToast);
     setTitle("");
@@ -868,14 +870,14 @@ export default function Checkpoints({ t, ro, patch, reload, members, emptyMessag
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2 min-w-0">
         <div className="flex items-center gap-2">
           <Layers size={16} className="text-brand" />
-          <h4 className="text-sm font-bold">Checkpoints</h4>
+          <h4 className="text-sm font-bold">{tr("cp_section_title", "Checkpoints")}</h4>
         </div>
         <div className="flex items-center gap-2" data-testid="task-progress-label">
           <span className="rounded-full bg-brand/10 px-2.5 py-0.5 text-xs font-bold text-brand whitespace-nowrap shrink-0">
-            {computedProgress}% Selesai
+            {computedProgress}% {tr("cp_progress_done_suffix", "Selesai")}
           </span>
           <span className="text-xs font-semibold text-sub whitespace-nowrap shrink-0">
-            {doneCount}/{cps.length} Tahap
+            {doneCount}/{cps.length} {tr("cp_stage_count_label", "Tahap")}
           </span>
         </div>
       </div>
@@ -903,8 +905,8 @@ export default function Checkpoints({ t, ro, patch, reload, members, emptyMessag
           const picUser = effectivePicId ? userMap[effectivePicId] : null;
           const isCpOverdue = !c.done && c.deadline && new Date(`${String(c.deadline).slice(0, 10)}T23:59:59`) < new Date();
           const doneTitle = c.done && c.done_at
-            ? `Selesai ${rel(c.done_at)}${c.done_by && userMap[c.done_by] ? ` oleh ${userMap[c.done_by].name}` : ""}`
-            : "Tandai selesai";
+            ? `${tr("cp_done_at_prefix", "Selesai")} ${rel(c.done_at)}${c.done_by && userMap[c.done_by] ? ` ${tr("cp_done_by_prefix", "oleh")} ${userMap[c.done_by].name}` : ""}`
+            : tr("cp_mark_done_btn", "Tandai selesai");
 
           return (
             <div
@@ -929,7 +931,7 @@ export default function Checkpoints({ t, ro, patch, reload, members, emptyMessag
                       ? "bg-sky-500 text-white"
                       : "bg-surface2 text-sub"
                   }`}
-                  title={isCurrentTurn ? "Tahap aktif saat ini" : `Tahap ${i + 1}`}
+                  title={isCurrentTurn ? tr("cp_active_stage_title", "Tahap aktif saat ini") : `${tr("cp_stage_num_prefix", "Tahap")} ${i + 1}`}
                 >
                   {i + 1}
                 </span>
@@ -955,7 +957,7 @@ export default function Checkpoints({ t, ro, patch, reload, members, emptyMessag
                       : "border-slate-300 bg-surface hover:border-emerald-500 hover:bg-emerald-50 dark:border-slate-700"
                   }`}
                   title={doneTitle}
-                  aria-label="Conteng selesai checkpoint"
+                  aria-label={tr("cp_done_checkbox_aria", "Conteng selesai checkpoint")}
                   data-testid={`checkpoint-done-${c.id}`}
                 >
                   {c.done ? (
@@ -982,8 +984,8 @@ export default function Checkpoints({ t, ro, patch, reload, members, emptyMessag
                   value={c.deadline ? String(c.deadline).slice(0, 10) : ""}
                   disabled={ro}
                   onChange={(val) => edit(c.id, { deadline: val || "" })}
-                  placeholder="Deadline"
-                  title="Deadline checkpoint"
+                  placeholder={tr("cp_deadline_ph", "Deadline")}
+                  title={tr("cp_deadline_title", "Deadline checkpoint")}
                   className={`h-7 w-[104px] shrink-0 rounded-lg border px-2 text-[11px] font-medium ${
                     isCpOverdue
                       ? "border-rose-300 bg-rose-50 text-rose-700 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-300"
@@ -995,14 +997,14 @@ export default function Checkpoints({ t, ro, patch, reload, members, emptyMessag
                 {/* Checkpoint PIC */}
                 <div className="w-[106px] sm:w-[116px] shrink-0">
                   {ro ? (
-                    <span className="text-[11px] text-sub truncate block">{picUser?.name || "Tanpa PIC"}</span>
+                    <span className="text-[11px] text-sub truncate block">{picUser?.name || tr("cp_no_pic", "Tanpa PIC")}</span>
                   ) : (
                     <UserSelect
                       value={effectivePicId}
                       ids={members}
                       emptyMessage={emptyMessage}
                       onChange={(v) => edit(c.id, { assignee_id: v, unassigned: !v })}
-                      placeholder="PIC"
+                      placeholder={tr("cp_pic_ph", "PIC")}
                       className="h-7 w-full rounded-lg border bg-surface2 pl-2 pr-5 text-[11px] font-semibold outline-none truncate"
                       testid={`checkpoint-pic-${c.id}`}
                     />
@@ -1014,7 +1016,7 @@ export default function Checkpoints({ t, ro, patch, reload, members, emptyMessag
                     type="button"
                     onClick={() => pingPic(c)}
                     className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-sky-200 bg-sky-50 text-sky-600 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-300 transition-colors cursor-pointer"
-                    title={`Kirim notif siap kerja ke ${picUser.name}`}
+                    title={`${tr("cp_ping_pic_prefix", "Kirim notif siap kerja ke")} ${picUser.name}`}
                     data-testid={`checkpoint-notify-${c.id}`}
                   >
                     <Bell size={12} />
@@ -1027,7 +1029,7 @@ export default function Checkpoints({ t, ro, patch, reload, members, emptyMessag
                   className={`flex h-7 shrink-0 items-center gap-1 rounded-lg border px-2 text-[11px] font-semibold transition-colors cursor-pointer ${
                     open === c.id ? "bg-ink text-[var(--c-surface)]" : "bg-surface text-sub hover:bg-surface2"
                   }`}
-                  title="Komentar & kendala checkpoint"
+                  title={tr("cp_discuss_title", "Komentar & kendala checkpoint")}
                   data-testid={`checkpoint-discuss-${c.id}`}
                 >
                   <MessageSquare size={11} />
@@ -1045,8 +1047,8 @@ export default function Checkpoints({ t, ro, patch, reload, members, emptyMessag
                     type="button"
                     onClick={() => save(cps.filter((x) => x.id !== c.id))}
                     className="flex h-7 w-6 shrink-0 items-center justify-center rounded-lg text-sub hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors cursor-pointer"
-                    aria-label="Hapus checkpoint"
-                    title="Hapus checkpoint"
+                    aria-label={tr("cp_delete_cp_title", "Hapus checkpoint")}
+                    title={tr("cp_delete_cp_title", "Hapus checkpoint")}
                     data-testid={`checkpoint-remove-${c.id}`}
                   >
                     <X size={13} />
@@ -1067,7 +1069,7 @@ export default function Checkpoints({ t, ro, patch, reload, members, emptyMessag
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), add())}
-            placeholder="Tambah checkpoint baru…"
+            placeholder={tr("cp_add_ph", "Tambah checkpoint baru…")}
             className="h-9 min-w-0 w-full flex-1 basis-full sm:basis-0 rounded-xl border bg-surface2 px-3 text-xs outline-none focus:ring-1 focus:ring-brand"
             data-testid="checkpoint-new-title"
           />
@@ -1075,8 +1077,8 @@ export default function Checkpoints({ t, ro, patch, reload, members, emptyMessag
             compact
             value={deadline}
             onChange={setDeadline}
-            placeholder="Deadline"
-            title="Deadline checkpoint"
+            placeholder={tr("cp_deadline_ph", "Deadline")}
+            title={tr("cp_deadline_title", "Deadline checkpoint")}
             className="h-9 flex-1 sm:flex-initial sm:w-[108px] shrink-0 rounded-xl border bg-surface2 px-2.5 text-[11px] font-medium"
             data-testid="checkpoint-new-deadline"
           />
@@ -1086,7 +1088,7 @@ export default function Checkpoints({ t, ro, patch, reload, members, emptyMessag
               ids={members}
               emptyMessage={emptyMessage}
               onChange={setPic}
-              placeholder="PIC"
+              placeholder={tr("cp_pic_ph", "PIC")}
               className="h-9 w-full rounded-xl border bg-surface2 pl-2.5 pr-5 text-xs font-semibold outline-none truncate"
               testid="checkpoint-new-pic"
             />
@@ -1099,7 +1101,7 @@ export default function Checkpoints({ t, ro, patch, reload, members, emptyMessag
             data-testid="checkpoint-add-btn"
           >
             <Plus size={14} />
-            Tambah
+            {tr("cp_add_btn", "Tambah")}
           </button>
         </div>
       )}

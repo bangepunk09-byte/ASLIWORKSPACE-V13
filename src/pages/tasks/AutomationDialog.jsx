@@ -8,13 +8,13 @@ import { AppSelect } from "../../components/ui/select";
 import { playSound } from "../../lib/sound";
 
 const DAYS = [
-  { val: "monday", label: "Senin" },
-  { val: "tuesday", label: "Selasa" },
-  { val: "wednesday", label: "Rabu" },
-  { val: "thursday", label: "Kamis" },
-  { val: "friday", label: "Jumat" },
-  { val: "saturday", label: "Sabtu" },
-  { val: "sunday", label: "Minggu" }
+  { val: "monday", key: "auto_day_mon", label: "Senin" },
+  { val: "tuesday", key: "auto_day_tue", label: "Selasa" },
+  { val: "wednesday", key: "auto_day_wed", label: "Rabu" },
+  { val: "thursday", key: "auto_day_thu", label: "Kamis" },
+  { val: "friday", key: "auto_day_fri", label: "Jumat" },
+  { val: "saturday", key: "auto_day_sat", label: "Sabtu" },
+  { val: "sunday", key: "auto_day_sun", label: "Minggu" }
 ];
 
 export default function AutomationDialog({ open, onClose, onGenerated }) {
@@ -60,8 +60,8 @@ export default function AutomationDialog({ open, onClose, onGenerated }) {
 
   const handleCreate = async (e) => {
     e.preventDefault();
-    if (!brandName.trim()) return toast.error("Nama brand diperlukan");
-    if (cardCount < 1) return toast.error("Jumlah kartu minimal 1");
+    if (!brandName.trim()) return toast.error(t("auto_brand_required", "Nama brand diperlukan"));
+    if (cardCount < 1) return toast.error(t("auto_min_cards_err", "Jumlah kartu minimal 1"));
 
     const cps = checkpointsText
       .split(",")
@@ -79,7 +79,7 @@ export default function AutomationDialog({ open, onClose, onGenerated }) {
         board_id: boardId || boards[0]?.id,
         checkpoints: cps
       });
-      toast.success("Otomatisasi jadwal berhasil disimpan!");
+      toast.success(t("auto_saved_toast", "Otomatisasi jadwal berhasil disimpan!"));
       load();
     } catch (err) {
       toast.error(errMsg(err));
@@ -91,7 +91,7 @@ export default function AutomationDialog({ open, onClose, onGenerated }) {
     try {
       await api.delete(`/task-automations/${id}`);
       setConfirmDeleteId(null);
-      toast.success("Otomatisasi dihapus");
+      toast.success(t("auto_deleted_toast", "Otomatisasi dihapus"));
       load();
     } catch (err) {
       toast.error(errMsg(err));
@@ -104,7 +104,7 @@ export default function AutomationDialog({ open, onClose, onGenerated }) {
       const res = await api.post(`/task-automations/${id}/run`);
       playSound("task_create");
       const count = res.data?.created?.length ?? res.data?.created_count ?? res.data?.tasks?.length ?? 0;
-      toast.success(`Berhasil membuat ${count} card otomatis!`);
+      toast.success(`${t("auto_run_success_prefix", "Berhasil membuat")} ${count} ${t("auto_run_success_suffix", "card otomatis!")}`);
       onGenerated?.();
     } catch (err) {
       toast.error(errMsg(err));
@@ -122,13 +122,13 @@ export default function AutomationDialog({ open, onClose, onGenerated }) {
             </span>
             <div>
               <h3 className="text-lg font-bold text-ink">{t("tasks_automation", "Otomatisasi Tugas Rutin")}</h3>
-              <p className="text-xs text-sub">Buat tugas template otomatis terjadwal untuk tim Anda.</p>
+              <p className="text-xs text-sub">{t("auto_subtitle", "Buat tugas template otomatis terjadwal untuk tim Anda.")}</p>
             </div>
           </div>
           <button
             onClick={onClose}
             className="rounded-full p-2 text-sub hover:bg-surface2"
-            aria-label="Tutup"
+            aria-label={t("auto_close_aria", "Tutup")}
           >
             <X size={18} />
           </button>
@@ -136,14 +136,17 @@ export default function AutomationDialog({ open, onClose, onGenerated }) {
 
         {/* Existing Automations */}
         <div className="mt-5 space-y-3">
-          <h4 className="text-xs font-bold text-sub uppercase tracking-wider">Aturan Otomatisasi Tersimpan</h4>
+          <h4 className="text-xs font-bold text-sub uppercase tracking-wider">{t("auto_saved_hdr", "Aturan Otomatisasi Tersimpan")}</h4>
           {automations.length === 0 ? (
             <p className="rounded-2xl border border-dashed p-4 text-center text-xs text-sub">
-              Belum ada otomatisasi. Atur template di bawah untuk menjadwalkan tugas otomatis.
+              {t("auto_empty", "Belum ada otomatisasi. Atur template di bawah untuk menjadwalkan tugas otomatis.")}
             </p>
           ) : (
             <div className="space-y-2">
-              {automations.map((a) => (
+              {automations.map((a) => {
+                const dayObj = DAYS.find((d) => d.val === (a.schedule_day || a.day));
+                const dayLabel = dayObj ? t(dayObj.key, dayObj.label) : (a.schedule_day || a.day);
+                return (
                 <div
                   key={a.id}
                   className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border bg-surface2/40 p-4 transition-all hover:bg-surface2/70"
@@ -160,13 +163,13 @@ export default function AutomationDialog({ open, onClose, onGenerated }) {
                     <div className="mt-1 flex items-center gap-3 text-xs text-sub">
                       <span className="flex items-center gap-1">
                         <Calendar size={13} />
-                        Tiap {DAYS.find((d) => d.val === (a.schedule_day || a.day))?.label || a.schedule_day || a.day}
+                        {t("auto_every_prefix", "Tiap")} {dayLabel}
                       </span>
                       <span className="flex items-center gap-1">
                         <Clock size={13} />
-                        {a.schedule_time || a.time || "09:00"} WIB
+                        {a.schedule_time || a.time || "09:00"} {t("auto_wib_suffix", "WIB")}
                       </span>
-                      <span>· {a.count} Kartu</span>
+                      <span>· {a.count} {t("auto_cards_unit", "Kartu")}</span>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -174,10 +177,10 @@ export default function AutomationDialog({ open, onClose, onGenerated }) {
                       onClick={() => handleRunNow(a.id)}
                       disabled={runningId === a.id}
                       className="btn-accent flex h-9 items-center gap-1.5 px-3.5 text-xs font-semibold shadow-sm"
-                      title="Generate kartu sekarang"
+                      title={t("auto_run_title", "Generate kartu sekarang")}
                     >
                       <Play size={12} fill="currentColor" />
-                      {runningId === a.id ? "Membuat…" : "Jalankan Sekarang"}
+                      {runningId === a.id ? t("auto_running_btn", "Membuat…") : t("auto_run_btn", "Jalankan Sekarang")}
                     </button>
                     {confirmDeleteId === a.id ? (
                       <div className="flex items-center gap-1.5">
@@ -186,14 +189,14 @@ export default function AutomationDialog({ open, onClose, onGenerated }) {
                           onClick={() => handleDelete(a.id)}
                           className="h-9 rounded-xl bg-rose-600 px-3 text-xs font-semibold text-white hover:bg-rose-700"
                         >
-                          Hapus
+                          {t("auto_delete_btn", "Hapus")}
                         </button>
                         <button
                           type="button"
                           onClick={() => setConfirmDeleteId(null)}
                           className="h-9 rounded-xl border border-slate-200 px-2.5 text-xs font-semibold text-sub hover:bg-surface2"
                         >
-                          Batal
+                          {t("auto_cancel_btn", "Batal")}
                         </button>
                       </div>
                     ) : (
@@ -201,14 +204,15 @@ export default function AutomationDialog({ open, onClose, onGenerated }) {
                         type="button"
                         onClick={() => setConfirmDeleteId(a.id)}
                         className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-sub hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/30"
-                        aria-label="Hapus otomatisasi"
+                        aria-label={t("auto_delete_aria", "Hapus otomatisasi")}
                       >
                         <Trash2 size={14} />
                       </button>
                     )}
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -217,16 +221,16 @@ export default function AutomationDialog({ open, onClose, onGenerated }) {
         <form onSubmit={handleCreate} className="mt-6 rounded-2xl border bg-surface2/30 p-5 space-y-4">
           <div className="flex items-center gap-2">
             <Plus size={16} className="text-brand" />
-            <h4 className="text-sm font-bold text-ink">Tambah Otomatisasi Baru</h4>
+            <h4 className="text-sm font-bold text-ink">{t("auto_form_title", "Tambah Otomatisasi Baru")}</h4>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
-              <label className="block text-xs font-bold text-sub mb-1">Brand / Klien</label>
+              <label className="block text-xs font-bold text-sub mb-1">{t("auto_field_brand", "Brand / Klien")}</label>
               <input
                 value={brandName}
                 onChange={(e) => setBrandName(e.target.value)}
-                placeholder="Contoh: ASLI RI"
+                placeholder={t("auto_field_brand_ph", "Contoh: ASLI RI")}
                 className="h-10 w-full rounded-xl border bg-surface px-3 text-sm font-semibold outline-none focus:border-brand"
                 list="brand-suggestions"
               />
@@ -239,20 +243,20 @@ export default function AutomationDialog({ open, onClose, onGenerated }) {
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-sub mb-1">Prefix / Template Judul</label>
+              <label className="block text-xs font-bold text-sub mb-1">{t("auto_field_prefix", "Prefix / Template Judul")}</label>
               <input
                 value={templatePrefix}
                 onChange={(e) => setTemplatePrefix(e.target.value)}
-                placeholder="Contoh: Regular"
+                placeholder={t("auto_field_prefix_ph", "Contoh: Regular")}
                 className="h-10 w-full rounded-xl border bg-surface px-3 text-sm font-semibold outline-none focus:border-brand"
               />
-              <span className="text-[10px] text-slate-400">Akan membuat: {templatePrefix} 1, {templatePrefix} 2, dst.</span>
+              <span className="text-[10px] text-slate-400">{t("auto_field_prefix_hint_pre", "Akan membuat:")} {templatePrefix} 1, {templatePrefix} 2, {t("auto_field_prefix_hint_suf", "dst.")}</span>
             </div>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-3">
             <div>
-              <label className="block text-xs font-bold text-sub mb-1">Jumlah Tugas</label>
+              <label className="block text-xs font-bold text-sub mb-1">{t("auto_field_count", "Jumlah Tugas")}</label>
               <input
                 type="number"
                 min="1"
@@ -264,20 +268,20 @@ export default function AutomationDialog({ open, onClose, onGenerated }) {
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-sub mb-1">Jadwal Hari</label>
+              <label className="block text-xs font-bold text-sub mb-1">{t("auto_field_day", "Jadwal Hari")}</label>
               <AppSelect
                 value={dayOfWeek}
                 onChange={(e) => setDayOfWeek(e.target.value)}
                 className="h-10 w-full rounded-xl border bg-surface px-3 text-sm font-medium"
               >
                 {DAYS.map((d) => (
-                  <option key={d.val} value={d.val}>{d.label}</option>
+                  <option key={d.val} value={d.val}>{t(d.key, d.label)}</option>
                 ))}
               </AppSelect>
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-sub mb-1">Jam WIB</label>
+              <label className="block text-xs font-bold text-sub mb-1">{t("auto_field_time", "Jam WIB")}</label>
               <TimePicker
                 value={time}
                 onChange={setTime}
@@ -287,7 +291,7 @@ export default function AutomationDialog({ open, onClose, onGenerated }) {
           </div>
 
           <div>
-            <label className="block text-xs font-bold text-sub mb-1">Target Board</label>
+            <label className="block text-xs font-bold text-sub mb-1">{t("auto_field_board", "Target Board")}</label>
             <AppSelect
               value={boardId}
               onChange={(e) => setBoardId(e.target.value)}
@@ -300,11 +304,11 @@ export default function AutomationDialog({ open, onClose, onGenerated }) {
           </div>
 
           <div>
-            <label className="block text-xs font-bold text-sub mb-1">Checkpoint Bawaan</label>
+            <label className="block text-xs font-bold text-sub mb-1">{t("auto_field_checkpoints", "Checkpoint Bawaan")}</label>
             <input
               value={checkpointsText}
               onChange={(e) => setCheckpointsText(e.target.value)}
-              placeholder="Riset, Draft Desain, Review, Selesai"
+              placeholder={t("auto_field_checkpoints_ph", "Riset, Draft Desain, Review, Selesai")}
               className="h-10 w-full rounded-xl border bg-surface px-3 text-xs outline-none focus:border-brand"
             />
           </div>
@@ -315,7 +319,7 @@ export default function AutomationDialog({ open, onClose, onGenerated }) {
               disabled={loading}
               className="btn-accent flex h-10 items-center gap-1.5 px-5 text-sm font-bold shadow-md disabled:opacity-50"
             >
-              <Plus size={15} /> Simpan Aturan Otomatisasi
+              <Plus size={15} /> {t("auto_submit_btn", "Simpan Aturan Otomatisasi")}
             </button>
           </div>
         </form>

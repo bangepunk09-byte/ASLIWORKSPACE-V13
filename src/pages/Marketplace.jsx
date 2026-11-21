@@ -24,6 +24,7 @@ import {
 import { toast } from "sonner";
 import { useApp } from "../context/AppContext";
 import { api, errMsg, fileUrl } from "../lib/api";
+import { playSound } from "../lib/sound";
 import { Avatar, PageHeader } from "../components/common";
 import {
   Select,
@@ -295,6 +296,7 @@ export default function Marketplace() {
 
   // 0ms optimistic wishlist toggle
   const toggleWishlist = async (id) => {
+    playSound("pop");
     const currentlyLiked = wishlistSet.has(id);
     commitState((prev) => {
       const cur = Array.isArray(prev.wishlist) ? prev.wishlist : [];
@@ -315,6 +317,7 @@ export default function Marketplace() {
 
   // 0ms optimistic Add to Cart
   const addToCart = async (item, variant, qty = 1) => {
+    playSound("pop");
     const chosenVariant = variant || item.variants?.[0] || "Standar";
     const addQty = Math.max(1, Math.round(Number(qty || 1)));
     commitState((prev) => {
@@ -426,6 +429,7 @@ export default function Marketplace() {
       });
       return { ...prev, orders: nextOrders };
     });
+    playSound(action === "cancel" || action === "reject_payment" ? "click" : "success");
     toast.success("Status pesanan berhasil diperbarui!");
 
     try {
@@ -588,7 +592,10 @@ export default function Marketplace() {
             <button
               key={tabItem.id}
               type="button"
-              onClick={() => setTab(tabItem.id)}
+              onClick={() => {
+                if (tab !== tabItem.id) playSound("tab");
+                setTab(tabItem.id);
+              }}
               className={`inline-flex h-10 shrink-0 items-center gap-2 rounded-xl px-4 text-xs sm:text-sm font-bold transition-colors cursor-pointer ${
                 active
                   ? "bg-brand text-white shadow-xs"

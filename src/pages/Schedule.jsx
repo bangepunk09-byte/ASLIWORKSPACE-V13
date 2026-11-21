@@ -721,18 +721,18 @@ export default function Schedule() {
             <div className="flex items-center gap-2">
               <p className="text-xs sm:text-sm font-bold text-ink truncate">
                 {needsAuth
-                  ? "Sinkronisasi Otomatis Google Calendar"
-                  : "Google Calendar Terhubung · Auto-Sync Aktif"}
+                  ? t("schedule_gcal_banner_disconnected", "Sinkronisasi Otomatis Google Calendar")
+                  : t("schedule_gcal_banner_connected", "Google Calendar Terhubung · Auto-Sync Aktif")}
               </p>
               {!needsAuth && (
                 <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
-                  Otomatis
+                  {t("schedule_gcal_auto_badge", "Otomatis")}
                 </span>
               )}
             </div>
             <p className="text-[11px] sm:text-xs text-sub truncate">
               {needsAuth
-                ? "Klik Hubungkan Google Calendar untuk langsung sinkron jadwal meeting dari akun Google Anda."
+                ? t("schedule_gcal_desc_disconnected", "Klik Hubungkan Google Calendar untuk langsung sinkron jadwal meeting dari akun Google Anda.")
                 : `Jadwal dari Google Calendar${connectedEmail ? ` (${connectedEmail})` : ""} otomatis masuk ke halaman Jadwal${lastSyncedAt ? ` · Diperbarui ${format(lastSyncedAt, "HH:mm")}` : ""}.`}
             </p>
           </div>
@@ -760,7 +760,7 @@ export default function Schedule() {
                     </svg>
                   </div>
                   <span className="gsi-material-button-contents whitespace-nowrap">
-                    {isLoggingIn ? "Menyinkronkan..." : "Hubungkan Google Calendar"}
+                    {isLoggingIn ? t("schedule_gcal_syncing", "Menyinkronkan...") : t("schedule_gcal_connect_btn", "Hubungkan Google Calendar")}
                   </span>
                 </div>
               </button>
@@ -772,7 +772,7 @@ export default function Schedule() {
                 data-testid="open-import-ics-btn"
               >
                 <Upload size={14} className="text-brand" />
-                Import .ics
+                {t("schedule_import_ics_btn", "Import .ics")}
               </GhostButton>
             </>
           ) : (
@@ -785,7 +785,7 @@ export default function Schedule() {
                 data-testid="sync-gcal-now-btn"
               >
                 <RefreshCw size={15} className={syncingGCal ? "animate-spin text-brand" : "text-brand"} />
-                {syncingGCal ? "Menyinkronkan..." : "Sync Sekarang"}
+                {syncingGCal ? t("schedule_gcal_syncing", "Menyinkronkan...") : t("schedule_gcal_sync_now", "Sync Sekarang")}
               </GhostButton>
               <GhostButton
                 type="button"
@@ -794,7 +794,7 @@ export default function Schedule() {
                 data-testid="open-import-ics-connected-btn"
               >
                 <Upload size={14} className="text-brand" />
-                Pengaturan iCal
+                {t("schedule_ical_settings_btn", "Pengaturan iCal")}
               </GhostButton>
             </>
           )}
@@ -882,12 +882,12 @@ export default function Schedule() {
           <h2 className="text-xs sm:text-sm font-bold text-ink flex items-center gap-2 min-w-0">
             <span className="truncate">
               {viewMode === "date" && selectedDate
-                ? `Pertemuan: ${selectedDate === todayStr ? t("schedule_filter_today", "Hari Ini") : selectedDate}`
+                ? `${t("schedule_date_meetings_prefix", "Pertemuan:")} ${selectedDate === todayStr ? t("schedule_filter_today", "Hari Ini") : selectedDate}`
                 : viewMode === "today"
                 ? t("schedule_today_meetings", "Pertemuan Hari Ini")
                 : viewMode === "upcoming"
                 ? t("schedule_upcoming_meetings", "Pertemuan Mendatang")
-                : `Pertemuan Bulan ${format(new Date(), "MMMM yyyy", { locale: localeId })}`}
+                : `${t("schedule_month_meetings_prefix", "Pertemuan Bulan")} ${format(new Date(), "MMMM yyyy", { locale: localeId })}`}
             </span>
             <span className="rounded-full bg-surface2 px-2 py-0.5 text-xs text-sub font-semibold shrink-0">
               {filteredMeetings.length}
@@ -898,7 +898,7 @@ export default function Schedule() {
             onClick={() => openCreateDialog(selectedDate || todayStr)}
             className="font-semibold text-brand cursor-pointer shrink-0 px-3 sm:px-4 text-xs sm:text-sm"
           >
-            <Plus size={15} /> <span className="sm:hidden">Tambah</span><span className="hidden sm:inline">Tambah untuk {selectedDate || t("schedule_filter_today", "Hari Ini")}</span>
+            <Plus size={15} /> <span className="sm:hidden">{t("schedule_add_short", "Tambah")}</span><span className="hidden sm:inline">{t("schedule_add_for", "Tambah untuk")} {selectedDate || t("schedule_filter_today", "Hari Ini")}</span>
           </GhostButton>
         </div>
 
@@ -943,7 +943,7 @@ export default function Schedule() {
                             isToday ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" : "bg-surface2 text-sub"
                           }`}
                         >
-                          {isToday ? "Hari Ini" : m.date}
+                          {isToday ? t("schedule_filter_today", "Hari Ini") : m.date}
                         </span>
                         {m.gcal_synced && (
                           <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-600 dark:bg-blue-900/30 dark:text-blue-300">
@@ -984,7 +984,7 @@ export default function Schedule() {
                     {/* Attendees Stack */}
                     {m.attendee_ids?.length > 0 && (
                       <div className="mt-4 flex items-center gap-2">
-                        <span className="text-[11px] text-sub font-semibold">Peserta:</span>
+                        <span className="text-[11px] text-sub font-semibold">{t("schedule_card_participants", "Peserta:")}</span>
                         <div className="flex -space-x-1.5">
                           {[...m.attendee_ids.slice(0, 4)].reverse().map((uid, idx) => (
                             <Avatar key={uid} user={userMap[uid]} size={24} showStatus={false} className="border-2 border-surface rounded-full relative" style={{ zIndex: idx }} />
@@ -1009,7 +1009,7 @@ export default function Schedule() {
                         className="btn-accent flex-1 flex items-center justify-center gap-2 h-10 rounded-full px-4 text-sm font-semibold text-white shadow-sm hover:opacity-90 transition-opacity"
                         data-testid={`join-meet-${m.id}`}
                       >
-                        <Video size={16} /> Gabung Google Meet
+                        <Video size={16} /> {t("schedule_card_join_meet", "Gabung Google Meet")}
                       </a>
                     ) : m.html_link ? (
                       <a
@@ -1018,11 +1018,11 @@ export default function Schedule() {
                         rel="noreferrer"
                         className="flex-1 flex items-center justify-center gap-2 h-10 rounded-full border bg-surface2 px-4 text-sm font-semibold text-ink hover:bg-border/60 transition-colors"
                       >
-                        <ExternalLink size={16} /> Buka di Google Calendar
+                        <ExternalLink size={16} /> {t("schedule_card_open_gcal", "Buka di Google Calendar")}
                       </a>
                     ) : (
                       <div className="flex-1 text-center py-2 text-xs font-medium text-sub">
-                        Pertemuan Tatap Muka
+                        {t("schedule_card_offline", "Pertemuan Tatap Muka")}
                       </div>
                     )}
                     <a
@@ -1047,9 +1047,9 @@ export default function Schedule() {
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="w-[94vw] sm:max-w-3xl max-h-[90vh] overflow-y-auto bg-surface p-5 sm:p-6 rounded-3xl">
           <DialogHeader className="pb-3 border-b">
-            <DialogTitle className="text-lg font-bold">Buat Jadwal Meeting Baru</DialogTitle>
+            <DialogTitle className="text-lg font-bold">{t("schedule_modal_create_title", "Buat Jadwal Meeting Baru")}</DialogTitle>
             <DialogDescription className="text-xs text-sub">
-              Atur agenda dan waktu rapat. Jadwal disinkronkan langsung ke Google Calendar tim.
+              {t("schedule_modal_create_desc", "Atur agenda dan waktu rapat. Jadwal disinkronkan langsung ke Google Calendar tim.")}
             </DialogDescription>
           </DialogHeader>
 
@@ -1058,30 +1058,30 @@ export default function Schedule() {
               {/* Kolom Kiri: Detail & Platform */}
               <div className="space-y-3.5">
                 <div>
-                  <label className="text-xs font-semibold text-sub">Judul Meeting *</label>
+                  <label className="text-xs font-semibold text-sub">{t("schedule_form_title_label", "Judul Meeting *")}</label>
                   <input
                     required
                     value={form.title}
                     onChange={(e) => setForm({ ...form, title: e.target.value })}
-                    placeholder="Contoh: Sprint Planning & Sync Progress"
+                    placeholder={t("schedule_form_title_ph", "Contoh: Sprint Planning & Sync Progress")}
                     className="mt-1 h-9 w-full rounded-xl border bg-surface2 px-3 text-xs outline-none focus:ring-2 focus:ring-brand"
                     data-testid="meeting-title-input"
                   />
                 </div>
 
                 <div>
-                  <label className="text-xs font-semibold text-sub">Deskripsi & Agenda</label>
+                  <label className="text-xs font-semibold text-sub">{t("schedule_form_desc_label", "Deskripsi & Agenda")}</label>
                   <textarea
                     rows={3}
                     value={form.description}
                     onChange={(e) => setForm({ ...form, description: e.target.value })}
-                    placeholder="Tuliskan poin pembahasan atau agenda rapat..."
+                    placeholder={t("schedule_form_desc_ph", "Tuliskan poin pembahasan atau agenda rapat...")}
                     className="mt-1 w-full rounded-xl border bg-surface2 p-2.5 text-xs outline-none focus:ring-2 focus:ring-brand resize-none"
                   />
                 </div>
 
                 <div>
-                  <label className="text-xs font-semibold text-sub">Lokasi & Platform</label>
+                  <label className="text-xs font-semibold text-sub">{t("schedule_form_loc_label", "Lokasi & Platform")}</label>
                   <div className="mt-1 grid grid-cols-2 gap-2">
                     <button
                       type="button"
@@ -1090,7 +1090,7 @@ export default function Schedule() {
                         form.location_type === "online" ? "border-brand bg-brand/10 text-brand" : "bg-surface2 text-sub"
                       }`}
                     >
-                      <Video size={15} /> Google Meet
+                      <Video size={15} /> {t("schedule_form_online", "Google Meet")}
                     </button>
                     <button
                       type="button"
@@ -1099,14 +1099,14 @@ export default function Schedule() {
                         form.location_type === "offline" ? "border-brand bg-brand/10 text-brand" : "bg-surface2 text-sub"
                       }`}
                     >
-                      <MapPin size={15} /> Tatap Muka
+                      <MapPin size={15} /> {t("schedule_form_offline", "Tatap Muka")}
                     </button>
                   </div>
                 </div>
 
                 {form.location_type === "online" && (
                   <div>
-                    <label className="text-xs font-semibold text-sub">Link Google Meet</label>
+                    <label className="text-xs font-semibold text-sub">{t("schedule_form_meet_link", "Link Google Meet")}</label>
                     <input
                       value={form.meet_link}
                       onChange={(e) => setForm({ ...form, meet_link: e.target.value })}
@@ -1121,18 +1121,18 @@ export default function Schedule() {
               <div className="space-y-3.5">
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1.35fr_1fr_1fr]">
                   <div>
-                    <label className="text-xs font-semibold text-sub">Tanggal</label>
+                    <label className="text-xs font-semibold text-sub">{t("schedule_form_date", "Tanggal")}</label>
                     <DatePicker
                       clearable={false}
                       value={form.date}
                       onChange={(val) => setForm({ ...form, date: val })}
-                      placeholder="Tanggal"
+                      placeholder={t("schedule_form_date", "Tanggal")}
                       className="mt-1 h-9 w-full rounded-xl border bg-surface2 px-2.5 text-xs"
                       data-testid="meeting-date-input"
                     />
                   </div>
                   <div>
-                    <label className="text-xs font-semibold text-sub">Mulai</label>
+                    <label className="text-xs font-semibold text-sub">{t("schedule_form_start", "Mulai")}</label>
                     <TimePicker
                       value={form.start_time}
                       onChange={(val) => setForm({ ...form, start_time: val })}
@@ -1141,7 +1141,7 @@ export default function Schedule() {
                     />
                   </div>
                   <div>
-                    <label className="text-xs font-semibold text-sub">Selesai</label>
+                    <label className="text-xs font-semibold text-sub">{t("schedule_form_end", "Selesai")}</label>
                     <TimePicker
                       value={form.end_time}
                       onChange={(val) => setForm({ ...form, end_time: val })}
@@ -1152,7 +1152,7 @@ export default function Schedule() {
                 </div>
 
                 <div>
-                  <label className="text-xs font-semibold text-sub">Undang Anggota Tim</label>
+                  <label className="text-xs font-semibold text-sub">{t("schedule_form_attendees", "Undang Anggota Tim")}</label>
                   <div className="mt-1 max-h-32 space-y-1 overflow-y-auto rounded-xl border bg-surface2 p-2">
                     {users.map((u) => {
                       const isChecked = form.attendee_ids.includes(u.user_id);
@@ -1188,9 +1188,9 @@ export default function Schedule() {
                       data-testid="sync-gcal-checkbox"
                     />
                     <div>
-                      <p className="text-xs font-bold text-ink">Sinkronkan ke Google Calendar</p>
+                      <p className="text-xs font-bold text-ink">{t("schedule_form_sync_title", "Sinkronkan ke Google Calendar")}</p>
                       <p className="text-[11px] text-sub leading-tight mt-0.5">
-                        Otomatis tersimpan ke kalender Google Workspace Anda.
+                        {t("schedule_form_sync_desc", "Otomatis tersimpan ke kalender Google Workspace Anda.")}
                       </p>
                     </div>
                   </label>
@@ -1200,10 +1200,10 @@ export default function Schedule() {
 
             <DialogFooter className="pt-3 border-t gap-2 sm:gap-0">
               <GhostButton type="button" onClick={() => setCreateOpen(false)}>
-                Batal
+                {t("common_cancel", "Batal")}
               </GhostButton>
               <AccentButton type="submit" disabled={submitting} data-testid="submit-meeting-btn">
-                {submitting ? "Menyimpan..." : "Simpan Jadwal"}
+                {submitting ? t("schedule_form_saving", "Menyimpan...") : t("schedule_form_submit", "Simpan Jadwal")}
               </AccentButton>
             </DialogFooter>
           </form>
@@ -1214,7 +1214,7 @@ export default function Schedule() {
       <Dialog open={createConfirmOpen} onOpenChange={setCreateConfirmOpen}>
         <DialogContent className="max-w-md p-6 bg-surface rounded-3xl">
           <DialogHeader>
-            <DialogTitle className="text-base font-bold text-ink">Tambahkan ke Google Calendar?</DialogTitle>
+            <DialogTitle className="text-base font-bold text-ink">{t("schedule_confirm_gcal_title", "Tambahkan ke Google Calendar?")}</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-sub mt-2 leading-relaxed">
             Jadwal <span className="font-bold text-ink">&ldquo;{form.title}&rdquo;</span> pada{" "}
@@ -1222,10 +1222,10 @@ export default function Schedule() {
           </p>
           <div className="mt-6 flex justify-end gap-2">
             <GhostButton type="button" onClick={() => setCreateConfirmOpen(false)}>
-              Batal
+              {t("common_cancel", "Batal")}
             </GhostButton>
             <AccentButton type="button" onClick={executeCreateMeeting} data-testid="confirm-create-gcal-btn">
-              Konfirmasi & Simpan
+              {t("schedule_confirm_gcal_btn", "Konfirmasi & Simpan")}
             </AccentButton>
           </div>
         </DialogContent>
@@ -1235,16 +1235,16 @@ export default function Schedule() {
       <Dialog open={!!deleteConfirmMeeting} onOpenChange={(v) => !v && setDeleteConfirmMeeting(null)}>
         <DialogContent className="max-w-md p-6 bg-surface rounded-3xl">
           <DialogHeader>
-            <DialogTitle className="text-base font-bold text-ink">Hapus Jadwal Pertemuan?</DialogTitle>
+            <DialogTitle className="text-base font-bold text-ink">{t("schedule_delete_title", "Hapus Jadwal Pertemuan?")}</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-sub mt-2 leading-relaxed">
-            Apakah Anda yakin ingin menghapus jadwal rapat{" "}
+            {t("schedule_delete_confirm_q", "Apakah Anda yakin ingin menghapus jadwal rapat")}{" "}
             <span className="font-bold text-ink">&ldquo;{deleteConfirmMeeting?.title}&rdquo;</span>?
             {deleteConfirmMeeting?.gcal_synced && " Pertemuan ini juga akan dihapus dari Google Calendar dan tampilan jadwal Anda."}
           </p>
           <div className="mt-6 flex justify-end gap-2">
             <GhostButton type="button" onClick={() => setDeleteConfirmMeeting(null)}>
-              Batal
+              {t("common_cancel", "Batal")}
             </GhostButton>
             <AccentButton
               type="button"
@@ -1252,7 +1252,7 @@ export default function Schedule() {
               className="bg-rose-500 hover:bg-rose-600 text-white"
               data-testid="confirm-delete-meeting-btn"
             >
-              <Trash2 size={14} /> Hapus Jadwal
+              <Trash2 size={14} /> {t("schedule_delete_btn", "Hapus Jadwal")}
             </AccentButton>
           </div>
         </DialogContent>
@@ -1264,10 +1264,10 @@ export default function Schedule() {
           <DialogHeader className="pb-3 border-b">
             <DialogTitle className="text-lg font-bold flex items-center gap-2">
               <CalendarIcon size={18} className="text-brand" />
-              Hubungkan & Sinkronkan Google Calendar
+              {t("schedule_ics_modal_title", "Hubungkan & Sinkronkan Google Calendar")}
             </DialogTitle>
             <DialogDescription className="text-xs text-sub">
-              Gunakan <b>Link iCal</b> atau <b>File .ics</b> agar langsung terhubung untuk akun email mana pun.
+              {t("schedule_ics_modal_desc", "Gunakan Link iCal atau File .ics agar langsung terhubung untuk akun email mana pun.")}
             </DialogDescription>
           </DialogHeader>
 
@@ -1277,11 +1277,11 @@ export default function Schedule() {
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="space-y-1">
                   <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 whitespace-nowrap">
-                    <Check size={11} /> Bebas Error 403 · Auto-Sync Semua Email
+                    <Check size={11} /> {t("schedule_ics_badge", "Bebas Error 403 · Auto-Sync Semua Email")}
                   </span>
                   <h4 className="text-sm font-bold text-ink flex items-center gap-1.5">
                     <Link2 size={15} className="text-brand" />
-                    1. Sinkronisasi Otomatis via Link iCal Google Calendar
+                    {t("schedule_ics_sec1_title", "1. Sinkronisasi Otomatis via Link iCal Google Calendar")}
                   </h4>
                 </div>
                 <a
@@ -1290,7 +1290,7 @@ export default function Schedule() {
                   rel="noreferrer"
                   className="inline-flex items-center gap-1.5 rounded-full border bg-surface px-3 py-1.5 text-[11px] font-bold text-brand shadow-2xs hover:bg-surface2 transition-colors whitespace-nowrap"
                 >
-                  Buka Google Calendar Settings <ExternalLink size={12} />
+                  {t("schedule_ics_open_settings", "Buka Google Calendar Settings")} <ExternalLink size={12} />
                 </a>
               </div>
 
@@ -1322,12 +1322,12 @@ export default function Schedule() {
                   data-testid="submit-ics-url-btn"
                 >
                   <RefreshCw size={14} className={importingIcs ? "animate-spin" : ""} />
-                  {importingIcs ? "Mengimpor..." : "Impor & Hubungkan"}
+                  {importingIcs ? t("schedule_ics_importing", "Mengimpor...") : t("schedule_ics_import_btn", "Impor & Hubungkan")}
                 </AccentButton>
               </div>
               {savedIcsUrl && (
                 <p className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
-                  ✓ Link iCal sudah tersimpan dan disinkronkan otomatis setiap ada jadwal baru.
+                  {t("schedule_ics_saved_note", "✓ Link iCal sudah tersimpan dan disinkronkan otomatis setiap ada jadwal baru.")}
                 </p>
               )}
             </form>
@@ -1337,7 +1337,7 @@ export default function Schedule() {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h4 className="text-sm font-bold text-ink flex items-center gap-1.5">
                   <Upload size={15} className="text-brand" />
-                  2. Upload File Kalender .ics
+                  {t("schedule_ics_sec2_title", "2. Upload File Kalender .ics")}
                 </h4>
                 <a
                   href="https://calendar.google.com/calendar/u/0/r/settings/export"
@@ -1345,7 +1345,7 @@ export default function Schedule() {
                   rel="noreferrer"
                   className="inline-flex items-center gap-1 rounded-full border bg-surface px-2.5 py-1 text-[11px] font-semibold text-brand hover:bg-surface2 transition-colors whitespace-nowrap"
                 >
-                  Buka Export Google Calendar <ExternalLink size={11} />
+                  {t("schedule_ics_open_export", "Buka Export Google Calendar")} <ExternalLink size={11} />
                 </a>
               </div>
               <p className="text-xs text-sub leading-relaxed">
@@ -1368,13 +1368,13 @@ export default function Schedule() {
                   data-testid="trigger-ics-file-btn"
                 >
                   <Upload size={14} className="text-brand" />
-                  {importingIcs ? "Memproses File..." : "Pilih File .ics dari Perangkat"}
+                  {importingIcs ? t("schedule_ics_processing", "Memproses File...") : t("schedule_ics_pick_file", "Pilih File .ics dari Perangkat")}
                 </GhostButton>
               </div>
             </div>
 
             <div className="rounded-2xl border bg-surface2/50 p-3.5 text-xs text-sub leading-relaxed">
-              <p className="font-bold text-ink">💡 Info Sinkronisasi Kalender</p>
+              <p className="font-bold text-ink">{t("schedule_ics_info_title", "💡 Info Sinkronisasi Kalender")}</p>
               <p className="mt-1">
                 Gunakan <b>Link iCal Google Calendar</b> atau <b>Upload File .ics</b> di atas agar jadwal langsung terhubung dari <b>calendar.google.com</b> tanpa memerlukan konfigurasi Google Cloud Console.
               </p>
@@ -1383,7 +1383,7 @@ export default function Schedule() {
 
           <DialogFooter className="pt-3 mt-2 border-t">
             <GhostButton type="button" onClick={() => setImportModalOpen(false)}>
-              Tutup
+              {t("common_close", "Tutup")}
             </GhostButton>
           </DialogFooter>
         </DialogContent>

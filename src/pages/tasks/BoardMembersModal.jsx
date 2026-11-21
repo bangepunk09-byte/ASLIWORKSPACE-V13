@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { AppSelect } from "../../components/ui/select";
 
 export default function BoardMembersModal({ board, onClose, onUpdated }) {
-  const { users, me, isAdmin } = useApp();
+  const { users, me, isAdmin, t } = useApp();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [inviteUserId, setInviteUserId] = useState("");
@@ -22,7 +22,7 @@ export default function BoardMembersModal({ board, onClose, onUpdated }) {
       const res = await api.get(`/boards/${board.id}/members`);
       setData(res.data);
     } catch (err) {
-      toast.error(errMsg(err, "Gagal memuat anggota board"));
+      toast.error(errMsg(err, t("board_members_load_err", "Gagal memuat anggota board")));
     } finally {
       setLoading(false);
     }
@@ -64,12 +64,12 @@ export default function BoardMembersModal({ board, onClose, onUpdated }) {
     try {
       const targetUser = users.find((u) => u.user_id === inviteUserId);
       await api.post(`/boards/${board.id}/invite`, { user_ids: [inviteUserId] });
-      toast.success(`${targetUser?.name || "Karyawan"} berhasil diundang ke ${board.name}`);
+      toast.success(`${targetUser?.name || t("board_members_staff_fallback", "Karyawan")} ${t("board_members_invite_toast_mid", "berhasil diundang ke")} ${board.name}`);
       setInviteUserId("");
       await load();
       onUpdated?.();
     } catch (err) {
-      toast.error(errMsg(err, "Gagal mengundang anggota"));
+      toast.error(errMsg(err, t("board_members_invite_err", "Gagal mengundang anggota")));
     } finally {
       setSubmitting(false);
     }
@@ -78,11 +78,11 @@ export default function BoardMembersModal({ board, onClose, onUpdated }) {
   const handleRemove = async (userId, userName) => {
     try {
       await api.post(`/boards/${board.id}/remove-member`, { user_id: userId });
-      toast.success(`Akses ${userName || "anggota"} ke board ini berhasil dicabut`);
+      toast.success(`${t("board_members_remove_toast_pre", "Akses")} ${userName || t("task_field_member_fallback", "anggota")} ${t("board_members_remove_toast_mid", "ke board ini berhasil dicabut")}`);
       await load();
       onUpdated?.();
     } catch (err) {
-      toast.error(errMsg(err, "Gagal mencabut akses"));
+      toast.error(errMsg(err, t("board_members_remove_err", "Gagal mencabut akses")));
     }
   };
 
@@ -99,14 +99,14 @@ export default function BoardMembersModal({ board, onClose, onUpdated }) {
             </span>
             <div className="min-w-0 flex-1">
               <DialogTitle className="text-base sm:text-lg font-bold text-ink truncate text-left">
-                Anggota & Hak Akses: {board?.name}
+                {t("board_members_modal_title", "Anggota & Hak Akses:")} {board?.name}
               </DialogTitle>
               <div className="flex flex-wrap items-center gap-2 mt-1">
                 <span className="rounded-md bg-brand/10 text-brand px-2 py-0.5 text-[11px] font-bold">
-                  Divisi: {boardDept}
+                  {t("board_dept_opt_prefix", "Divisi:")} {boardDept}
                 </span>
                 <span className="text-[11px] text-sub">
-                  Total {(deptUsers.length + invitedUsers.length)} orang memiliki akses
+                  {t("board_members_total_pre", "Total")} {(deptUsers.length + invitedUsers.length)} {t("board_members_total_suf", "orang memiliki akses")}
                 </span>
               </div>
             </div>
@@ -119,9 +119,9 @@ export default function BoardMembersModal({ board, onClose, onUpdated }) {
             <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
               <span className="text-xs font-bold text-ink uppercase tracking-wider flex items-center gap-1.5">
                 <UserPlus size={14} className="text-brand shrink-0" />
-                Undang Orang / Rekan Lintas Divisi
+                {t("board_members_invite_hdr", "Undang Orang / Rekan Lintas Divisi")}
               </span>
-              <span className="text-[11px] text-sub">Bisa undang dari divisi mana saja</span>
+              <span className="text-[11px] text-sub">{t("board_members_invite_sub", "Bisa undang dari divisi mana saja")}</span>
             </div>
 
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 min-w-0">
@@ -131,10 +131,10 @@ export default function BoardMembersModal({ board, onClose, onUpdated }) {
                 className="h-10 w-full min-w-0 flex-1 rounded-xl border bg-surface px-3 text-xs sm:text-sm font-medium text-ink truncate"
                 data-testid="invite-user-select"
               >
-                <option value="">Pilih rekan kerja untuk diundang...</option>
+                <option value="">{t("board_members_invite_ph", "Pilih rekan kerja untuk diundang...")}</option>
                 {availableToInvite.map((u) => (
                   <option key={u.user_id} value={u.user_id}>
-                    {u.name} — Divisi {u.department || "Umum"} · {u.job_title || "Staf"}
+                    {u.name} — {t("board_division_prefix", "Divisi")} {u.department || t("board_general_dept", "Umum")} · {u.job_title || t("board_members_staff_fallback", "Staf")}
                   </option>
                 ))}
               </AppSelect>
@@ -147,7 +147,7 @@ export default function BoardMembersModal({ board, onClose, onUpdated }) {
                 data-testid="submit-invite-btn"
               >
                 <UserPlus size={14} />
-                <span>Undang</span>
+                <span>{t("board_members_invite_btn", "Undang")}</span>
               </button>
             </div>
           </div>
@@ -156,14 +156,14 @@ export default function BoardMembersModal({ board, onClose, onUpdated }) {
           <div className="space-y-2 min-w-0">
             <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
               <span className="text-xs font-bold text-ink uppercase tracking-wider">
-                Kolaborator Diundang · {invitedUsers.length}
+                {t("board_members_invited_hdr", "Kolaborator Diundang")} · {invitedUsers.length}
               </span>
-              <span className="text-[11px] text-sub">Akses khusus lintas divisi</span>
+              <span className="text-[11px] text-sub">{t("board_members_invited_sub", "Akses khusus lintas divisi")}</span>
             </div>
 
             {invitedUsers.length === 0 ? (
               <div className="rounded-xl border border-dashed p-4 text-center text-xs text-sub bg-surface2/30">
-                Belum ada rekan dari luar divisi {boardDept} yang diundang ke board ini.
+                {t("board_members_invited_empty_pre", "Belum ada rekan dari luar divisi")} {boardDept} {t("board_members_invited_empty_suf", "yang diundang ke board ini.")}
               </div>
             ) : (
               <div className="max-h-48 overflow-y-auto space-y-1 pr-1">
@@ -177,21 +177,21 @@ export default function BoardMembersModal({ board, onClose, onUpdated }) {
                       <div className="min-w-0 flex-1">
                         <span className="block truncate text-xs font-bold text-ink">{u.name}</span>
                         <span className="block truncate text-[11px] text-sub">
-                          Divisi {u.department || "Umum"} · {u.job_title || "Staf"}
+                          {t("board_division_prefix", "Divisi")} {u.department || t("board_general_dept", "Umum")} · {u.job_title || t("board_members_staff_fallback", "Staf")}
                         </span>
                       </div>
                     </div>
 
                     <div className="flex items-center gap-2 shrink-0">
                       <span className="rounded-md bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 px-2 py-0.5 text-[10px] font-bold">
-                        Diundang
+                        {t("board_members_invited_badge", "Diundang")}
                       </span>
                       <button
                         type="button"
                         onClick={() => handleRemove(u.user_id, u.name)}
                         className="rounded-lg p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors cursor-pointer"
-                        title="Cabut akses"
-                        aria-label={`Cabut akses ${u.name}`}
+                        title={t("board_members_revoke_title", "Cabut akses")}
+                        aria-label={`${t("board_members_revoke_title", "Cabut akses")} ${u.name}`}
                         data-testid={`remove-invited-${u.user_id}`}
                       >
                         <Trash2 size={14} />
@@ -207,19 +207,19 @@ export default function BoardMembersModal({ board, onClose, onUpdated }) {
           <div className="space-y-2 pt-2 border-t min-w-0">
             <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
               <span className="text-xs font-bold text-ink uppercase tracking-wider">
-                Anggota Otomatis Divisi {boardDept} · {deptUsers.length}
+                {t("board_members_dept_hdr", "Anggota Otomatis Divisi")} {boardDept} · {deptUsers.length}
               </span>
               <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold shrink-0">
-                ✓ Otomatis sinkron
+                {t("board_members_auto_sync", "✓ Otomatis sinkron")}
               </span>
             </div>
             <p className="text-[11px] text-sub">
-              Semua karyawan dengan divisi <b>{boardDept}</b> otomatis dapat membuka board ini dan mengelola daftar tugasnya.
+              {t("board_members_dept_desc_pre", "Semua karyawan dengan divisi")} <b>{boardDept}</b> {t("board_members_dept_desc_suf", "otomatis dapat membuka board ini dan mengelola daftar tugasnya.")}
             </p>
 
             {deptUsers.length === 0 ? (
               <div className="rounded-xl border border-dashed p-4 text-center text-xs text-sub bg-surface2/30">
-                Belum ada karyawan yang terdaftar di divisi {boardDept}.
+                {t("board_members_dept_empty_pre", "Belum ada karyawan yang terdaftar di divisi")} {boardDept}.
               </div>
             ) : (
               <div className="max-h-56 overflow-y-auto space-y-1 pr-1">
@@ -233,13 +233,13 @@ export default function BoardMembersModal({ board, onClose, onUpdated }) {
                       <div className="min-w-0 flex-1">
                         <span className="block truncate text-xs font-bold text-ink">{u.name}</span>
                         <span className="block truncate text-[11px] text-sub">
-                          {u.job_title || "Staf"} · {u.email}
+                          {u.job_title || t("board_members_staff_fallback", "Staf")} · {u.email}
                         </span>
                       </div>
                     </div>
 
                     <span className="rounded-md bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 px-2 py-0.5 text-[10px] font-bold shrink-0 whitespace-nowrap">
-                      Otomatis
+                      {t("board_members_auto_badge", "Otomatis")}
                     </span>
                   </div>
                 ))}
@@ -254,7 +254,7 @@ export default function BoardMembersModal({ board, onClose, onUpdated }) {
             onClick={onClose}
             className="h-9 px-4 rounded-xl border bg-surface hover:bg-surface2 text-xs font-bold text-ink transition-colors cursor-pointer"
           >
-            Tutup
+            {t("board_members_close_btn", "Tutup")}
           </button>
         </div>
       </DialogContent>

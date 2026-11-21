@@ -2,6 +2,7 @@ import { Printer, FileDown, FileCode2 } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "./ui/dialog";
 import { AccentButton, GhostButton, fmtDate } from "./common";
+import { useApp } from "../context/AppContext";
 import {
   buildTaskReportRows,
   downloadTaskReportPDF,
@@ -23,6 +24,8 @@ export default function PrintPreviewDialog({
   labelMap = {},
   statuses = []
 }) {
+  const { t } = useApp() || {};
+  const tr = t || ((_k, fb) => fb || _k);
   const rows = mode === "list" ? buildTaskReportRows(tasks, { userMap, labelMap, reportMode }) : [];
   const nowStr = fmtDate(new Date().toISOString(), "d MMM yyyy HH:mm");
 
@@ -71,10 +74,10 @@ export default function PrintPreviewDialog({
         <DialogHeader className="px-6 py-4 border-b shrink-0">
           <DialogTitle className="flex items-center gap-2 text-lg font-bold">
             <Printer size={18} className="text-brand" />
-            <span>{mode === "detail" ? `Cetak Detail Tugas — ${task?.number_str || ""}` : `Pratinjau Cetak Laporan — ${boardName}`}</span>
+            <span>{mode === "detail" ? `${tr("print_dialog_detail_title", "Cetak Detail Tugas")} — ${task?.number_str || ""}` : `${tr("print_dialog_list_title", "Pratinjau Cetak Laporan")} — ${boardName}`}</span>
           </DialogTitle>
           <p className="text-xs text-sub mt-1">
-            Pratinjau aplikasi berada di dalam iframe sehingga dialog cetak bawaan browser dibatasi. Gunakan <b>Unduh PDF</b> untuk mencetak langsung dengan rapi.
+            {tr("print_iframe_note", "Pratinjau aplikasi berada di dalam iframe sehingga dialog cetak bawaan browser dibatasi. Gunakan Unduh PDF untuk mencetak langsung dengan rapi.")}
           </p>
         </DialogHeader>
 
@@ -82,18 +85,18 @@ export default function PrintPreviewDialog({
           <div className="mx-auto bg-white text-slate-900 rounded-2xl border border-slate-200 shadow-sm p-6">
             <div className="flex flex-wrap items-end justify-between gap-2 border-b-2 border-slate-800 pb-3 mb-4">
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">CIRCLE WORKSPACE · LAPORAN TUGAS</p>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{tr("print_kicker", "CIRCLE WORKSPACE · LAPORAN TUGAS")}</p>
                 <h2 className="text-xl font-extrabold text-slate-900">
-                  {mode === "detail" ? `${task?.number_str || ""} — ${task?.title || ""}` : `Laporan Tugas — ${boardName}`}
+                  {mode === "detail" ? `${task?.number_str || ""} — ${task?.title || ""}` : `${tr("print_report_title", "Laporan Tugas")} — ${boardName}`}
                 </h2>
               </div>
               <div className="text-right text-xs text-slate-600">
                 {mode === "list" && (
                   <p>
-                    Mode: <b>{reportMode === "checkpoint" ? "Per Tahap PIC" : "Per Kartu Tugas"}</b> · Total: <b>{rows.length} baris</b>
+                    {tr("print_mode_label", "Mode:")} <b>{reportMode === "checkpoint" ? tr("tasks_report_checkpoint", "Per Tahap PIC") : tr("tasks_report_card", "Per Kartu Tugas")}</b> · {tr("print_total_label", "Total:")} <b>{rows.length} {tr("print_rows_unit", "baris")}</b>
                   </p>
                 )}
-                <p>Dicetak: {nowStr}</p>
+                <p>{tr("print_printed_label", "Dicetak:")} {nowStr}</p>
               </div>
             </div>
 
@@ -103,14 +106,14 @@ export default function PrintPreviewDialog({
                   <thead>
                     <tr className="bg-slate-100 text-slate-800">
                       <th className="border border-slate-200 px-2 py-2 text-center w-8">#</th>
-                      <th className="border border-slate-200 px-2 py-2">Requestor</th>
-                      <th className="border border-slate-200 px-2 py-2">Assignee / PIC</th>
-                      <th className="border border-slate-200 px-2 py-2">Brand</th>
-                      <th className="border border-slate-200 px-2 py-2">Jenis Item</th>
-                      <th className="border border-slate-200 px-2 py-2">Judul Tugas &amp; Tahap</th>
-                      <th className="border border-slate-200 px-2 py-2">Prioritas</th>
+                      <th className="border border-slate-200 px-2 py-2">{tr("col_requestor", "Requestor")}</th>
+                      <th className="border border-slate-200 px-2 py-2">{tr("col_name", "Assignee")} / PIC</th>
+                      <th className="border border-slate-200 px-2 py-2">{tr("col_brand", "Brand")}</th>
+                      <th className="border border-slate-200 px-2 py-2">{tr("col_item", "Jenis Item")}</th>
+                      <th className="border border-slate-200 px-2 py-2">{tr("col_title", "Judul Tugas")}</th>
+                      <th className="border border-slate-200 px-2 py-2">{tr("col_priority", "Prioritas")}</th>
                       <th className="border border-slate-200 px-2 py-2">Deadline</th>
-                      <th className="border border-slate-200 px-2 py-2">Status</th>
+                      <th className="border border-slate-200 px-2 py-2">{tr("col_status", "Status")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -149,7 +152,7 @@ export default function PrintPreviewDialog({
                     {rows.length === 0 && (
                       <tr>
                         <td colSpan={9} className="border border-slate-200 px-3 py-6 text-center text-slate-500">
-                          Tidak ada data tugas untuk dicetak.
+                          {tr("print_empty_rows", "Tidak ada data tugas untuk dicetak.")}
                         </td>
                       </tr>
                     )}
@@ -159,14 +162,14 @@ export default function PrintPreviewDialog({
             ) : task ? (
               <div className="space-y-4 text-xs">
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 rounded-xl bg-slate-50 p-3 border border-slate-200">
-                  <div><span className="text-slate-500 block">Status</span><b>{statuses.find((s) => s.key === task.status)?.name || task.status}</b></div>
-                  <div><span className="text-slate-500 block">Prioritas</span><b className="capitalize">{task.priority || "Sedang"}</b></div>
+                  <div><span className="text-slate-500 block">{tr("col_status", "Status")}</span><b>{statuses.find((s) => s.key === task.status)?.name || task.status}</b></div>
+                  <div><span className="text-slate-500 block">{tr("col_priority", "Prioritas")}</span><b className="capitalize">{task.priority || tr("common_priority_medium", "Sedang")}</b></div>
                   <div><span className="text-slate-500 block">Deadline</span><b>{task.deadline ? fmtDate(task.deadline, "d MMM yyyy HH:mm") : "—"}</b></div>
-                  <div><span className="text-slate-500 block">Jenis Item</span><b>{task.item_type || "—"}</b></div>
+                  <div><span className="text-slate-500 block">{tr("col_item", "Jenis Item")}</span><b>{task.item_type || "—"}</b></div>
                 </div>
                 {Array.isArray(task.checkpoints) && task.checkpoints.length > 0 && (
                   <div>
-                    <h3 className="font-bold text-sm mb-2">Tahapan Checkpoint ({task.checkpoints.length})</h3>
+                    <h3 className="font-bold text-sm mb-2">{tr("print_cp_heading", "Tahapan Checkpoint")} ({task.checkpoints.length})</h3>
                     <table className="w-full border-collapse text-left text-xs">
                       <thead>
                         <tr className="bg-slate-100">
@@ -174,7 +177,7 @@ export default function PrintPreviewDialog({
                           <th className="border border-slate-200 px-2 py-1.5">Tahap</th>
                           <th className="border border-slate-200 px-2 py-1.5">PIC</th>
                           <th className="border border-slate-200 px-2 py-1.5">Deadline</th>
-                          <th className="border border-slate-200 px-2 py-1.5">Status</th>
+                          <th className="border border-slate-200 px-2 py-1.5">{tr("col_status", "Status")}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -182,9 +185,9 @@ export default function PrintPreviewDialog({
                           <tr key={cp.id || idx}>
                             <td className="border border-slate-200 px-2 py-1.5 text-center">{idx + 1}</td>
                             <td className="border border-slate-200 px-2 py-1.5 font-medium">{cp.title}</td>
-                            <td className="border border-slate-200 px-2 py-1.5">{cp.assignee_id ? (userMap[cp.assignee_id]?.name || cp.assignee_id) : "Belum Ditugaskan"}</td>
+                            <td className="border border-slate-200 px-2 py-1.5">{cp.assignee_id ? (userMap[cp.assignee_id]?.name || cp.assignee_id) : tr("table_unassigned", "Belum Ditugaskan")}</td>
                             <td className="border border-slate-200 px-2 py-1.5">{cp.deadline ? fmtDate(cp.deadline, "d MMM yyyy") : "—"}</td>
-                            <td className="border border-slate-200 px-2 py-1.5 font-semibold">{cp.done ? "Selesai" : "Berjalan"}</td>
+                            <td className="border border-slate-200 px-2 py-1.5 font-semibold">{cp.done ? tr("common_done", "Selesai") : tr("common_running", "Berjalan")}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -198,17 +201,17 @@ export default function PrintPreviewDialog({
 
         <DialogFooter className="px-6 py-3.5 border-t bg-surface shrink-0 flex flex-wrap items-center justify-between gap-2">
           <GhostButton type="button" onClick={() => onOpenChange(false)} className="h-10 rounded-full px-4 text-xs sm:text-sm font-semibold">
-            Tutup
+            {tr("common_close", "Tutup")}
           </GhostButton>
           <div className="flex flex-wrap items-center gap-2">
             <GhostButton type="button" onClick={handleBrowserPrint} className="h-10 rounded-full px-4 text-xs sm:text-sm font-semibold" data-testid="print-native-fallback-btn">
-              <Printer size={14} /> Coba Print Browser
+              <Printer size={14} /> {tr("print_btn_browser", "Coba Print Browser")}
             </GhostButton>
             <GhostButton type="button" onClick={handleDownloadHTML} className="h-10 rounded-full px-4 text-xs sm:text-sm font-semibold whitespace-nowrap" data-testid="print-download-html-btn">
-              <FileCode2 size={14} /> Unduh HTML
+              <FileCode2 size={14} /> {tr("print_btn_html", "Unduh HTML")}
             </GhostButton>
             <AccentButton type="button" onClick={handleDownloadPDF} className="h-10 rounded-full px-5 text-xs sm:text-sm font-semibold whitespace-nowrap" data-testid="print-download-pdf-btn">
-              <FileDown size={14} /> Unduh PDF
+              <FileDown size={14} /> {tr("print_btn_pdf", "Unduh PDF")}
             </AccentButton>
           </div>
         </DialogFooter>

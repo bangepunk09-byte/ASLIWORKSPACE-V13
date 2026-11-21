@@ -17,6 +17,9 @@ import {
   getInitialMsgs,
   hydrateConversationsCache,
   upsertConversationInCache,
+  removeConversationFromCache,
+  clearConversationMessagesCache,
+  removeGroupFromCache,
   appendMessageToCache,
   updateMessageInCache,
   seedPollCache,
@@ -51,13 +54,14 @@ const CIRCLE_QUICK_PROMPTS = [
   { label: "Ringkasan Workspace", prompt: "Ringkasan semua data workspace" }
 ];
 
-function Panel({ conv, reload, onClose }) {
-  const { me, userMap, prefs, savePrefs, isAdmin, online, t } = useApp();
+function Panel({ conv, reload, onClose, onLeft }) {
+  const { me, userMap, prefs, savePrefs, isAdmin, online, t: tr } = useApp();
   const [tab, setTab] = useState("members");
   const [edit, setEdit] = useState(false);
   const [add, setAdd] = useState(false);
   const [lightboxImg, setLightboxImg] = useState(null);
   const [confirmDeleteGroup, setConfirmDeleteGroup] = useState(false);
+  const [confirmDeleteDm, setConfirmDeleteDm] = useState(false);
   const [busyAction, setBusyAction] = useState(false);
   const navigate = useNavigate();
   const isOfficialOrDept = conv.group_type === "department" || String(conv.id || "").startsWith("group_official_");
@@ -65,16 +69,35 @@ function Panel({ conv, reload, onClose }) {
   const amAdmin = Boolean(conv.can_manage || isAdmin || (conv.created_by && conv.created_by === me?.user_id) || conv.admin_ids?.includes(me?.user_id) || isMyDeptManager);
   const canDeleteOfficial = !isOfficialOrDept && !conv.is_verified ? amAdmin : isAdmin;
   const muted = (prefs.muted_conversations || []).includes(conv.id);
-  const run = (fn, msg) => async () => {
+  const run = (fn, msg, sfx) => async () => {
     if (busyAction) return;
     setBusyAction(true);
-    try { await fn(); msg && toast.success(msg); reload(); } catch (e) { toast.error(errMsg(e)); } finally { setBusyAction(false); }
+    try { await fn(); if (sfx) playSound(sfx); msg && toast.success(msg); reload(); } catch (e) { toast.error(errMsg(e)); } finally { setBusyAction(false); }
+  };
+  const leaveGroup = async () => {
+    if (busyAction) return;
+    setBusyAction(true);
+    try {
+      await api.post(`/groups/${conv.id}/leave`);
+      playSound("trash");
+      removeConversationFromCache(conv.id, me?.user_id);
+      removeGroupFromCache(conv.id, me?.user_id);
+      onClose?.();
+      onLeft?.(conv.id);
+      toast.success(tr("groups_left_toast", "Keluar dari grup"));
+      navigate("/messages", { replace: true });
+    } catch (e) {
+      toast.error(errMsg(e, "Gagal keluar dari grup"));
+    } finally {
+      setBusyAction(false);
+    }
   };
   const toggleMute = async () => {
     if (busyAction) return;
     setBusyAction(true);
     try {
       await api.post(`/conversations/${conv.id}/mute`, { muted: !muted });
+      playSound("pop");
       savePrefs({ muted_conversations: muted ? (prefs.muted_conversations || []).filter((x) => x !== conv.id) : [...(prefs.muted_conversations || []), conv.id] });
     } catch (e) {
       toast.error(errMsg(e, "Gagal mengubah pengaturan notifikasi"));
@@ -85,24 +108,24 @@ function Panel({ conv, reload, onClose }) {
   return (
     <div className="flex h-full flex-col" data-testid="chat-context-panel">
       <div className="flex h-14 sm:h-16 shrink-0 items-center justify-between border-b bg-surface px-4 pt-safe">
-        <p className="font-bold">Detail</p>
-        <button onClick={onClose} aria-label="Tutup panel" className="btn-ghost flex h-9 w-9 items-center justify-center text-sub hover:text-ink"><X size={18} /></button>
+        <p className="font-bold">{tr("chat_detail_title", "Detail")}</p>
+        <button onClick={onClose} aria-label={tr("chat_close_panel_aria", "Tutup panel")} className="btn-ghost flex h-9 w-9 items-center justify-center text-sub hover:text-ink"><X size={18} /></button>
       </div>
       <div className="p-4">
         {conv.type === "group" && <p className="text-sm text-sub">{conv.description}</p>}
         {conv.location && <p className="mt-2 flex items-center gap-1 text-xs text-sub"><MapPin size={12} />{conv.location}</p>}
         <div className="mt-3 flex flex-wrap gap-2">
-          <button onClick={toggleMute} className="btn-ghost flex h-9 items-center gap-1.5 border px-3 text-xs font-semibold" data-testid="mute-conversation-btn">{muted ? <Bell size={14} /> : <BellOff size={14} />}{muted ? "Aktifkan Notif" : "Bisukan"}</button>
-          {conv.type === "group" && amAdmin && <button onClick={() => setEdit(true)} className="btn-ghost h-9 border px-3 text-xs font-semibold" data-testid="edit-group-btn">Ubah Grup</button>}
-          {conv.type === "group" && !conv.is_default && <button onClick={run(async () => { await api.post(`/groups/${conv.id}/leave`); navigate("/messages"); }, "Keluar dari grup")} className="btn-ghost flex h-9 items-center gap-1 border px-3 text-xs font-semibold" data-testid="leave-group-btn"><LogOut size={13} />Keluar</button>}
+          <button onClick={toggleMute} className="btn-ghost flex h-9 items-center gap-1.5 border px-3 text-xs font-semibold" data-testid="mute-conversation-btn">{muted ? <Bell size={14} /> : <BellOff size={14} />}{muted ? tr("chat_mute_on", "Aktifkan Notif") : tr("chat_mute_off", "Bisukan")}</button>
+          {conv.type === "group" && amAdmin && <button onClick={() => setEdit(true)} className="btn-ghost h-9 border px-3 text-xs font-semibold" data-testid="edit-group-btn">{tr("chat_edit_group_btn", "Ubah Grup")}</button>}
+          {conv.type === "group" && !conv.is_default && <button type="button" disabled={busyAction} onClick={leaveGroup} className="btn-ghost flex h-9 items-center gap-1 border px-3 text-xs font-semibold disabled:opacity-50" data-testid="leave-group-btn"><LogOut size={13} />{tr("chat_leave_group_btn", "Keluar")}</button>}
         </div>
       </div>
       <div className="flex items-center gap-1 border-b px-4 text-xs font-semibold">
-        {[["members", "Anggota"], ["pinned", "Disematkan"], ["files", "File"], ["tasks", "Tugas"]].map(([tKey, tLabel]) => (
+        {[["members", tr("chat_panel_tab_members", "Anggota")], ["pinned", tr("chat_panel_tab_pinned", "Disematkan")], ["files", tr("chat_panel_tab_files", "File")], ["tasks", tr("chat_panel_tab_tasks", "Tugas")]].map(([tKey, tLabel]) => (
           <button
             key={tKey}
             type="button"
-            onClick={() => setTab(tKey)}
+            onClick={() => { if (tab !== tKey) playSound("tab"); setTab(tKey); }}
             className={`-mb-px rounded-none border-b-2 px-2.5 py-2.5 transition-colors cursor-pointer ${
               tab === tKey
                 ? "border-[var(--c-accent)] text-ink"
@@ -119,7 +142,7 @@ function Panel({ conv, reload, onClose }) {
           {conv.type === "group" && amAdmin && conv.group_type === "private" && Array.isArray(conv.join_requests) && conv.join_requests.length > 0 && (
             <div className="mb-3 rounded-2xl border border-amber-200/80 dark:border-amber-800/70 bg-amber-50/70 dark:bg-amber-950/30 p-2.5 space-y-2" data-testid="group-join-requests-box">
               <p className="text-[11px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-300">
-                Permintaan Bergabung ({conv.join_requests.length})
+                {tr("chat_join_requests_title", "Permintaan Bergabung")} ({conv.join_requests.length})
               </p>
               {conv.join_requests.map((req) => {
                 const ru = userMap[req.user_id] || { user_id: req.user_id, name: req.name || "Karyawan" };
@@ -129,7 +152,7 @@ function Panel({ conv, reload, onClose }) {
                       <Avatar user={ru} size={28} showStatus={false} />
                       <div className="min-w-0">
                         <p className="truncate text-xs font-bold text-ink">{ru.name}</p>
-                        <p className="truncate text-[10px] text-sub">{ru.department || ru.job_title || "Ingin bergabung"}</p>
+                        <p className="truncate text-[10px] text-sub">{ru.department || ru.job_title || tr("chat_wants_to_join", "Ingin bergabung")}</p>
                       </div>
                     </button>
                     <div className="flex items-center gap-1 shrink-0">
@@ -139,7 +162,7 @@ function Panel({ conv, reload, onClose }) {
                         className="rounded-lg bg-emerald-600 hover:bg-emerald-700 px-2 py-1 text-[10px] font-bold text-white cursor-pointer"
                         data-testid={`approve-join-${req.user_id}`}
                       >
-                        Setujui
+                        {tr("chat_approve_btn", "Setujui")}
                       </button>
                       <button
                         type="button"
@@ -147,7 +170,7 @@ function Panel({ conv, reload, onClose }) {
                         className="rounded-lg border border-rose-200 bg-rose-50 dark:bg-rose-950/30 px-2 py-1 text-[10px] font-bold text-rose-600 hover:bg-rose-100 cursor-pointer"
                         data-testid={`reject-join-${req.user_id}`}
                       >
-                        Tolak
+                        {tr("chat_reject_btn", "Tolak")}
                       </button>
                     </div>
                   </div>
@@ -158,7 +181,7 @@ function Panel({ conv, reload, onClose }) {
           {conv.type === "group" && amAdmin && isOfficialOrDept && Array.isArray(conv.invitations) && conv.invitations.length > 0 && (
             <div className="mb-3 rounded-2xl border border-sky-200/80 dark:border-sky-800/70 bg-sky-50/70 dark:bg-sky-950/30 p-2.5 space-y-2" data-testid="group-invitations-box">
               <p className="text-[11px] font-bold uppercase tracking-wider text-sky-700 dark:text-sky-300">
-                Undangan Terkirim ({conv.invitations.length})
+                {tr("chat_sent_invitations_title", "Undangan Terkirim")} ({conv.invitations.length})
               </p>
               {conv.invitations.map((inv) => {
                 const iu = userMap[inv.user_id] || { user_id: inv.user_id, name: inv.name || "Karyawan" };
@@ -168,7 +191,7 @@ function Panel({ conv, reload, onClose }) {
                       <Avatar user={iu} size={28} showStatus={false} />
                       <div className="min-w-0">
                         <p className="truncate text-xs font-bold text-ink">{iu.name}</p>
-                        <p className="truncate text-[10px] text-sub">{iu.department || iu.job_title || "Menunggu konfirmasi"}</p>
+                        <p className="truncate text-[10px] text-sub">{iu.department || iu.job_title || tr("chat_waiting_confirm", "Menunggu konfirmasi")}</p>
                       </div>
                     </button>
                     <button
@@ -177,7 +200,7 @@ function Panel({ conv, reload, onClose }) {
                       className="rounded-lg border border-rose-200 bg-rose-50 dark:bg-rose-950/30 px-2 py-1 text-[10px] font-bold text-rose-600 hover:bg-rose-100 cursor-pointer shrink-0"
                       data-testid={`cancel-invite-${inv.user_id}`}
                     >
-                      Batalkan
+                      {tr("chat_cancel_invite_btn", "Batalkan")}
                     </button>
                   </div>
                 );
@@ -187,7 +210,7 @@ function Panel({ conv, reload, onClose }) {
           {conv.type === "group" && amAdmin && (
             <button onClick={() => setAdd(true)} className="mb-2 flex w-full items-center gap-2 rounded-xl p-2 text-sm font-semibold text-brand hover:bg-surface2 cursor-pointer" data-testid="add-members-btn">
               {isOfficialOrDept ? <MailPlus size={16} /> : <UserPlus size={16} />}
-              {isOfficialOrDept ? "Undang anggota" : "Tambah anggota"}
+              {isOfficialOrDept ? tr("chat_invite_member_btn", "Undang anggota") : tr("chat_add_member_btn", "Tambah anggota")}
             </button>
           )}
           {(conv.member_ids || [])
@@ -206,44 +229,107 @@ function Panel({ conv, reload, onClose }) {
                   <span className="flex items-center gap-1 truncate text-sm font-medium">
                     <span className="truncate">{u.name}</span>
                     {adm && <Shield size={11} className="shrink-0 text-brand" />}
-                    {isCreator && <span className="shrink-0 rounded-full bg-brand/10 px-1.5 py-0.2 text-[9px] font-bold text-brand">{t("groups_creator_badge", "Pembuat")}</span>}
-                    {!isCreator && adm && <span className="shrink-0 rounded-full bg-amber-100 dark:bg-amber-900/40 px-1.5 py-0.2 text-[9px] font-bold text-amber-700 dark:text-amber-300">{t("groups_co_admin_badge", "Co-Admin")}</span>}
+                    {isCreator && <span className="shrink-0 rounded-full bg-brand/10 px-1.5 py-0.2 text-[9px] font-bold text-brand">{tr("groups_creator_badge", "Pembuat")}</span>}
+                    {!isCreator && adm && <span className="shrink-0 rounded-full bg-amber-100 dark:bg-amber-900/40 px-1.5 py-0.2 text-[9px] font-bold text-amber-700 dark:text-amber-300">{tr("groups_co_admin_badge", "Co-Admin")}</span>}
                   </span>
-                  <span className="block text-[11px] text-sub">{online.has(id) ? "Online" : u.job_title}</span>
+                  <span className="block text-[11px] text-sub">{online.has(id) ? tr("nav_status_online", "Online") : u.job_title}</span>
                 </span>
               </button>
               {canActOnMember && (
                 <span className="hidden gap-1 group-hover:flex shrink-0">
-                  <button onClick={run(() => api.post(`/groups/${conv.id}/members`, { admin_id: id, make_admin: !adm }))} className="text-[10px] font-semibold text-sub hover:text-ink cursor-pointer" data-testid={`toggle-admin-${id}`}>{adm ? t("groups_revoke_co_admin", "Cabut Co-Admin") : t("groups_make_co_admin", "Jadikan Co-Admin")}</button>
-                  <button onClick={run(() => api.post(`/groups/${conv.id}/members`, { remove: [id] }), "Dikeluarkan")} className="text-[10px] font-semibold text-rose-500 cursor-pointer" data-testid={`remove-member-${id}`}>Keluarkan</button>
+                  <button onClick={run(() => api.post(`/groups/${conv.id}/members`, { admin_id: id, make_admin: !adm }))} className="text-[10px] font-semibold text-sub hover:text-ink cursor-pointer" data-testid={`toggle-admin-${id}`}>{adm ? tr("groups_revoke_co_admin", "Cabut Co-Admin") : tr("groups_make_co_admin", "Jadikan Co-Admin")}</button>
+                  <button onClick={run(() => api.post(`/groups/${conv.id}/members`, { remove: [id] }), "Dikeluarkan")} className="text-[10px] font-semibold text-rose-500 cursor-pointer" data-testid={`remove-member-${id}`}>{tr("chat_remove_member_btn", "Keluarkan")}</button>
                 </span>
               )}
             </div>); })}
         </>)}
-        {tab === "pinned" && (conv.pinned?.length ? conv.pinned.map((m) => <div key={m.id} className="mb-2 rounded-xl bg-surface2 p-2.5 text-sm"><p className="text-[11px] text-sub"><Pin size={10} className="inline" /> {userMap[m.sender_id]?.name} · {fmtDate(m.created_at, "d MMM")}</p><p className="mt-0.5 line-clamp-3">{m.text || "Lampiran"}</p></div>) : <p className="p-2 text-sm text-sub">Belum ada pesan disematkan.</p>)}
-        {tab === "files" && (conv.files?.length ? <div className="grid grid-cols-3 gap-2">{conv.files.map((f) => f.content_type?.startsWith("image/") ? <button key={f.id} type="button" onClick={() => setLightboxImg(f)} className="overflow-hidden rounded-xl border focus:outline-none cursor-zoom-in"><img src={fileUrl(f.id)} alt={f.name} className="aspect-square w-full object-cover transition-transform hover:scale-105" /></button> : <a key={f.id} href={fileUrl(f.id)} target="_blank" rel="noreferrer" className="col-span-3 flex items-center gap-2 rounded-xl bg-surface2 p-2 text-xs"><FileText size={14} />{f.name}</a>)}</div> : <p className="p-2 text-sm text-sub">Belum ada file yang dibagikan.</p>)}
-        {tab === "tasks" && (conv.tasks?.length ? conv.tasks.map((t) => <button key={t.id} onClick={() => navigate(`/tasks?task=${t.id}`)} className="mb-1 flex w-full items-center gap-2 rounded-xl p-2 text-left text-sm hover:bg-surface2"><CheckSquare size={14} className="text-brand" /><span className="text-xs text-sub">T-{t.number}</span>{t.title}</button>) : <p className="p-2 text-sm text-sub">Tugas yang dibuat dari obrolan ini akan muncul di sini.</p>)}
+        {tab === "pinned" && (conv.pinned?.length ? conv.pinned.map((m) => <div key={m.id} className="mb-2 rounded-xl bg-surface2 p-2.5 text-sm"><p className="text-[11px] text-sub"><Pin size={10} className="inline" /> {userMap[m.sender_id]?.name} · {fmtDate(m.created_at, "d MMM")}</p><p className="mt-0.5 line-clamp-3">{m.text || tr("messages_attachment_preview", "Lampiran")}</p></div>) : <p className="p-2 text-sm text-sub">{tr("chat_pinned_empty", "Belum ada pesan disematkan.")}</p>)}
+        {tab === "files" && (conv.files?.length ? <div className="grid grid-cols-3 gap-2">{conv.files.map((f) => f.content_type?.startsWith("image/") ? <button key={f.id} type="button" onClick={() => setLightboxImg(f)} className="overflow-hidden rounded-xl border focus:outline-none cursor-zoom-in"><img src={fileUrl(f.id)} alt={f.name} loading="lazy" decoding="async" className="aspect-square w-full object-cover transition-transform hover:scale-105" /></button> : <a key={f.id} href={fileUrl(f.id)} target="_blank" rel="noreferrer" className="col-span-3 flex items-center gap-2 rounded-xl bg-surface2 p-2 text-xs"><FileText size={14} />{f.name}</a>)}</div> : <p className="p-2 text-sm text-sub">{tr("chat_files_empty", "Belum ada file yang dibagikan.")}</p>)}
+        {tab === "tasks" && (conv.tasks?.length ? conv.tasks.map((t) => <button key={t.id} onClick={() => navigate(`/tasks?task=${t.id}`)} className="mb-1 flex w-full items-center gap-2 rounded-xl p-2 text-left text-sm hover:bg-surface2"><CheckSquare size={14} className="text-brand" /><span className="text-xs text-sub">T-{t.number}</span>{t.title}</button>) : <p className="p-2 text-sm text-sub">{tr("chat_tasks_empty", "Tugas yang dibuat dari obrolan ini akan muncul di sini.")}</p>)}
       </div>
-      {conv.type === "group" && amAdmin && !conv.is_default && canDeleteOfficial && (
+      {conv.type === "dm" && (
         <div className="flex gap-2 border-t p-3">
-          <button onClick={run(() => api.patch(`/groups/${conv.id}`, { archived: !conv.archived }), conv.archived ? "Dipulihkan" : "Diarsipkan")} className="btn-ghost flex h-9 flex-1 items-center justify-center gap-1 border text-xs font-semibold" data-testid="archive-group-btn"><Archive size={13} />{conv.archived ? "Pulihkan" : "Arsipkan"}</button>
-          <button onClick={() => setConfirmDeleteGroup(true)} className="flex h-9 flex-1 items-center justify-center gap-1 rounded-full border border-rose-200 text-xs font-semibold text-rose-600" data-testid="delete-group-btn"><Trash2 size={13} />Hapus</button>
+          <button
+            type="button"
+            onClick={() => { playSound("click"); setConfirmDeleteDm(true); }}
+            className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-full border border-rose-200 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 cursor-pointer"
+            data-testid="delete-dm-btn"
+          >
+            <Trash2 size={13} />
+            {String(conv.id || "").startsWith("conv_circle_")
+              ? tr("messages_ctx_clear_chat", "Bersihkan Riwayat Chat")
+              : tr("chat_delete_dm_btn", "Hapus Chat")}
+          </button>
         </div>
       )}
+      {conv.type === "group" && amAdmin && !conv.is_default && canDeleteOfficial && (
+        <div className="flex gap-2 border-t p-3">
+          <button onClick={run(() => api.patch(`/groups/${conv.id}`, { archived: !conv.archived }), conv.archived ? "Dipulihkan" : "Diarsipkan", "archive")} className="btn-ghost flex h-9 flex-1 items-center justify-center gap-1 border text-xs font-semibold" data-testid="archive-group-btn"><Archive size={13} />{conv.archived ? tr("chat_restore_btn", "Pulihkan") : tr("chat_archive_btn", "Arsipkan")}</button>
+          <button onClick={() => { playSound("click"); setConfirmDeleteGroup(true); }} className="flex h-9 flex-1 items-center justify-center gap-1 rounded-full border border-rose-200 text-xs font-semibold text-rose-600" data-testid="delete-group-btn"><Trash2 size={13} />{tr("chat_delete_group_btn", "Hapus")}</button>
+        </div>
+      )}
+      <Dialog open={confirmDeleteDm} onOpenChange={setConfirmDeleteDm}>
+        <DialogContent className="bg-surface rounded-3xl max-w-sm">
+          <DialogHeader>
+            <DialogTitle>
+              {String(conv.id || "").startsWith("conv_circle_")
+                ? tr("messages_clear_chat_title", "Bersihkan Riwayat Chat?")
+                : tr("messages_delete_chat_title", "Hapus Semua Chat Ini?")}
+            </DialogTitle>
+            <DialogDescription>
+              {String(conv.id || "").startsWith("conv_circle_")
+                ? tr("messages_clear_chat_desc", "Seluruh riwayat pesan dengan Circle akan dihapus, namun obrolan tetap tersedia.")
+                : tr("messages_delete_chat_desc", "Seluruh isi pesan dan percakapan ini akan dihapus secara permanen.")}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <button type="button" onClick={() => setConfirmDeleteDm(false)} className="btn-ghost h-9 border px-4 text-xs font-semibold">{tr("common_cancel", "Batal")}</button>
+            <button
+              type="button"
+              onClick={async () => {
+                setConfirmDeleteDm(false);
+                try {
+                  const { data } = await api.delete(`/conversations/${conv.id}`);
+                  playSound("trash");
+                  if (data?.is_circle_clear) {
+                    clearConversationMessagesCache(conv.id, me?.user_id);
+                    toast.success(tr("messages_clear_chat_success", "Riwayat pesan berhasil dibersihkan"));
+                    reload();
+                  } else {
+                    removeConversationFromCache(conv.id, me?.user_id);
+                    toast.success(tr("messages_delete_chat_success", "Percakapan berhasil dihapus"));
+                    onClose?.();
+                    navigate("/messages", { replace: true });
+                  }
+                } catch (e) {
+                  toast.error(errMsg(e));
+                }
+              }}
+              className="h-9 rounded-full bg-rose-600 px-4 text-xs font-semibold text-white hover:bg-rose-700"
+              data-testid="confirm-delete-dm-btn"
+            >
+              {String(conv.id || "").startsWith("conv_circle_")
+                ? tr("messages_clear_chat_confirm", "Ya, Bersihkan Chat")
+                : tr("messages_delete_chat_confirm", "Ya, Hapus Semua Chat")}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog open={confirmDeleteGroup} onOpenChange={setConfirmDeleteGroup}>
         <DialogContent className="bg-surface rounded-3xl max-w-sm">
           <DialogHeader>
-            <DialogTitle>Hapus Grup Ini?</DialogTitle>
-            <DialogDescription>Anggota tidak lagi dapat mengakses obrolan grup ini setelah dihapus.</DialogDescription>
+            <DialogTitle>{tr("chat_delete_group_title", "Hapus Grup Ini?")}</DialogTitle>
+            <DialogDescription>{tr("chat_delete_group_desc", "Anggota tidak lagi dapat mengakses obrolan grup ini setelah dihapus.")}</DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2 sm:gap-2">
-            <button type="button" onClick={() => setConfirmDeleteGroup(false)} className="btn-ghost h-9 border px-4 text-xs font-semibold">Batal</button>
+            <button type="button" onClick={() => setConfirmDeleteGroup(false)} className="btn-ghost h-9 border px-4 text-xs font-semibold">{tr("common_cancel", "Batal")}</button>
             <button
               type="button"
               onClick={async () => {
                 setConfirmDeleteGroup(false);
                 try {
                   await api.delete(`/groups/${conv.id}`);
+                  playSound("trash");
                   toast.success("Grup dihapus");
                   navigate("/messages");
                 } catch (e) {
@@ -252,7 +338,7 @@ function Panel({ conv, reload, onClose }) {
               }}
               className="h-9 rounded-full bg-rose-600 px-4 text-xs font-semibold text-white hover:bg-rose-700"
             >
-              Ya, Hapus Grup
+              {tr("chat_delete_group_confirm", "Ya, Hapus Grup")}
             </button>
           </DialogFooter>
         </DialogContent>
@@ -262,8 +348,8 @@ function Panel({ conv, reload, onClose }) {
         open={add}
         onOpenChange={setAdd}
         exclude={Array.from(new Set([...(conv.member_ids || []), ...(isOfficialOrDept ? (conv.invitations || []).map((i) => i.user_id) : [])]))}
-        title={isOfficialOrDept ? `Undang ke ${conv.name || "Grup Divisi"}` : "Tambah Anggota"}
-        submitLabel={isOfficialOrDept ? "Kirim Undangan" : "Tambah"}
+        title={isOfficialOrDept ? `${tr("groups_invite_modal_prefix", "Undang ke")} ${conv.name || tr("groups_filter_dept", "Grup Divisi")}` : tr("groups_member_picker_default_title", "Tambah Anggota")}
+        submitLabel={isOfficialOrDept ? tr("groups_invite_submit", "Kirim Undangan") : tr("groups_member_picker_default_submit", "Tambah")}
         onPick={(ids) =>
           isOfficialOrDept
             ? run(() => api.post(`/groups/${conv.id}/invite`, { user_ids: ids }), "Undangan terkirim ke rekan tim")()
@@ -320,8 +406,8 @@ const getInitialConv = (cid, me) => {
 
 
 
-export default function ChatView({ cid, onChange, onRead }) {
-  const { me, ws, userMap, subscribe, online, t } = useApp();
+export default function ChatView({ cid, onChange, onRead, onLeft }) {
+  const { me, ws, userMap, subscribe, online, t: tr } = useApp();
   const [conv, setConv] = useState(() => getInitialConv(cid, me));
   const [msgs, setMsgs] = useState(() => getInitialMsgs(cid));
   const [more, setMore] = useState(false);
@@ -504,11 +590,16 @@ export default function ChatView({ cid, onChange, onRead }) {
     const d = e.data;
     if ((e.type === "group:updated" || e.type === "conversation:upsert") && d?.id === cid) {
       let becameMember = false;
+      let wasRemoved = false;
       setConv((prev) => {
         const wasMember = prev?.is_member === true;
         const mems = Array.isArray(d.member_ids) ? d.member_ids : null;
         const nowMember = mems ? Boolean(me?.user_id && mems.includes(me.user_id)) : (d.is_member ?? prev?.is_member);
         if (!wasMember && nowMember) becameMember = true;
+        const leftTarget = (e.left_user_id && e.left_user_id === me?.user_id) || (d.left_user_id && d.left_user_id === me?.user_id);
+        if (leftTarget || (wasMember && mems && me?.user_id && !mems.includes(me.user_id))) {
+          wasRemoved = true;
+        }
         const next = {
           ...(prev || {}),
           ...d,
@@ -520,6 +611,15 @@ export default function ChatView({ cid, onChange, onRead }) {
         CHAT_CACHE[`conv_${cid}`] = next;
         return next;
       });
+      if (wasRemoved) {
+        removeConversationFromCache(cid, me?.user_id);
+        removeGroupFromCache(cid, me?.user_id);
+        setPanel(false);
+        setMobilePanel(false);
+        onLeft?.(cid);
+        navigate("/messages", { replace: true });
+        return;
+      }
       if (becameMember) {
         loadConv();
         api.get(`/conversations/${cid}/messages`).then((r) => {
@@ -529,7 +629,19 @@ export default function ChatView({ cid, onChange, onRead }) {
       }
     }
     if (e.type === "group:deleted" && e.id === cid) {
-      navigate("/messages");
+      removeConversationFromCache(cid, me?.user_id);
+      removeGroupFromCache(cid, me?.user_id);
+      navigate("/messages", { replace: true });
+    }
+    if (e.type === "conversation:deleted" && e.id === cid) {
+      if (e.is_circle_clear) {
+        clearConversationMessagesCache(cid, me?.user_id);
+        setMsgs([]);
+      } else {
+        removeConversationFromCache(cid, me?.user_id);
+        if (e.conv_type === "group") removeGroupFromCache(cid, me?.user_id);
+        navigate("/messages", { replace: true });
+      }
     }
     if (e.type === "message:new" && d?.conversation_id === cid) {
       if (d.poll) seedPollCache(d.poll);
@@ -564,7 +676,26 @@ export default function ChatView({ cid, onChange, onRead }) {
     if (e.type === "typing" && d?.conversation_id === cid) setTyping((t) => ({ ...t, [d.user_id]: Date.now() }));
   }), [subscribe, cid, me?.user_id]); // eslint-disable-line
 
-  useEffect(() => { const t = setInterval(() => setTyping((x) => ({ ...x })), 2000); return () => clearInterval(t); }, []);
+  const hasActiveTyper = Object.values(typing).some((ts) => ts > 0);
+  useEffect(() => {
+    if (!hasActiveTyper) return undefined;
+    const t = setInterval(() => {
+      const now = Date.now();
+      setTyping((prev) => {
+        let changed = false;
+        const next = {};
+        for (const [k, v] of Object.entries(prev)) {
+          if (v > 0 && now - v >= 4000) {
+            changed = true;
+          } else if (v > 0) {
+            next[k] = v;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }, 1500);
+    return () => clearInterval(t);
+  }, [hasActiveTyper]);
   useEffect(() => {
     if (!search) { setResults([]); return undefined; }
     const qLower = search.toLowerCase();
@@ -592,15 +723,15 @@ export default function ChatView({ cid, onChange, onRead }) {
     isCircleAssistantConv ? {
       user_id: "user_circle_assistant",
       name: ws?.assistant_name || "Circle",
-      job_title: "Asisten AI Workspace",
+      job_title: tr("messages_assistant_role", "Asisten AI Workspace"),
       avatar: ws?.assistant_avatar || "https://api.dicebear.com/7.x/bottts/svg?seed=CircleWorkspace&backgroundColor=FF5364"
     } : (userMap?.[otherMemberId] || null)
   ) : null;
 
 
   const title = activeConv.type === "dm"
-    ? (other?.name || (activeConv.name && activeConv.name !== "Direct Message" ? activeConv.name : "Pesan Langsung"))
-    : (activeConv.name || "Grup Chat");
+    ? (other?.name || (activeConv.name && activeConv.name !== "Direct Message" ? activeConv.name : tr("messages_default_dm_title", "Pesan Langsung")))
+    : (activeConv.name || tr("messages_default_group_title", "Grup Chat"));
   const typers = Object.entries(typing).filter(([, t]) => Date.now() - t < 4000).map(([id]) => userMap[id]?.name?.split(" ")[0]).filter(Boolean);
   const readers = (ts) => Object.entries(activeConv.reads || {}).filter(([id, at]) => id !== me?.user_id && at >= ts).length;
   const safeMsgs = Array.isArray(msgs) ? msgs : [];
@@ -658,7 +789,7 @@ export default function ChatView({ cid, onChange, onRead }) {
     <div className="flex h-full max-h-full w-full max-w-full min-w-0 flex-1 overflow-hidden overscroll-none" data-testid="chat-view">
       <div className="flex h-full max-h-full w-full max-w-full min-w-0 flex-1 flex-col overflow-hidden bg-background">
         <header className="flex h-14 sm:h-16 shrink-0 items-center gap-1.5 sm:gap-2 border-b bg-surface px-1.5 sm:px-4 pt-safe select-none">
-          <button onClick={() => navigate("/messages")} className="btn-ghost flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 items-center justify-center lg:hidden" aria-label="Kembali" data-testid="chat-back-btn"><ArrowLeft size={20} /></button>
+          <button onClick={() => navigate("/messages")} className="btn-ghost flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 items-center justify-center lg:hidden" aria-label={tr("common_back", "Kembali")} data-testid="chat-back-btn"><ArrowLeft size={20} /></button>
           <button onClick={openPanel} className="flex min-w-0 flex-1 items-center gap-2.5 sm:gap-3 text-left">
             {other ? <Avatar user={other} size={36} /> : <GroupIcon c={activeConv} size={36} />}
             <span className="min-w-0 flex-1">
@@ -666,7 +797,7 @@ export default function ChatView({ cid, onChange, onRead }) {
                 <span className="truncate text-sm sm:text-base font-bold leading-snug py-0.5" data-testid="chat-title">{title}</span>
                 {activeConv.is_verified && <ShieldCheck size={14} className="shrink-0 text-blue-500 fill-blue-500/10" />}
               </div>
-              <span className="block truncate text-[11px] sm:text-xs text-sub leading-snug">{typers.length ? <span className="text-brand" data-testid="typing-indicator">{typers.join(", ")} sedang mengetik…</span> : other ? (online.has(other.user_id) ? "Online" : other.job_title) : `${(activeConv.member_ids || []).filter((id) => id !== "user_circle_assistant").length} anggota${activeConv.archived ? " · Diarsipkan" : ""}`}</span>
+              <span className="block truncate text-[11px] sm:text-xs text-sub leading-snug">{typers.length ? <span className="text-brand" data-testid="typing-indicator">{typers.join(", ")} {tr("chat_typing_suffix", "sedang mengetik…")}</span> : other ? (online.has(other.user_id) ? tr("nav_status_online", "Online") : other.job_title) : `${(activeConv.member_ids || []).filter((id) => id !== "user_circle_assistant").length} ${tr("chat_members_unit", "anggota")}${activeConv.archived ? ` ${tr("chat_archived_badge", "· Diarsipkan")}` : ""}`}</span>
             </span>
           </button>
           {isCircleAssistantConv && (
@@ -677,22 +808,22 @@ export default function ChatView({ cid, onChange, onRead }) {
               data-testid="circle-hub-header-btn"
             >
               <Sparkles size={14} />
-              <span className="hidden sm:inline">60+ Fitur AI</span>
-              <span className="sm:hidden">Fitur AI</span>
+              <span className="hidden sm:inline">{tr("chat_ai_features_desktop", "60+ Fitur AI")}</span>
+              <span className="sm:hidden">{tr("chat_ai_features_mobile", "Fitur AI")}</span>
             </button>
           )}
-          <button onClick={() => setSearch(search === null ? "" : null)} className={`btn-ghost flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 items-center justify-center ${search !== null ? "text-brand bg-brand/10" : "text-sub"}`} aria-label="Cari di obrolan" data-testid="chat-search-toggle"><Search size={18} /></button>
-          <button onClick={openPanel} className="btn-ghost flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 items-center justify-center text-sub" aria-label="Detail" data-testid="chat-details-toggle"><PanelRight size={18} /></button>
+          <button onClick={() => setSearch(search === null ? "" : null)} className={`btn-ghost flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 items-center justify-center ${search !== null ? "text-brand bg-brand/10" : "text-sub"}`} aria-label={tr("common_search", "Cari")} data-testid="chat-search-toggle"><Search size={18} /></button>
+          <button onClick={openPanel} className="btn-ghost flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 items-center justify-center text-sub" aria-label={tr("chat_detail_title", "Detail")} data-testid="chat-details-toggle"><PanelRight size={18} /></button>
         </header>
 
         {search !== null && (
           <div className="shrink-0 border-b bg-surface p-2.5 sm:p-3">
-            <input autoFocus value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari pesan di obrolan ini…" className="h-10 w-full rounded-xl border bg-surface2 px-3 text-sm outline-none" data-testid="chat-search-input" />
+            <input autoFocus value={search} onChange={(e) => setSearch(e.target.value)} placeholder={tr("chat_search_input_ph", "Cari pesan di obrolan ini…")} className="h-10 w-full rounded-xl border bg-surface2 px-3 text-sm outline-none" data-testid="chat-search-input" />
             {results.length > 0 && <div className="mt-2 max-h-48 overflow-y-auto">{results.map((m, i) => <div key={m.id || i} className="rounded-lg p-2 text-sm hover:bg-surface2"><b>{userMap[m.sender_id]?.name}</b> <span className="text-xs text-sub">{fmtDate(m.created_at, "d MMM HH:mm")}</span><p className="truncate">{m.text}</p></div>)}</div>}
           </div>
         )}
         <div ref={scroller} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-y-contain px-2.5 py-3 sm:px-6 sm:py-4 scroll-thin" data-testid="message-list">
-          {more && safeMsgs.length > 0 && <div className="text-center"><button onClick={older} className="rounded-full bg-surface2 px-3 py-1 text-xs font-semibold text-sub" data-testid="load-older-btn">Muat pesan sebelumnya</button></div>}
+          {more && safeMsgs.length > 0 && <div className="text-center"><button onClick={older} className="rounded-full bg-surface2 px-3 py-1 text-xs font-semibold text-sub" data-testid="load-older-btn">{tr("chat_load_older_btn", "Muat pesan sebelumnya")}</button></div>}
           {safeMsgs.map((m, i) => {
             const prev = safeMsgs[i - 1];
             const grouped = prev && prev.sender_id === m.sender_id && prev.type !== "call" && new Date(m.created_at) - new Date(prev.created_at) < 300000;
@@ -705,12 +836,12 @@ export default function ChatView({ cid, onChange, onRead }) {
               <div className="mx-auto max-w-md py-16 text-center">
                 <p className="text-sm font-semibold text-ink">
                   {isDeptLocked
-                    ? "Grup Divisi Khusus Undangan"
+                    ? tr("chat_dept_locked_title", "Grup Divisi Khusus Undangan")
                     : activeConv.group_type === "private" && activeConv.is_member === false
-                    ? "Grup Privat Terkunci"
+                    ? tr("chat_private_locked_title", "Grup Privat Terkunci")
                     : isCircleAssistantConv
-                    ? "Halo! Saya Circle, Asisten Analitik Workspace Anda."
-                    : `Mulai sapa ${title}.`}
+                    ? tr("chat_circle_welcome_title", "Halo! Saya Circle, Asisten Analitik Workspace Anda.")
+                    : `${tr("chat_start_greeting_prefix", "Mulai sapa")} ${title}.`}
                 </p>
                 {isDeptLocked ? (
                   <p className="mt-1.5 text-xs text-sub leading-relaxed">
@@ -720,11 +851,11 @@ export default function ChatView({ cid, onChange, onRead }) {
                   </p>
                 ) : activeConv.group_type === "private" && activeConv.is_member === false ? (
                   <p className="mt-1.5 text-xs text-sub leading-relaxed">
-                    {t("groups_private_lock_desc", "Grup ini bersifat privat. Anda memerlukan persetujuan dari Pembuat atau Co-Admin Grup untuk melihat dan mengirim pesan di sini.")}
+                    {tr("groups_private_lock_desc", "Grup ini bersifat privat. Anda memerlukan persetujuan dari Pembuat atau Co-Admin Grup untuk melihat dan mengirim pesan di sini.")}
                   </p>
                 ) : isCircleAssistantConv && (
                   <p className="mt-1.5 text-xs text-sub leading-relaxed">
-                    Tanyakan apa saja soal data live workspace: jumlah karyawan, load tim, tugas telat per divisi, proyek, feed Beranda, polling, atau ketik <code className="rounded bg-surface2 px-1 py-0.5">/task judul</code>.
+                    {tr("chat_circle_welcome_desc", "Tanyakan apa saja soal data live workspace: jumlah karyawan, load tim, tugas telat per divisi, proyek, feed Beranda, polling, atau ketik")} <code className="rounded bg-surface2 px-1 py-0.5">/task judul</code>.
                   </p>
                 )}
               </div>
@@ -741,7 +872,7 @@ export default function ChatView({ cid, onChange, onRead }) {
                 className="hidden sm:inline-flex shrink-0 items-center gap-1 rounded-xl bg-brand px-2.5 py-1 text-xs font-bold text-white shadow-xs hover:opacity-90 transition-opacity"
                 data-testid="circle-quick-hub-btn"
               >
-                <Sparkles size={12} /> Semua 60+ Fitur
+                <Sparkles size={12} /> {tr("chat_ai_all_features", "Semua 60+ Fitur")}
               </button>
               {CIRCLE_QUICK_PROMPTS.map((q) => (
                 <button
@@ -761,30 +892,30 @@ export default function ChatView({ cid, onChange, onRead }) {
             {activeConv.has_invitation ? (
               <div className="flex flex-wrap items-center justify-center gap-2">
                 <button type="button" onClick={declineInvite} className="inline-flex h-11 items-center gap-1.5 rounded-full border border-rose-200 bg-rose-50 dark:bg-rose-950/30 px-5 text-sm font-semibold text-rose-600 hover:bg-rose-100 cursor-pointer" data-testid="decline-group-invite-btn">
-                  <X size={15} /> Tolak Undangan
+                  <X size={15} /> {tr("chat_decline_invite_btn", "Tolak Undangan")}
                 </button>
                 <button type="button" onClick={acceptInvite} className="inline-flex h-11 items-center gap-1.5 rounded-full bg-emerald-600 hover:bg-emerald-700 px-6 text-sm font-bold text-white shadow-xs cursor-pointer" data-testid="accept-group-invite-btn">
-                  <Check size={15} /> Terima Undangan
+                  <Check size={15} /> {tr("chat_accept_invite_btn", "Terima Undangan")}
                 </button>
               </div>
             ) : (activeConv.group_type === "department" || String(activeConv.id || "").startsWith("group_official_")) ? (
               <span className="inline-flex h-11 items-center gap-2 rounded-full border bg-surface2 px-6 text-sm font-semibold text-sub" data-testid="invite-only-group-footer">
-                <Lock size={15} /> Khusus Anggota & Undangan
+                <Lock size={15} /> {tr("chat_invite_only_footer", "Khusus Anggota & Undangan")}
               </span>
             ) : activeConv.has_pending_request ? (
               <button type="button" disabled className="inline-flex h-11 items-center rounded-full border bg-surface2 px-6 text-sm font-semibold text-sub opacity-85 cursor-not-allowed" data-testid="pending-group-join-btn">
-                Menunggu Persetujuan Pembuat / Admin Grup…
+                {tr("chat_pending_approval_btn", "Menunggu Persetujuan Pembuat / Admin Grup…")}
               </button>
             ) : (
               <button onClick={join} className="btn-accent h-11 px-6 font-semibold" data-testid="join-group-btn">
-                {activeConv.group_type === "private" ? `Minta Izin Gabung ke ${activeConv.name}` : `Gabung ke ${activeConv.name}`}
+                {activeConv.group_type === "private" ? `${tr("chat_request_join_prefix", "Minta Izin Gabung ke")} ${activeConv.name}` : `${tr("chat_join_group_prefix", "Gabung ke")} ${activeConv.name}`}
               </button>
             )}
           </div>
         ) : <Composer conv={activeConv} reply={reply} onCancelReply={() => setReply(null)} onPoll={() => setPoll(true)} onSent={handleSent} isCircleConv={isCircleAssistantConv} onOpenFeatureHub={() => setFeatureHubOpen(true)} />}
       </div>
-      {panel && <aside className="hidden w-[320px] shrink-0 border-l bg-surface xl:block"><Panel conv={activeConv} reload={() => { loadConv(); onChange(); }} onClose={() => setPanel(false)} /></aside>}
-      <Sheet open={mobilePanel} onOpenChange={setMobilePanel}><SheetContent className="w-full bg-surface p-0 sm:max-w-sm"><SheetHeader className="sr-only"><SheetTitle>Detail</SheetTitle></SheetHeader><Panel conv={activeConv} reload={() => { loadConv(); onChange(); }} onClose={() => setMobilePanel(false)} /></SheetContent></Sheet>
+      {panel && <aside className="hidden w-[320px] shrink-0 border-l bg-surface xl:block"><Panel conv={activeConv} reload={() => { loadConv(); onChange(); }} onClose={() => setPanel(false)} onLeft={onLeft} /></aside>}
+      <Sheet open={mobilePanel} onOpenChange={setMobilePanel}><SheetContent className="w-full bg-surface p-0 sm:max-w-sm"><SheetHeader className="sr-only"><SheetTitle>{tr("chat_detail_title", "Detail")}</SheetTitle></SheetHeader><Panel conv={activeConv} reload={() => { loadConv(); onChange(); }} onClose={() => setMobilePanel(false)} onLeft={onLeft} /></SheetContent></Sheet>
       <CreatePollDialog open={poll} onOpenChange={setPoll} conversationId={cid} onCreated={handleSent} />
       <TaskCreate open={!!taskFrom} onOpenChange={(v) => !v && setTaskFrom(null)} preset={taskFrom ? { title: (taskFrom.text || "Tugas dari pesan").slice(0, 120), description: `<p>${(taskFrom.text || "").replace(/</g, "&lt;")}</p><p><i>Dari obrolan: ${title}</i></p>`, conversation_id: cid, message_id: taskFrom.id } : null} onCreated={(t) => { setTaskFrom(null); api.post(`/tasks/${t.id}/share`, { conversation_id: cid }).catch(() => {}); loadConv(); }} />
       <CircleFeatureHub

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Search, Sparkles, Play, CornerDownLeft, Zap, Terminal } from "lucide-react";
 import { api } from "../../lib/api";
+import { useApp } from "../../context/AppContext";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "../../components/ui/dialog";
 
 let CATALOG_CACHE = null;
@@ -18,6 +19,7 @@ export async function fetchCircleCatalog() {
 }
 
 export default function CircleFeatureHub({ open, onOpenChange, onRunCommand, onFillTemplate }) {
+  const { t: tr } = useApp();
   const [catalog, setCatalog] = useState(CATALOG_CACHE || { categories: ["Semua"], total_features: 0, commands: [] });
   const [category, setCategory] = useState("Semua");
   const [query, setQuery] = useState("");
@@ -65,10 +67,10 @@ export default function CircleFeatureHub({ open, onOpenChange, onRunCommand, onF
               </div>
               <div>
                 <DialogTitle className="text-base font-extrabold text-ink">
-                  Pusat Perintah & {catalog.total_features || "60+"} Fitur Circle AI
+                  {tr("chat_hub_title_prefix", "Pusat Perintah &")} {catalog.total_features || "60+"} {tr("chat_hub_title_suffix", "Fitur Circle AI")}
                 </DialogTitle>
                 <DialogDescription className="text-xs text-sub">
-                  Pilih fitur untuk langsung dijalankan atau isi otomatis ke kolom chat.
+                  {tr("chat_hub_desc", "Pilih fitur untuk langsung dijalankan atau isi otomatis ke kolom chat.")}
                 </DialogDescription>
               </div>
             </div>
@@ -79,7 +81,7 @@ export default function CircleFeatureHub({ open, onOpenChange, onRunCommand, onF
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Cari fitur atau perintah..."
+              placeholder={tr("chat_hub_search_ph", "Cari fitur atau perintah...")}
               className="h-10 flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-sub"
               data-testid="circle-hub-search"
             />
@@ -89,7 +91,7 @@ export default function CircleFeatureHub({ open, onOpenChange, onRunCommand, onF
                 onClick={() => setQuery("")}
                 className="text-xs font-semibold text-sub hover:text-ink"
               >
-                Reset
+                {tr("chat_hub_reset", "Reset")}
               </button>
             )}
           </div>
@@ -115,10 +117,10 @@ export default function CircleFeatureHub({ open, onOpenChange, onRunCommand, onF
 
         <div className="flex-1 overflow-y-auto p-4 sm:p-5 scroll-thin">
           {loading ? (
-            <div className="py-12 text-center text-sm text-sub">Memuat katalog fitur Circle AI...</div>
+            <div className="py-12 text-center text-sm text-sub">{tr("chat_hub_loading", "Memuat katalog fitur Circle AI...")}</div>
           ) : filtered.length === 0 ? (
             <div className="py-12 text-center text-sm text-sub">
-              Tidak ada fitur yang cocok dengan pencarian <b className="text-ink">"{query}"</b>.
+              {tr("chat_hub_empty_prefix", "Tidak ada fitur yang cocok dengan pencarian")} <b className="text-ink">"{query}"</b>.
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -137,7 +139,7 @@ export default function CircleFeatureHub({ open, onOpenChange, onRunCommand, onF
                         </span>
                         {item.mutates && (
                           <span className="inline-flex items-center gap-0.5 rounded-lg bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
-                            <Zap size={10} /> Aksi Nyata
+                            <Zap size={10} /> {tr("chat_hub_action_badge", "Aksi Nyata")}
                           </span>
                         )}
                       </div>
@@ -147,7 +149,7 @@ export default function CircleFeatureHub({ open, onOpenChange, onRunCommand, onF
                     <h4 className="mt-2 text-sm font-bold text-ink">{item.title}</h4>
                     <p className="mt-1 text-xs leading-relaxed text-sub">{item.description}</p>
                     <p className="mt-2 truncate rounded-lg bg-surface px-2 py-1 font-mono text-[11px] text-sub border border-subtle/60">
-                      Contoh: {item.example}
+                      {tr("chat_hub_example_prefix", "Contoh:")} {item.example}
                     </p>
                   </div>
 
@@ -160,14 +162,14 @@ export default function CircleFeatureHub({ open, onOpenChange, onRunCommand, onF
                           className="btn-accent flex h-9 sm:h-8 flex-1 items-center justify-center gap-1.5 rounded-xl px-3 text-xs font-bold"
                           data-testid={`circle-run-${item.id}`}
                         >
-                          <Play size={12} /> Jalankan
+                          <Play size={12} /> {tr("chat_hub_run_btn", "Jalankan")}
                         </button>
                         <button
                           type="button"
                           onClick={() => onFillTemplate?.(item.template)}
                           className="btn-ghost flex h-9 sm:h-8 items-center justify-center gap-1 rounded-xl border px-3 text-xs font-semibold text-ink"
                         >
-                          <CornerDownLeft size={12} /> Edit
+                          <CornerDownLeft size={12} /> {tr("chat_hub_edit_btn", "Edit")}
                         </button>
                       </>
                     ) : (
@@ -178,14 +180,14 @@ export default function CircleFeatureHub({ open, onOpenChange, onRunCommand, onF
                           className="btn-accent flex h-9 sm:h-8 flex-1 items-center justify-center gap-1.5 rounded-xl px-3 text-xs font-bold"
                           data-testid={`circle-fill-${item.id}`}
                         >
-                          <CornerDownLeft size={12} /> Gunakan Template
+                          <CornerDownLeft size={12} /> {tr("chat_hub_use_tpl_btn", "Gunakan Template")}
                         </button>
                         <button
                           type="button"
                           onClick={() => onFillTemplate?.(item.example)}
                           className="btn-ghost flex h-9 sm:h-8 items-center justify-center rounded-xl border px-3 text-xs font-semibold text-ink"
                         >
-                          Coba Contoh
+                          {tr("chat_hub_try_ex_btn", "Coba Contoh")}
                         </button>
                       </>
                     )}

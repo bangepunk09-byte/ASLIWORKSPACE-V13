@@ -10,7 +10,7 @@ import { AppSelect } from "../../components/ui/select";
 const COLORS = ["#F87171", "#FB923C", "#FACC15", "#4ADE80", "#60A5FA", "#A78BFA", "#F472B6", "#2DD4BF"];
 
 export default function BoardDialog({ board, onClose, onSaved }) {
-  const { users, me, isAdmin } = useApp();
+  const { users, me, isAdmin, t } = useApp();
   const initialCollab = Boolean(
     board?.is_collaborative ||
     board?.board_type === "collaborative" ||
@@ -85,7 +85,7 @@ export default function BoardDialog({ board, onClose, onSaved }) {
       const { data } = board?.id
         ? await api.patch(`/boards/${board.id}`, payload)
         : await api.post("/boards", payload);
-      toast.success("Board berhasil disimpan");
+      toast.success(t("board_saved_toast", "Board berhasil disimpan"));
       onSaved(data);
       onClose();
     } catch (e) {
@@ -99,7 +99,7 @@ export default function BoardDialog({ board, onClose, onSaved }) {
     setBusy(true);
     try {
       await api.delete(`/boards/${board.id}`);
-      toast.success("Board berhasil dihapus");
+      toast.success(t("board_deleted_toast", "Board berhasil dihapus"));
       onSaved(null);
       onClose();
     } catch (e) {
@@ -114,13 +114,13 @@ export default function BoardDialog({ board, onClose, onSaved }) {
     <Dialog open onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-h-[90dvh] max-w-lg overflow-y-auto rounded-3xl bg-surface" data-testid="board-dialog">
         <DialogHeader>
-          <DialogTitle>{board?.id ? "Atur Board" : "Buat Board Baru"}</DialogTitle>
+          <DialogTitle>{board?.id ? t("board_dialog_edit_title", "Atur Board") : t("board_dialog_new_title", "Buat Board Baru")}</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-3">
           {/* Board Type Switcher */}
           <div>
-            <label className="mb-1.5 block text-xs font-semibold text-sub">Tipe Board *</label>
+            <label className="mb-1.5 block text-xs font-semibold text-sub">{t("board_type_label", "Tipe Board *")}</label>
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
@@ -134,9 +134,9 @@ export default function BoardDialog({ board, onClose, onSaved }) {
               >
                 <Building2 size={16} className={`mt-0.5 shrink-0 ${!isCollab ? "text-brand" : "text-sub"}`} />
                 <div className="min-w-0">
-                  <span className="block text-xs font-bold text-ink">Board Divisi</span>
+                  <span className="block text-xs font-bold text-ink">{t("board_type_div_title", "Board Divisi")}</span>
                   <span className="block text-[10px] text-sub leading-tight mt-0.5">
-                    Pilihan Assignee hanya akun dalam 1 divisi
+                    {t("board_type_div_desc", "Pilihan Assignee hanya akun dalam 1 divisi")}
                   </span>
                 </div>
               </button>
@@ -153,9 +153,9 @@ export default function BoardDialog({ board, onClose, onSaved }) {
               >
                 <FolderKanban size={16} className={`mt-0.5 shrink-0 ${isCollab ? "text-brand" : "text-sub"}`} />
                 <div className="min-w-0">
-                  <span className="block text-xs font-bold text-ink">Board Kolaborasi / Proyek</span>
+                  <span className="block text-xs font-bold text-ink">{t("board_type_collab_title", "Board Kolaborasi / Proyek")}</span>
                   <span className="block text-[10px] text-sub leading-tight mt-0.5">
-                    Lintas divisi — bisa assign siapa saja di kolaborasi
+                    {t("board_type_collab_desc", "Lintas divisi — bisa assign siapa saja di kolaborasi")}
                   </span>
                 </div>
               </button>
@@ -163,11 +163,11 @@ export default function BoardDialog({ board, onClose, onSaved }) {
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-semibold text-sub">Nama Board *</label>
+            <label className="mb-1 block text-xs font-semibold text-sub">{t("board_name_label", "Nama Board *")}</label>
             <input
               value={f.name}
               onChange={(e) => setF({ ...f, name: e.target.value })}
-              placeholder={isCollab ? "mis. Kolaborasi Launch Produk, Campaign Q4" : "mis. Board Konten Marketing"}
+              placeholder={isCollab ? t("board_name_collab_ph", "mis. Kolaborasi Launch Produk, Campaign Q4") : t("board_name_div_ph", "mis. Board Konten Marketing")}
               className="h-11 w-full rounded-xl border bg-surface2 px-3 text-sm outline-none"
               data-testid="board-name-input"
             />
@@ -175,7 +175,7 @@ export default function BoardDialog({ board, onClose, onSaved }) {
 
           {!isCollab ? (
             <div>
-              <label className="mb-1 block text-xs font-semibold text-sub">Divisi Board</label>
+              <label className="mb-1 block text-xs font-semibold text-sub">{t("board_dept_label", "Divisi Board")}</label>
               <AppSelect
                 value={f.department}
                 onChange={(e) => setF({ ...f, department: e.target.value })}
@@ -184,12 +184,12 @@ export default function BoardDialog({ board, onClose, onSaved }) {
               >
                 {depts.map((d) => (
                   <option key={d} value={d}>
-                    Divisi: {d}
+                    {t("board_dept_opt_prefix", "Divisi:")} {d}
                   </option>
                 ))}
               </AppSelect>
               <p className="mt-1 text-[11px] text-sub">
-                Pilihan Assignee di board ini otomatis dibatasi hanya untuk akun di divisi <b>{f.department}</b>.
+                {t("board_dept_hint_pre", "Pilihan Assignee di board ini otomatis dibatasi hanya untuk akun di divisi")} <b>{f.department}</b>.
               </p>
             </div>
           ) : (
@@ -203,11 +203,11 @@ export default function BoardDialog({ board, onClose, onSaved }) {
                   data-testid="board-collab-all-checkbox"
                 />
                 <span>
-                  <b className="text-ink">Terbuka untuk seluruh anggota lintas divisi</b>
+                  <b className="text-ink">{t("board_collab_all_title", "Terbuka untuk seluruh anggota lintas divisi")}</b>
                   <span className="block text-sub text-[11px] mt-0.5">
                     {f.all_workspace_members !== false
-                      ? "Semua karyawan dari divisi manapun bisa dipilih saat assign tugas di board kolaborasi ini."
-                      : "Hanya anggota yang Anda centang di bawah yang bisa ditugaskan di board ini."}
+                      ? t("board_collab_all_desc_on", "Semua karyawan dari divisi manapun bisa dipilih saat assign tugas di board kolaborasi ini.")
+                      : t("board_collab_all_desc_off", "Hanya anggota yang Anda centang di bawah yang bisa ditugaskan di board ini.")}
                   </span>
                 </span>
               </label>
@@ -215,18 +215,18 @@ export default function BoardDialog({ board, onClose, onSaved }) {
           )}
 
           <div>
-            <label className="mb-1 block text-xs font-semibold text-sub">Deskripsi</label>
+            <label className="mb-1 block text-xs font-semibold text-sub">{t("board_desc_label", "Deskripsi")}</label>
             <input
               value={f.description}
               onChange={(e) => setF({ ...f, description: e.target.value })}
-              placeholder="Tujuan atau fokus pekerjaan board ini"
+              placeholder={t("board_desc_ph", "Tujuan atau fokus pekerjaan board ini")}
               className="h-10 w-full rounded-xl border bg-surface2 px-3 text-sm outline-none"
               data-testid="board-description-input"
             />
           </div>
 
           <div>
-            <label className="mb-1.5 block text-xs font-semibold text-sub">Warna Tema Board</label>
+            <label className="mb-1.5 block text-xs font-semibold text-sub">{t("board_theme_color_label", "Warna Tema Board")}</label>
             <div className="flex gap-2">
               {COLORS.map((c) => (
                 <button
@@ -237,7 +237,7 @@ export default function BoardDialog({ board, onClose, onSaved }) {
                     f.color === c ? "ring-2 ring-offset-2 ring-brand" : ""
                   }`}
                   style={{ background: c }}
-                  aria-label={`Warna ${c}`}
+                  aria-label={`${t("board_color_aria_prefix", "Warna")} ${c}`}
                   data-testid={`board-color-${c.slice(1)}`}
                 />
               ))}
@@ -249,14 +249,14 @@ export default function BoardDialog({ board, onClose, onSaved }) {
               <div className="flex items-center justify-between mb-1.5">
                 <p className="text-sm font-semibold flex items-center gap-1.5">
                   <Users size={14} className="text-brand" />
-                  Anggota Kolaborasi ({f.member_ids.length})
+                  {t("board_collab_members_hdr", "Anggota Kolaborasi")} ({f.member_ids.length})
                 </p>
-                <span className="text-[11px] text-sub font-medium">Lintas divisi</span>
+                <span className="text-[11px] text-sub font-medium">{t("board_cross_div_short", "Lintas divisi")}</span>
               </div>
 
               {depts.length > 0 && (
                 <div className="mb-2 flex flex-wrap items-center gap-1.5">
-                  <span className="text-xs text-sub">Tambah divisi:</span>
+                  <span className="text-xs text-sub">{t("board_add_div_label", "Tambah divisi:")}</span>
                   {depts.map((d) => (
                     <button
                       key={d}
@@ -276,7 +276,7 @@ export default function BoardDialog({ board, onClose, onSaved }) {
                 <input
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
-                  placeholder="Cari karyawan lintas divisi..."
+                  placeholder={t("board_search_member_ph", "Cari karyawan lintas divisi...")}
                   className="flex-1 bg-transparent text-sm outline-none"
                   data-testid="board-member-search"
                 />
@@ -305,7 +305,7 @@ export default function BoardDialog({ board, onClose, onSaved }) {
                         <span className="block truncate text-[11px] text-sub">{u.job_title}</span>
                       </span>
                       <span className="rounded-md bg-surface2 px-1.5 py-0.5 text-[10px] font-bold text-sub">
-                        {u.department || "Umum"}
+                        {u.department || t("board_general_dept", "Umum")}
                       </span>
                     </label>
                   );
@@ -319,7 +319,7 @@ export default function BoardDialog({ board, onClose, onSaved }) {
           {board?.id && (isAdmin || board.created_by === me?.user_id) ? (
             confirmDelete ? (
               <div className="flex items-center gap-1.5 bg-rose-50 dark:bg-rose-950/30 p-1 rounded-xl">
-                <span className="text-xs text-rose-600 font-bold px-1">Yakin hapus?</span>
+                <span className="text-xs text-rose-600 font-bold px-1">{t("board_delete_confirm_q", "Yakin hapus?")}</span>
                 <button
                   type="button"
                   onClick={del}
@@ -327,14 +327,14 @@ export default function BoardDialog({ board, onClose, onSaved }) {
                   className="rounded-full bg-rose-500 px-3 py-1 text-xs font-semibold text-white hover:bg-rose-600 disabled:opacity-50"
                   data-testid="board-delete-confirm"
                 >
-                  Ya
+                  {t("board_delete_confirm_yes", "Ya")}
                 </button>
                 <button
                   type="button"
                   onClick={() => setConfirmDelete(false)}
                   className="rounded-full border bg-surface px-3 py-1 text-xs font-semibold hover:bg-surface2"
                 >
-                  Batal
+                  {t("board_delete_confirm_cancel", "Batal")}
                 </button>
               </div>
             ) : (
@@ -345,7 +345,7 @@ export default function BoardDialog({ board, onClose, onSaved }) {
                 className="btn-ghost flex h-11 items-center gap-1.5 rounded-full border px-4 text-xs font-semibold text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/20 disabled:opacity-50"
                 data-testid="board-delete-btn"
               >
-                <Trash2 size={14} /> Hapus
+                <Trash2 size={14} /> {t("board_delete_btn", "Hapus")}
               </button>
             )
           ) : <div />}
@@ -356,7 +356,7 @@ export default function BoardDialog({ board, onClose, onSaved }) {
             className="btn-accent h-11 flex-1 rounded-full font-semibold text-sm disabled:opacity-50"
             data-testid="board-save-btn"
           >
-            {busy ? "Menyimpan..." : "Simpan Board"}
+            {busy ? t("board_saving_btn", "Menyimpan...") : t("board_save_btn", "Simpan Board")}
           </button>
         </div>
       </DialogContent>

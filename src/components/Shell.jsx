@@ -71,7 +71,10 @@ function NavItem({ item, compact, unread, onClick }) {
     <NavLink
       to={item.to}
       end={item.to === "/"}
-      onClick={onClick}
+      onClick={(e) => {
+        playSound("tab");
+        onClick?.(e);
+      }}
       onMouseEnter={() => preloadRoute(item.to)}
       onFocus={() => preloadRoute(item.to)}
       onTouchStart={() => preloadRoute(item.to)}
@@ -116,9 +119,10 @@ function Sidebar({ compact, setCompact, openSearch }) {
 
   const handleSelectStatus = async (statusValue) => {
     setStatusMenuOpen(false);
+    playSound("pop");
     const meta = getAvailabilityStatusMeta(statusValue);
     await updateAvailabilityStatus?.(statusValue);
-    toast.success(`Status diubah ke ${meta.label}`);
+    toast.success(`${t("nav_status_changed", "Status diubah ke")} ${t(`nav_status_${meta.value}`, meta.label)}`);
   };
 
   const toggleSound = () => {
@@ -143,12 +147,15 @@ function Sidebar({ compact, setCompact, openSearch }) {
             </p>
             <p className="truncate text-xs text-sub" data-testid="workspace-name">
               {ws?.name}
-              {isDemo && " · Demo"}
+              {isDemo && t("nav_demo_suffix", " · Demo")}
             </p>
           </div>
         )}
         <button
-          onClick={() => setCompact(!compact)}
+          onClick={() => {
+            playSound("click");
+            setCompact(!compact);
+          }}
           className="btn-ghost hidden h-8 w-8 items-center justify-center lg:flex text-sub"
           aria-label="Toggle sidebar"
           data-testid="sidebar-collapse-btn"
@@ -162,7 +169,7 @@ function Sidebar({ compact, setCompact, openSearch }) {
           data-testid="demo-banner"
         >
           <FlaskConical size={14} />
-          Mode Demo · Data Contoh
+          {t("nav_demo_banner", "Mode Demo · Data Contoh")}
         </div>
       )}
       <div className="px-3">
@@ -201,7 +208,7 @@ function Sidebar({ compact, setCompact, openSearch }) {
               data-testid="sidebar-status-menu"
             >
               <p className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-sub">
-                Pilih Status
+                {t("nav_status_menu_title", "Pilih Status")}
               </p>
               <div className="mt-0.5 space-y-0.5">
                 {AVAILABILITY_STATUS_OPTIONS.map((opt) => {
@@ -220,7 +227,7 @@ function Sidebar({ compact, setCompact, openSearch }) {
                     >
                       <span className="flex items-center gap-2.5">
                         <span className={`h-2.5 w-2.5 rounded-full ${opt.dotClass}`} />
-                        <span>{opt.label}</span>
+                        <span>{t(`nav_status_${opt.value}`, opt.label)}</span>
                       </span>
                       {isActive && <Check size={14} className="shrink-0" />}
                     </button>
@@ -237,7 +244,7 @@ function Sidebar({ compact, setCompact, openSearch }) {
                   className="flex w-full items-center gap-2 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-sub hover:bg-surface2 hover:text-ink transition-colors"
                 >
                   <UserIcon size={13} />
-                  <span>Lihat Profil Saya</span>
+                  <span>{t("nav_view_my_profile", "Lihat Profil Saya")}</span>
                 </button>
               </div>
             </div>
@@ -254,7 +261,7 @@ function Sidebar({ compact, setCompact, openSearch }) {
             onClick={() => (compact ? setStatusMenuOpen((v) => !v) : navigate(`/people/${me.user_id}`))}
             className="shrink-0 rounded-full focus:outline-none"
             data-testid="sidebar-profile-btn"
-            title={`${me.name} (${currentStatusMeta.label})`}
+            title={`${me.name} (${t(`nav_status_${currentStatusMeta.value}`, currentStatusMeta.label)})`}
           >
             <Avatar user={me} size={compact ? 34 : 36} />
           </button>
@@ -276,7 +283,7 @@ function Sidebar({ compact, setCompact, openSearch }) {
                   className={`mt-1 inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10.5px] font-semibold leading-none transition-all hover:opacity-90 ${currentStatusMeta.badgeClass}`}
                 >
                   <span className={`h-1.5 w-1.5 rounded-full ${currentStatusMeta.dotClass}`} />
-                  <span>{currentStatusMeta.label}</span>
+                  <span>{t(`nav_status_${currentStatusMeta.value}`, currentStatusMeta.label)}</span>
                   <ChevronDown size={11} className="opacity-75" />
                 </button>
               </div>
@@ -296,7 +303,7 @@ function Sidebar({ compact, setCompact, openSearch }) {
               type="button"
               onClick={() => setStatusMenuOpen((v) => !v)}
               data-testid="sidebar-status-trigger-compact"
-              title={`Status: ${currentStatusMeta.label}`}
+              title={`Status: ${t(`nav_status_${currentStatusMeta.value}`, currentStatusMeta.label)}`}
               className={`inline-flex items-center justify-center rounded-full border px-1.5 py-0.5 text-[9px] font-bold ${currentStatusMeta.badgeClass}`}
             >
               <span className={`h-1.5 w-1.5 rounded-full ${currentStatusMeta.dotClass}`} />
@@ -321,23 +328,26 @@ function Sidebar({ compact, setCompact, openSearch }) {
                 !compact && isInstalled ? "flex-1 px-2 text-[11px] font-medium" : "w-7"
               }`}
               aria-label="Toggle sound"
-              title={soundOn ? "Sound FX: Aktif" : "Sound FX: Mute"}
+              title={soundOn ? t("nav_sound_title_on", "Sound FX: Aktif") : t("nav_sound_title_off", "Sound FX: Mute")}
               data-testid="sound-toggle-btn"
             >
               {soundOn ? <Volume2 size={14} className="text-brand" /> : <VolumeX size={14} />}
-              {!compact && isInstalled && <span>{soundOn ? "Suara" : "Senyap"}</span>}
+              {!compact && isInstalled && <span>{soundOn ? t("nav_sound_on", "Suara") : t("nav_sound_off", "Senyap")}</span>}
             </button>
             <button
-              onClick={() => savePrefs({ theme_mode: dark ? "light" : "dark" })}
+              onClick={() => {
+                playSound("tab");
+                savePrefs({ theme_mode: dark ? "light" : "dark" });
+              }}
               className={`flex h-7 items-center justify-center gap-1.5 rounded-md text-sub hover:bg-surface hover:text-ink transition-colors ${
                 !compact && isInstalled ? "flex-1 px-2 text-[11px] font-medium" : "w-7"
               }`}
               aria-label="Toggle theme"
-              title={dark ? "Mode Terang" : "Mode Gelap"}
+              title={dark ? t("nav_theme_light", "Mode Terang") : t("nav_theme_dark", "Mode Gelap")}
               data-testid="theme-toggle-btn"
             >
               {dark ? <Sun size={14} /> : <Moon size={14} />}
-              {!compact && isInstalled && <span>{dark ? "Terang" : "Gelap"}</span>}
+              {!compact && isInstalled && <span>{dark ? t("nav_theme_short_light", "Terang") : t("nav_theme_short_dark", "Gelap")}</span>}
             </button>
             {compact && (
               <button
@@ -368,9 +378,10 @@ function MobileNav({ openSearch }) {
   const currentStatusMeta = getAvailabilityStatusMeta(me?.availability_status);
 
   const handleMobileStatusSelect = async (statusValue) => {
+    playSound("pop");
     const meta = getAvailabilityStatusMeta(statusValue);
     await updateAvailabilityStatus?.(statusValue);
-    toast.success(`Status diubah ke ${meta.label}`);
+    toast.success(`${t("nav_status_changed", "Status diubah ke")} ${t(`nav_status_${meta.value}`, meta.label)}`);
   };
 
   const toggleSound = () => {
@@ -409,7 +420,7 @@ function MobileNav({ openSearch }) {
             </span>
             <span className="block truncate text-[10.5px] font-medium text-sub leading-snug">
               {activeTitle}
-              {isDemo ? " · Demo" : ""}
+              {isDemo ? t("nav_demo_suffix", " · Demo") : ""}
             </span>
           </div>
         </button>
@@ -451,6 +462,7 @@ function MobileNav({ openSearch }) {
             key={n.id}
             to={n.to}
             end={n.to === "/"}
+            onClick={() => playSound("tab")}
             data-testid={`mobile-nav-${n.id}`}
             className={({ isActive }) =>
               `relative flex h-14 min-h-[44px] flex-col items-center justify-center gap-0.5 transition-colors ${
@@ -471,7 +483,10 @@ function MobileNav({ openSearch }) {
         ))}
         <button
           type="button"
-          onClick={() => setMore(true)}
+          onClick={() => {
+            playSound("click");
+            setMore(true);
+          }}
           className={`relative flex h-14 min-h-[44px] flex-col items-center justify-center gap-0.5 transition-colors ${
             more ? "text-brand font-bold" : "text-sub font-medium hover:text-ink"
           }`}
@@ -490,7 +505,7 @@ function MobileNav({ openSearch }) {
         >
           <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-slate-300 dark:bg-slate-700" />
           <SheetHeader className="text-left mb-3">
-            <SheetTitle className="text-base font-extrabold text-ink">Menu Workspace</SheetTitle>
+            <SheetTitle className="text-base font-extrabold text-ink">{t("nav_mobile_menu_title", "Menu Workspace")}</SheetTitle>
           </SheetHeader>
 
           <div className="space-y-4">
@@ -514,7 +529,7 @@ function MobileNav({ openSearch }) {
                     </p>
                     <span className={`mt-1 inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${currentStatusMeta.badgeClass}`}>
                       <span className={`h-1.5 w-1.5 rounded-full ${currentStatusMeta.dotClass}`} />
-                      <span>{currentStatusMeta.label}</span>
+                      <span>{t(`nav_status_${currentStatusMeta.value}`, currentStatusMeta.label)}</span>
                     </span>
                   </div>
                 </div>
@@ -525,7 +540,7 @@ function MobileNav({ openSearch }) {
 
               <div className="border-t border-slate-200/70 dark:border-slate-800/80 pt-2.5">
                 <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-sub">
-                  Status Kehadiran
+                  {t("nav_mobile_status_title", "Status Kehadiran")}
                 </p>
                 <div className="grid grid-cols-4 gap-1.5" data-testid="mobile-status-selector">
                   {AVAILABILITY_STATUS_OPTIONS.map((opt) => {
@@ -543,7 +558,7 @@ function MobileNav({ openSearch }) {
                         }`}
                       >
                         <span className={`h-2 w-2 shrink-0 rounded-full ${opt.dotClass}`} />
-                        <span className="truncate">{opt.label}</span>
+                        <span className="truncate">{t(`nav_status_${opt.value}`, opt.label)}</span>
                       </button>
                     );
                   })}
@@ -557,7 +572,7 @@ function MobileNav({ openSearch }) {
             {/* Section 1: Kolaborasi & Direktori */}
             <div>
               <p className="mb-2 px-1 text-[11px] font-bold uppercase tracking-wider text-sub">
-                Jadwal & Direktori Drive
+                {t("nav_mobile_sec_collab", "Jadwal & Direktori Drive")}
               </p>
               <div className={`grid gap-2 ${collabItems.length === 4 ? "grid-cols-2" : "grid-cols-3"}`}>
                 {collabItems.map((n) => (
@@ -586,7 +601,7 @@ function MobileNav({ openSearch }) {
             {/* Section 2: Organisasi & Proyek */}
             <div>
               <p className="mb-2 px-1 text-[11px] font-bold uppercase tracking-wider text-sub">
-                Organisasi & Proyek
+                {t("nav_mobile_sec_org", "Organisasi & Proyek")}
               </p>
               <div className="grid grid-cols-3 gap-2">
                 {orgItems.map((n) => (
@@ -615,7 +630,7 @@ function MobileNav({ openSearch }) {
             {/* Section 3: Pengaturan & Preferensi */}
             <div>
               <p className="mb-2 px-1 text-[11px] font-bold uppercase tracking-wider text-sub">
-                Pengaturan & Sistem
+                {t("nav_mobile_sec_sys", "Pengaturan & Sistem")}
               </p>
               <div className="grid grid-cols-2 gap-2">
                 {sysItems.map((n) => (
@@ -632,11 +647,14 @@ function MobileNav({ openSearch }) {
                 ))}
                 <button
                   type="button"
-                  onClick={() => savePrefs({ theme_mode: dark ? "light" : "dark" })}
+                  onClick={() => {
+                    playSound("tab");
+                    savePrefs({ theme_mode: dark ? "light" : "dark" });
+                  }}
                   className="flex h-12 items-center gap-2.5 rounded-2xl border border-slate-200/70 dark:border-slate-800 bg-surface2/60 px-3.5 text-xs font-semibold text-ink hover:bg-surface2"
                 >
                   {dark ? <Sun size={18} className="text-amber-500 shrink-0" /> : <Moon size={18} className="text-brand shrink-0" />}
-                  <span>{dark ? "Mode Terang" : "Mode Gelap"}</span>
+                  <span>{dark ? t("nav_theme_light", "Mode Terang") : t("nav_theme_dark", "Mode Gelap")}</span>
                 </button>
                 <button
                   type="button"
@@ -644,7 +662,7 @@ function MobileNav({ openSearch }) {
                   className="flex h-12 items-center gap-2.5 rounded-2xl border border-slate-200/70 dark:border-slate-800 bg-surface2/60 px-3.5 text-xs font-semibold text-ink hover:bg-surface2"
                 >
                   {soundOn ? <Volume2 size={18} className="text-emerald-600 shrink-0" /> : <VolumeX size={18} className="text-sub shrink-0" />}
-                  <span>{soundOn ? "Suara: Aktif" : "Suara: Mute"}</span>
+                  <span>{soundOn ? t("nav_mobile_sound_on", "Suara: Aktif") : t("nav_mobile_sound_off", "Suara: Mute")}</span>
                 </button>
                 <button
                   type="button"

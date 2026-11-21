@@ -3,13 +3,19 @@ import DOMPurify from "dompurify";
 import { Bold, Italic, Heading2, Heading3, List, ListOrdered, ListChecks, Link2, Image as ImageIcon, Paperclip } from "lucide-react";
 import { toast } from "sonner";
 import { fileUrl, uploadFile, errMsg } from "../lib/api";
+import { useApp } from "../context/AppContext";
 
 export const sanitize = (html) => DOMPurify.sanitize(html || "", { ADD_ATTR: ["target"] });
 export function RichView({ html, className = "" }) {
-  return <div className={`rich text-sm leading-relaxed ${className}`} dangerouslySetInnerHTML={{ __html: sanitize(html) || "<p style='opacity:.6'>Belum ada deskripsi</p>" }} />;
+  const { t } = useApp() || {};
+  const tr = t || ((_k, fb) => fb || _k);
+  return <div className={`rich text-sm leading-relaxed ${className}`} dangerouslySetInnerHTML={{ __html: sanitize(html) || `<p style='opacity:.6'>${tr("editor_empty_desc", "Belum ada deskripsi")}</p>` }} />;
 }
 
-export default function RichEditor({ value, onChange, onBlur, placeholder = "Tulis brief… tempel link, tambah gambar, atau unggah file", testid = "rich-editor" }) {
+export default function RichEditor({ value, onChange, onBlur, placeholder, testid = "rich-editor" }) {
+  const { t: trRaw } = useApp() || {};
+  const tr = trRaw || ((_k, fb) => fb || _k);
+  const resolvedPlaceholder = placeholder || tr("editor_placeholder", "Tulis brief… tempel link, tambah gambar, atau unggah file");
   const ref = useRef(null);
   const img = useRef(null);
   const doc = useRef(null);
@@ -84,12 +90,12 @@ export default function RichEditor({ value, onChange, onBlur, placeholder = "Tul
   return (
     <div className="rounded-2xl border bg-surface2" data-testid={testid}>
       <div className="flex flex-wrap gap-0.5 border-b p-1">
-        <B I={Bold} label="Tebal" on={() => cmd("bold")} /><B I={Italic} label="Miring" on={() => cmd("italic")} />
-        <B I={Heading2} label="Judul" on={() => cmd("formatBlock", "h2")} /><B I={Heading3} label="Subjudul" on={() => cmd("formatBlock", "h3")} />
-        <B I={List} label="Daftar Poin" on={() => cmd("insertUnorderedList")} /><B I={ListOrdered} label="Daftar Angka" on={() => cmd("insertOrderedList")} />
-        <B I={ListChecks} label="Checklist" on={() => insert('<ul class="checklist"><li>Item checklist</li></ul><p></p>')} />
-        <B I={Link2} label="Link" on={openLinkBar} />
-        <B I={ImageIcon} label="Gambar" on={() => img.current.click()} /><B I={Paperclip} label="File" on={() => doc.current.click()} />
+        <B I={Bold} label={tr("editor_bold", "Tebal")} on={() => cmd("bold")} /><B I={Italic} label={tr("editor_italic", "Miring")} on={() => cmd("italic")} />
+        <B I={Heading2} label={tr("editor_h2", "Judul")} on={() => cmd("formatBlock", "h2")} /><B I={Heading3} label={tr("editor_h3", "Subjudul")} on={() => cmd("formatBlock", "h3")} />
+        <B I={List} label={tr("editor_ul", "Daftar Poin")} on={() => cmd("insertUnorderedList")} /><B I={ListOrdered} label={tr("editor_ol", "Daftar Angka")} on={() => cmd("insertOrderedList")} />
+        <B I={ListChecks} label={tr("editor_checklist", "Checklist")} on={() => insert(`<ul class="checklist"><li>${tr("editor_checklist_item", "Item checklist")}</li></ul><p></p>`)} />
+        <B I={Link2} label={tr("editor_link", "Link")} on={openLinkBar} />
+        <B I={ImageIcon} label={tr("editor_image", "Gambar")} on={() => img.current.click()} /><B I={Paperclip} label={tr("editor_file", "File")} on={() => doc.current.click()} />
         <input ref={img} type="file" accept="image/*" hidden onChange={(e) => up(e, true)} /><input ref={doc} type="file" hidden onChange={(e) => up(e, false)} />
       </div>
       {linkBarOpen && (
@@ -106,11 +112,11 @@ export default function RichEditor({ value, onChange, onBlur, placeholder = "Tul
             autoFocus
             className="h-8 flex-1 rounded-xl border bg-surface2 px-2.5 text-xs outline-none focus:border-brand"
           />
-          <button type="button" onClick={applyLink} className="btn-accent h-8 px-3 text-xs font-semibold">Sisipkan</button>
-          <button type="button" onClick={() => setLinkBarOpen(false)} className="btn-ghost h-8 border px-2.5 text-xs font-semibold">Batal</button>
+          <button type="button" onClick={applyLink} className="btn-accent h-8 px-3 text-xs font-semibold">{tr("editor_link_insert", "Sisipkan")}</button>
+          <button type="button" onClick={() => setLinkBarOpen(false)} className="btn-ghost h-8 border px-2.5 text-xs font-semibold">{tr("common_cancel", "Batal")}</button>
         </div>
       )}
-      <div ref={ref} contentEditable suppressContentEditableWarning onInput={emit} onBlur={handleBlur} onPaste={paste} onClick={onClick} data-placeholder={placeholder} className="rich min-h-[120px] max-h-[360px] overflow-y-auto p-3 text-sm outline-none" data-testid={`${testid}-content`} />
+      <div ref={ref} contentEditable suppressContentEditableWarning onInput={emit} onBlur={handleBlur} onPaste={paste} onClick={onClick} data-placeholder={resolvedPlaceholder} className="rich min-h-[120px] max-h-[360px] overflow-y-auto p-3 text-sm outline-none" data-testid={`${testid}-content`} />
     </div>
   );
 }

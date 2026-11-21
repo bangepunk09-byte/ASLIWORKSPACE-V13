@@ -14,7 +14,7 @@ import { TaskWorkspace } from "./Tasks";
 const PROJECT_STATUS = { active: "Aktif", planning: "Perencanaan", on_hold: "Ditunda", completed: "Selesai" };
 
 function ProjectDialog({ open, onOpenChange, project, onSaved }) {
-  const { users } = useApp();
+  const { users, t: tr } = useApp();
   const empty = { name: "", description: "", start_date: "", deadline: "", status: "active", label_ids: [], member_ids: [], department: "", location: "", create_group: true };
   const [f, setF] = useState(empty);
   const [saving, setSaving] = useState(false);
@@ -40,12 +40,12 @@ function ProjectDialog({ open, onOpenChange, project, onSaved }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="bg-surface rounded-2xl sm:rounded-3xl max-w-lg max-h-[90dvh] overflow-y-auto p-4 sm:p-6">
-        <DialogHeader><DialogTitle>{project ? "Ubah Proyek" : "Proyek Baru"}</DialogTitle></DialogHeader>
-        <input value={f.name || ""} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Nama proyek" className={inp} data-testid="project-name-input" />
-        <textarea value={f.description || ""} onChange={(e) => setF({ ...f, description: e.target.value })} placeholder="Deskripsi" className={`${inp} h-20 py-2`} data-testid="project-description-input" />
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2"><div><span className="mb-1 block text-xs text-sub">Mulai</span><DatePicker value={f.start_date || ""} onChange={(val) => setF({ ...f, start_date: val })} placeholder="Tanggal mulai" className={inp} /></div><div><span className="mb-1 block text-xs text-sub">Deadline</span><DatePicker value={f.deadline || ""} onChange={(val) => setF({ ...f, deadline: val })} placeholder="Deadline" className={inp} data-testid="project-deadline-input" /></div></div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2"><AppSelect value={f.status || "active"} onChange={(e) => setF({ ...f, status: e.target.value })} className={inp} data-testid="project-status-select">{Object.entries(PROJECT_STATUS).map(([s, lbl]) => <option key={s} value={s}>{lbl}</option>)}</AppSelect><input value={f.department || ""} onChange={(e) => setF({ ...f, department: e.target.value })} placeholder="Divisi" className={inp} /></div>
-        <input value={f.location || ""} onChange={(e) => setF({ ...f, location: e.target.value })} placeholder="Lokasi" className={inp} />
+        <DialogHeader><DialogTitle>{project ? tr("projects_edit_title", "Ubah Proyek") : tr("projects_new_btn", "Proyek Baru")}</DialogTitle></DialogHeader>
+        <input value={f.name || ""} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder={tr("projects_name_ph", "Nama proyek")} className={inp} data-testid="project-name-input" />
+        <textarea value={f.description || ""} onChange={(e) => setF({ ...f, description: e.target.value })} placeholder={tr("projects_desc_ph", "Deskripsi")} className={`${inp} h-20 py-2`} data-testid="project-description-input" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2"><div><span className="mb-1 block text-xs text-sub">{tr("projects_start_label", "Mulai")}</span><DatePicker value={f.start_date || ""} onChange={(val) => setF({ ...f, start_date: val })} placeholder={tr("projects_start_ph", "Tanggal mulai")} className={inp} /></div><div><span className="mb-1 block text-xs text-sub">{tr("projects_deadline_label", "Deadline")}</span><DatePicker value={f.deadline || ""} onChange={(val) => setF({ ...f, deadline: val })} placeholder={tr("projects_deadline_ph", "Deadline")} className={inp} data-testid="project-deadline-input" /></div></div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2"><AppSelect value={f.status || "active"} onChange={(e) => setF({ ...f, status: e.target.value })} className={inp} data-testid="project-status-select">{Object.entries(PROJECT_STATUS).map(([s, lbl]) => <option key={s} value={s}>{tr(`projects_status_${s}`, lbl)}</option>)}</AppSelect><input value={f.department || ""} onChange={(e) => setF({ ...f, department: e.target.value })} placeholder={tr("projects_division_ph", "Divisi")} className={inp} /></div>
+        <input value={f.location || ""} onChange={(e) => setF({ ...f, location: e.target.value })} placeholder={tr("projects_location_ph", "Lokasi")} className={inp} />
         <LabelPicker value={f.label_ids || []} onChange={(v) => setF({ ...f, label_ids: v })} testid="project-label-picker" />
         <div className="flex max-h-36 flex-wrap gap-1 overflow-y-auto">
           {users.map((u, i) => {
@@ -63,8 +63,8 @@ function ProjectDialog({ open, onOpenChange, project, onSaved }) {
             );
           })}
         </div>
-        {!project && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!f.create_group} onChange={(e) => setF({ ...f, create_group: e.target.checked })} className="accent-[var(--c-accent)]" />Buat grup obrolan proyek</label>}
-        <AccentButton onClick={save} disabled={saving} data-testid="project-save-btn">{saving ? "Menyimpan…" : "Simpan Proyek"}</AccentButton>
+        {!project && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!f.create_group} onChange={(e) => setF({ ...f, create_group: e.target.checked })} className="accent-[var(--c-accent)]" />{tr("projects_create_group_label", "Buat grup obrolan proyek")}</label>}
+        <AccentButton onClick={save} disabled={saving} data-testid="project-save-btn">{saving ? tr("projects_saving", "Menyimpan…") : tr("projects_save_btn", "Simpan Proyek")}</AccentButton>
       </DialogContent>
     </Dialog>
   );
@@ -103,7 +103,7 @@ function getInitialProject(pid) {
 }
 
 function Detail({ pid }) {
-  const { userMap } = useApp();
+  const { userMap, t: tr } = useApp();
   const [p, setP] = useState(() => getInitialProject(pid));
   const [edit, setEdit] = useState(false);
   const navigate = useNavigate();
@@ -113,25 +113,26 @@ function Detail({ pid }) {
     load();
   }, [pid]); // eslint-disable-line
   const activeP = p || getInitialProject(pid);
+  const statusKey = activeP.status || "active";
   return (
     <div className="animate-subpage-enter" data-testid="project-detail">
-      <button onClick={() => navigate("/projects")} className="mb-4 flex items-center gap-1 text-sm font-semibold text-sub"><ArrowLeft size={15} />Semua Proyek</button>
+      <button onClick={() => navigate("/projects")} className="mb-4 flex items-center gap-1 text-sm font-semibold text-sub"><ArrowLeft size={15} />{tr("projects_back_all", "Semua Proyek")}</button>
       <div className="card mb-6 p-4 sm:p-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
           <div className="min-w-0 flex-1">
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight" data-testid="project-title">{activeP.name}</h1>
             <p className="mt-1 text-sm text-sub">{activeP.description}</p>
             <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-sub">
-              <span className="rounded-full bg-soft-green px-2.5 py-1 font-semibold text-ink">{PROJECT_STATUS[activeP.status] || (activeP.status || "active").replace("_", " ")}</span>
-              <span className="flex items-center gap-1"><Avatar user={userMap[activeP.owner_id]} size={18} showStatus={false} />Pemilik: {userMap[activeP.owner_id]?.name}</span>
+              <span className="rounded-full bg-soft-green px-2.5 py-1 font-semibold text-ink">{tr(`projects_status_${statusKey}`, PROJECT_STATUS[statusKey] || statusKey.replace("_", " "))}</span>
+              <span className="flex items-center gap-1"><Avatar user={userMap[activeP.owner_id]} size={18} showStatus={false} />{tr("projects_owner_prefix", "Pemilik:")} {userMap[activeP.owner_id]?.name}</span>
               {activeP.deadline && <span className="flex items-center gap-1"><Calendar size={12} />{fmtDate(activeP.start_date, "d MMM")} – {fmtDate(activeP.deadline, "d MMM yyyy")}</span>}
               {activeP.location && <span className="flex items-center gap-1"><MapPin size={12} />{activeP.location}</span>}
               <Labels ids={activeP.label_ids || []} small max={5} />
             </div>
           </div>
-          <div className="flex gap-2">{activeP.conversation_id && <button onClick={() => navigate(`/messages/${activeP.conversation_id}`)} className="btn-ghost flex h-10 items-center gap-1.5 border px-4 text-sm font-semibold" data-testid="project-chat-btn"><MessageCircle size={15} />Pesan</button>}<button onClick={() => setEdit(true)} className="btn-ghost h-10 border px-4 text-sm font-semibold" data-testid="project-edit-btn">Ubah</button></div>
+          <div className="flex gap-2">{activeP.conversation_id && <button onClick={() => navigate(`/messages/${activeP.conversation_id}`)} className="btn-ghost flex h-10 items-center gap-1.5 border px-4 text-sm font-semibold" data-testid="project-chat-btn"><MessageCircle size={15} />{tr("projects_msg_btn", "Pesan")}</button>}<button onClick={() => setEdit(true)} className="btn-ghost h-10 border px-4 text-sm font-semibold" data-testid="project-edit-btn">{tr("projects_edit_btn", "Ubah")}</button></div>
         </div>
-        <div className="mt-5"><div className="flex justify-between text-sm"><span className="font-semibold">Progres</span><span data-testid="project-progress">{activeP.task_done || 0}/{activeP.task_total || 0} tugas · {(activeP.task_total || 0) > 0 ? (activeP.progress || 0) : 0}%</span></div><div className="mt-2 h-2.5 rounded-full bg-surface2"><div className="h-full rounded-full bg-brand transition-all" style={{ width: `${(activeP.task_total || 0) > 0 ? (activeP.progress || 0) : 0}%` }} /></div></div>
+        <div className="mt-5"><div className="flex justify-between text-sm"><span className="font-semibold">{tr("projects_progress_label", "Progres")}</span><span data-testid="project-progress">{activeP.task_done || 0}/{activeP.task_total || 0} {tr("projects_tasks_unit", "tugas")} · {(activeP.task_total || 0) > 0 ? (activeP.progress || 0) : 0}%</span></div><div className="mt-2 h-2.5 rounded-full bg-surface2"><div className="h-full rounded-full bg-brand transition-all" style={{ width: `${(activeP.task_total || 0) > 0 ? (activeP.progress || 0) : 0}%` }} /></div></div>
         <div className="mt-4"><AvatarStack ids={activeP.member_ids || []} max={8} /></div>
       </div>
       <TaskWorkspace projectId={pid} compactHeader />
@@ -182,10 +183,10 @@ export default function Projects() {
               const progressPct = taskTotal > 0 ? (p.progress ?? Math.round((taskDone / taskTotal) * 100)) : 0;
               return (
                 <button key={p.id || i} onClick={() => navigate(`/projects/${p.id}`)} className="card min-w-0 w-full overflow-hidden p-4 sm:p-5 text-left transition-transform hover:-translate-y-0.5" data-testid={`project-card-${p.id}`}>
-                  <div className="flex items-center justify-between"><span className="h-10 w-10 rounded-md shrink-0" style={{ background: `linear-gradient(135deg, ${p.color || "#FF5364"}, var(--c-accent2))` }} /><span className="rounded-full bg-surface2 px-2.5 py-1 text-[11px] font-semibold">{PROJECT_STATUS[p.status] || (p.status || "active").replace("_", " ")}</span></div>
+                  <div className="flex items-center justify-between"><span className="h-10 w-10 rounded-md shrink-0" style={{ background: `linear-gradient(135deg, ${p.color || "#FF5364"}, var(--c-accent2))` }} /><span className="rounded-full bg-surface2 px-2.5 py-1 text-[11px] font-semibold">{t(`projects_status_${p.status || "active"}`, PROJECT_STATUS[p.status] || (p.status || "active").replace("_", " "))}</span></div>
                   <p className="mt-4 font-bold">{p.name}</p><p className="mt-1 line-clamp-2 text-sm text-sub">{p.description}</p>
                   <div className="mt-3"><Labels ids={p.label_ids || []} small /></div>
-                  <div className="mt-4 flex justify-between text-xs text-sub"><span>{taskDone}/{taskTotal} tugas</span><span className="font-semibold text-ink">{progressPct}%</span></div>
+                  <div className="mt-4 flex justify-between text-xs text-sub"><span>{taskDone}/{taskTotal} {t("projects_tasks_unit", "tugas")}</span><span className="font-semibold text-ink">{progressPct}%</span></div>
                   <div className="mt-1.5 h-1.5 rounded-full bg-surface2"><div className="h-full rounded-full bg-brand" style={{ width: `${progressPct}%` }} /></div>
                   <div className="mt-4"><AvatarStack ids={p.member_ids || []} /></div>
                 </button>

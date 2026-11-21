@@ -19,14 +19,16 @@ const MONTH_NAMES = {
   "09": "September", "10": "Oktober", "11": "November", "12": "Desember"
 };
 
-function formatMonthFolder(monthKey) {
-  if (!monthKey || monthKey.length < 7 || monthKey === "unknown") return "Lainnya / Tanpa Tanggal";
+function formatMonthFolder(monthKey, tr) {
+  if (!monthKey || monthKey.length < 7 || monthKey === "unknown") {
+    return tr ? tr("archive_unknown_month", "Lainnya / Tanpa Tanggal") : "Lainnya / Tanpa Tanggal";
+  }
   const [year, month] = monthKey.split("-");
   return `${MONTH_NAMES[month] || month} ${year}`;
 }
 
 export default function ArchiveView({ tasks, onOpen, reload, projects }) {
-  const { users, me, subscribe } = useApp();
+  const { users, me, subscribe, t: tr } = useApp();
   const [search, setSearch] = useState("");
   const [selectedMonth, setSelectedMonth] = useState("");
   const [selectedAssignee, setSelectedAssignee] = useState("");
@@ -269,9 +271,9 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
             <Zap size={16} />
           </div>
           <div>
-            <p className="text-sm font-bold">Auto-Archive Mingguan Aktif</p>
+            <p className="text-sm font-bold">{tr("archive_banner_title", "Auto-Archive Mingguan Aktif")}</p>
             <p className="text-xs text-sky-800/90 dark:text-sky-300/90">
-              Tugas dengan status <b>Selesai</b> otomatis diarsipkan ke dalam folder bulanan setiap hari <b>Minggu pukul 23:00 WIB</b>.
+              {tr("archive_banner_desc", "Tugas dengan status Selesai otomatis diarsipkan ke dalam folder bulanan setiap hari Minggu pukul 23:00 WIB.")}
             </p>
           </div>
         </div>
@@ -284,7 +286,7 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
             data-testid="archive-empty-task-btn"
           >
             <Trash2 size={13} />
-            Empty Task
+            {tr("archive_empty_task_btn", "Empty Task")}
           </button>
           <button
             type="button"
@@ -294,7 +296,7 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
             data-testid="trigger-auto-archive-btn"
           >
             <RotateCcw size={13} className={syncing ? "animate-spin" : ""} />
-            {syncing ? "Memproses..." : "Arsipkan Tugas Selesai Sekarang"}
+            {syncing ? tr("archive_processing", "Memproses...") : tr("archive_run_now_btn", "Arsipkan Tugas Selesai Sekarang")}
           </button>
         </div>
       </div>
@@ -306,7 +308,7 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Cari judul, ID, atau deskripsi arsip..."
+            placeholder={tr("archive_search_ph", "Cari judul, ID, atau deskripsi arsip...")}
             className="h-10 flex-1 bg-transparent text-sm outline-none placeholder:text-sub"
             data-testid="archive-search-input"
           />
@@ -323,10 +325,10 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
           className="h-10 rounded-xl border bg-surface2 px-3 text-xs font-medium"
           data-testid="archive-filter-month"
         >
-          <option value="">Semua Bulan Folder</option>
+          <option value="">{tr("archive_filter_all_months", "Semua Bulan Folder")}</option>
           {allMonths.map((m) => (
             <option key={m} value={m}>
-              📁 {formatMonthFolder(m)}
+              📁 {formatMonthFolder(m, tr)}
             </option>
           ))}
         </AppSelect>
@@ -337,7 +339,7 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
           className="h-10 rounded-xl border bg-surface2 px-3 text-xs font-medium"
           data-testid="archive-filter-assignee"
         >
-          <option value="">Semua PIC / Assignee</option>
+          <option value="">{tr("archive_filter_all_assignees", "Semua PIC / Assignee")}</option>
           {users.map((u) => (
             <option key={u.user_id} value={u.user_id}>
               {u.name}
@@ -351,7 +353,7 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
           className="h-10 rounded-xl border bg-surface2 px-3 text-xs font-medium"
           data-testid="archive-filter-priority"
         >
-          <option value="">Semua Prioritas</option>
+          <option value="">{tr("archive_filter_all_priorities", "Semua Prioritas")}</option>
           {Object.entries(PRIORITY).map(([k, p]) => (
             <option key={k} value={k}>
               {p.name}
@@ -366,7 +368,7 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
             className="h-10 rounded-xl border bg-surface2 px-3 text-xs font-medium"
             data-testid="archive-filter-dept"
           >
-            <option value="">Semua Divisi</option>
+            <option value="">{tr("archive_filter_all_depts", "Semua Divisi")}</option>
             {depts.map((d) => (
               <option key={d} value={d}>
                 {d}
@@ -386,7 +388,7 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
             }}
             className="flex items-center gap-1 rounded-xl px-2 py-1.5 text-xs font-semibold text-brand hover:underline"
           >
-            <X size={13} /> Reset Filter
+            <X size={13} /> {tr("archive_reset_filter", "Reset Filter")}
           </button>
         )}
       </div>
@@ -399,7 +401,7 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
         >
           <div className="flex items-center gap-2 text-xs sm:text-sm font-bold text-ink">
             <CheckSquare size={16} className="text-rose-600" />
-            <span>{selectedIds.length} tugas arsip dipilih</span>
+            <span>{selectedIds.length} {tr("archive_selected_suffix", "tugas arsip dipilih")}</span>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -408,7 +410,7 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
               className="inline-flex h-9 items-center rounded-xl border px-3 text-xs font-semibold text-sub hover:bg-surface2 cursor-pointer"
               data-testid="archive-clear-selection-btn"
             >
-              Batal Pilih
+              {tr("archive_clear_select", "Batal Pilih")}
             </button>
             <button
               type="button"
@@ -416,7 +418,7 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
               className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 px-3.5 text-xs font-bold text-white shadow-xs cursor-pointer"
               data-testid="archive-delete-selected-btn"
             >
-              <Trash2 size={13} /> Hapus {selectedIds.length} Terpilih
+              <Trash2 size={13} /> {tr("archive_delete_prefix", "Hapus")} {selectedIds.length} {tr("archive_delete_selected_suffix", "Terpilih")}
             </button>
           </div>
         </div>
@@ -429,17 +431,17 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
             <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-surface2 text-sub">
               <Inbox size={28} />
             </div>
-            <h4 className="mt-4 text-base font-bold">Tidak ada tugas dalam arsip</h4>
+            <h4 className="mt-4 text-base font-bold">{tr("archive_empty_title", "Tidak ada tugas dalam arsip")}</h4>
             <p className="mt-1 max-w-sm text-xs text-sub">
               {search || selectedMonth
-                ? "Tidak ada tugas arsip yang cocok dengan kata kunci atau filter yang dipilih."
-                : "Tugas yang selesai akan otomatis masuk ke folder arsip tiap Minggu pukul 23:00 WIB, atau klik tombol di atas untuk mengarsipkan sekarang."}
+                ? tr("archive_empty_filtered_desc", "Tidak ada tugas arsip yang cocok dengan kata kunci atau filter yang dipilih.")
+                : tr("archive_empty_desc", "Tugas yang selesai akan otomatis masuk ke folder arsip tiap Minggu pukul 23:00 WIB, atau klik tombol di atas untuk mengarsipkan sekarang.")}
             </p>
           </div>
         ) : (
           monthlyFolders.map(([monthKey, folderTasks]) => {
             const isOpen = isFolderOpen(monthKey);
-            const folderName = formatMonthFolder(monthKey);
+            const folderName = formatMonthFolder(monthKey, tr);
             const allFolderSelected = folderTasks.length > 0 && folderTasks.every((t) => selectedIds.includes(t.id));
             const monthReq = reqByMonth[monthKey];
             const alreadyApprovedByMe = Boolean(monthReq && me?.user_id && (monthReq.approved_by || []).includes(me.user_id));
@@ -476,16 +478,16 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
                       <h3 className="text-base font-bold text-ink flex flex-wrap items-center gap-2">
                         <span>{folderName}</span>
                         <span className="rounded-full bg-surface px-2.5 py-0.5 text-xs font-bold text-sub shadow-sm">
-                          {folderTasks.length} tugas
+                          {folderTasks.length} {tr("tasks_tasks_unit", "tugas")}
                         </span>
                         {monthReq && (
                           <span className="rounded-full bg-amber-100 dark:bg-amber-900/40 px-2.5 py-0.5 text-[11px] font-bold text-amber-700 dark:text-amber-300 whitespace-nowrap shrink-0">
-                            Persetujuan Hapus {monthReq.approved_count || 0}/{monthReq.needed || 2}
+                            {tr("archive_approval_badge", "Persetujuan Hapus")} {monthReq.approved_count || 0}/{monthReq.needed || 2}
                           </span>
                         )}
                       </h3>
                       <p className="text-[11px] text-sub">
-                        Periode arsip otomatis bulanan · {folderTasks.filter((t) => t.status === "done").length} tugas selesai
+                        {tr("archive_folder_subtitle", "Periode arsip otomatis bulanan")} · {folderTasks.filter((t) => t.status === "done").length} {tr("archive_folder_done_suffix", "tugas selesai")}
                       </p>
                     </div>
                   </div>
@@ -495,11 +497,11 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
                         type="button"
                         onClick={() => setConfirmMonthDelete({ monthKey, folderName, count: folderTasks.length })}
                         className="inline-flex items-center gap-1 rounded-xl border border-rose-200 dark:border-rose-900/60 bg-rose-50 dark:bg-rose-950/30 px-2.5 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-100 transition-colors cursor-pointer whitespace-nowrap"
-                        title="Ajukan hapus seluruh arsip bulan ini"
+                        title={tr("archive_delete_month_title", "Ajukan hapus seluruh arsip bulan ini")}
                         data-testid={`empty-month-${monthKey}`}
                       >
                         <Trash2 size={12} />
-                        Hapus 1 Bulan
+                        {tr("archive_delete_month_btn", "Hapus 1 Bulan")}
                       </button>
                     )}
                     <button
@@ -507,7 +509,7 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
                       onClick={() => toggleFolder(monthKey)}
                       className="flex items-center gap-1 text-xs font-medium text-sub hover:text-ink px-1 py-1 cursor-pointer"
                     >
-                      <span>{isOpen ? "Tutup Folder" : "Buka Folder"}</span>
+                      <span>{isOpen ? tr("archive_close_folder", "Tutup Folder") : tr("archive_open_folder", "Buka Folder")}</span>
                       {isOpen ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
                     </button>
                   </div>
@@ -523,10 +525,10 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
                       <ShieldAlert size={18} className="mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
                       <div className="min-w-0">
                         <p className="text-xs sm:text-sm font-bold text-ink">
-                          Menunggu Persetujuan Hapus 1 Bulan · {monthReq.approved_count || 0}/{monthReq.needed || 2}
+                          {tr("archive_awaiting_month_delete", "Menunggu Persetujuan Hapus 1 Bulan")} · {monthReq.approved_count || 0}/{monthReq.needed || 2}
                         </p>
                         <p className="text-[11px] text-sub">
-                          Diajukan oleh <b>{monthReq.requested_by_name}</b> · Minimal <b>2 orang</b> menyetujui sebelum {monthReq.task_count} tugas di {folderName} dihapus permanen.
+                          {tr("archive_requested_by_prefix", "Diajukan oleh")} <b>{monthReq.requested_by_name}</b> · Minimal <b>2 orang</b> menyetujui sebelum {monthReq.task_count} {tr("tasks_tasks_unit", "tugas")} di {folderName} dihapus permanen.
                           {Array.isArray(monthReq.approvers) && monthReq.approvers.length > 0 && (
                             <> Sudah setuju: <b>{monthReq.approvers.map((a) => a.name).join(", ")}</b>.</>
                           )}
@@ -541,7 +543,7 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
                         className="inline-flex h-8 items-center gap-1 rounded-xl border border-rose-200 bg-surface px-3 text-xs font-bold text-rose-600 hover:bg-rose-50 disabled:opacity-50 cursor-pointer whitespace-nowrap"
                         data-testid={`reject-month-delete-${monthKey}`}
                       >
-                        <X size={13} /> Tolak
+                        <X size={13} /> {tr("archive_reject_btn", "Tolak")}
                       </button>
                       <button
                         type="button"
@@ -552,8 +554,8 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
                       >
                         <Check size={13} />
                         {alreadyApprovedByMe
-                          ? `Sudah Setuju ${monthReq.approved_count}/${monthReq.needed}`
-                          : `Setujui Hapus ${monthReq.approved_count}/${monthReq.needed}`}
+                          ? `${tr("archive_already_approved", "Sudah Setuju")} ${monthReq.approved_count}/${monthReq.needed}`
+                          : `${tr("archive_approve_delete_btn", "Setujui Hapus")} ${monthReq.approved_count}/${monthReq.needed}`}
                       </button>
                     </div>
                   </div>
@@ -619,7 +621,7 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
                           <div className="flex flex-wrap items-center gap-3 sm:gap-4 text-xs text-sub sm:shrink-0">
                             <div className="flex items-center gap-2">
                               <Avatar user={user} size={24} showStatus={false} />
-                              <span className="font-medium text-ink">{user?.name || "Belum Ditugaskan"}</span>
+                              <span className="font-medium text-ink">{user?.name || tr("archive_unassigned", "Belum Ditugaskan")}</span>
                             </div>
 
                             <span className="flex items-center gap-1 text-[11px]" title="Waktu selesai/arsip">
@@ -632,28 +634,28 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
                                 type="button"
                                 onClick={(e) => unarchiveTask(task.id, e)}
                                 className="flex items-center gap-1 rounded-xl border bg-surface px-2.5 py-1 text-xs font-semibold text-sub hover:bg-surface2 hover:text-ink transition-colors cursor-pointer"
-                                title="Kembalikan tugas ini ke Board aktif"
+                                title={tr("archive_restore_title", "Kembalikan tugas ini ke Board aktif")}
                                 data-testid={`unarchive-task-${task.id}`}
                               >
                                 <RotateCcw size={12} />
-                                Pulihkan
+                                {tr("archive_restore_btn", "Pulihkan")}
                               </button>
                               <button
                                 type="button"
                                 onClick={() => setConfirmSingleTask(task)}
                                 className="flex items-center gap-1 rounded-xl border border-rose-200 dark:border-rose-900/50 bg-rose-50/70 dark:bg-rose-950/30 px-2.5 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-100 transition-colors cursor-pointer"
-                                title="Hapus permanen tugas ini"
+                                title={tr("archive_delete_title", "Hapus permanen tugas ini")}
                                 data-testid={`delete-archive-task-${task.id}`}
                               >
                                 <Trash2 size={12} />
-                                Hapus
+                                {tr("archive_delete_btn", "Hapus")}
                               </button>
                               <button
                                 type="button"
                                 onClick={() => onOpen(task.id)}
                                 className="flex items-center gap-1 rounded-xl bg-surface2 px-2.5 py-1 text-xs font-semibold text-brand hover:underline cursor-pointer"
                               >
-                                Detail <ArrowRight size={12} />
+                                {tr("archive_detail_btn", "Detail")} <ArrowRight size={12} />
                               </button>
                             </div>
                           </div>
@@ -674,21 +676,21 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-lg font-bold">
               <Trash2 size={18} className="text-rose-600" />
-              Hapus Arsip Tugas
+              {tr("archive_modal_title", "Hapus Arsip Tugas")}
             </DialogTitle>
             <DialogDescription>
-              Pilih cara menghapus arsip tugas: hapus tugas terpilih atau ajukan penghapusan 1 bulan penuh.
+              {tr("archive_modal_desc", "Pilih cara menghapus arsip tugas: hapus tugas terpilih atau ajukan penghapusan 1 bulan penuh.")}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-1">
             {/* Option A: Selected Tasks */}
             <div className="rounded-2xl border bg-surface2/50 p-3.5 space-y-2">
-              <p className="text-xs font-bold uppercase tracking-wider text-sub">1. Hapus Tugas Terpilih</p>
+              <p className="text-xs font-bold uppercase tracking-wider text-sub">{tr("archive_modal_opt1_title", "1. Hapus Tugas Terpilih")}</p>
               <p className="text-xs text-sub">
                 {selectedIds.length > 0
                   ? `${selectedIds.length} tugas arsip sedang dipilih untuk dihapus permanen.`
-                  : "Centang beberapa tugas di daftar arsip, lalu klik Hapus Terpilih."}
+                  : tr("archive_modal_opt1_hint", "Centang beberapa tugas di daftar arsip, lalu klik Hapus Terpilih.")}
               </p>
               {selectedIds.length > 0 && (
                 <button
@@ -697,7 +699,7 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
                   className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 px-3.5 text-xs font-bold text-white cursor-pointer"
                   data-testid="modal-delete-selected-btn"
                 >
-                  <Trash2 size={13} /> Hapus {selectedIds.length} Tugas Terpilih
+                  <Trash2 size={13} /> {tr("archive_delete_prefix", "Hapus")} {selectedIds.length} Tugas Terpilih
                 </button>
               )}
             </div>
@@ -705,13 +707,13 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
             {/* Option B: Delete Entire Month (Requires >= 2 Approvals) */}
             <div className="rounded-2xl border border-amber-200 dark:border-amber-800/60 bg-amber-50/50 dark:bg-amber-950/20 p-3.5 space-y-2.5">
               <div className="flex items-center justify-between gap-2">
-                <p className="text-xs font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300">2. Hapus 1 Bulan Penuh</p>
+                <p className="text-xs font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300">{tr("archive_modal_opt2_title", "2. Hapus 1 Bulan Penuh")}</p>
                 <span className="rounded-full bg-amber-100 dark:bg-amber-900/50 px-2 py-0.5 text-[10px] font-bold text-amber-800 dark:text-amber-200">
-                  Min. 2 Persetujuan
+                  {tr("archive_modal_min_approvals", "Min. 2 Persetujuan")}
                 </span>
               </div>
               <p className="text-xs text-sub">
-                Seluruh tugas pada bulan yang dipilih baru akan terhapus permanen setelah mendapat minimal <b>2 persetujuan</b>.
+                {tr("archive_modal_opt2_desc", "Seluruh tugas pada bulan yang dipilih baru akan terhapus permanen setelah mendapat minimal 2 persetujuan.")}
               </p>
               <AppSelect
                 value={emptyMonthTarget}
@@ -721,7 +723,7 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
               >
                 {allMonths.map((m) => (
                   <option key={m} value={m}>
-                    {formatMonthFolder(m)}
+                    {formatMonthFolder(m, tr)}
                   </option>
                 ))}
               </AppSelect>
@@ -733,7 +735,7 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
                   const count = foundFolder ? foundFolder[1].length : tasks.filter((t) => (t.archived_month || (t.archived_at || t.completed_at || t.created_at || "").slice(0, 7)) === emptyMonthTarget).length;
                   setConfirmMonthDelete({
                     monthKey: emptyMonthTarget,
-                    folderName: formatMonthFolder(emptyMonthTarget),
+                    folderName: formatMonthFolder(emptyMonthTarget, tr),
                     count,
                   });
                 }}
@@ -742,15 +744,15 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
               >
                 <ShieldAlert size={13} />
                 {reqByMonth[emptyMonthTarget]
-                  ? `Menunggu Persetujuan ${reqByMonth[emptyMonthTarget].approved_count || 0}/2`
-                  : `Ajukan Hapus ${formatMonthFolder(emptyMonthTarget)}`}
+                  ? `${tr("archive_modal_waiting_btn", "Menunggu Persetujuan")} ${reqByMonth[emptyMonthTarget].approved_count || 0}/2`
+                  : `${tr("archive_modal_request_btn", "Ajukan Hapus")} ${formatMonthFolder(emptyMonthTarget, tr)}`}
               </button>
             </div>
           </div>
 
           <DialogFooter>
             <button type="button" onClick={() => setEmptyModalOpen(false)} className="btn-ghost h-9 border px-4 text-xs font-semibold">
-              Tutup
+              {tr("archive_modal_close_btn", "Tutup")}
             </button>
           </DialogFooter>
         </DialogContent>
@@ -760,13 +762,13 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
       <Dialog open={!!confirmSingleTask} onOpenChange={(v) => !v && setConfirmSingleTask(null)}>
         <DialogContent className="bg-surface rounded-3xl max-w-sm">
           <DialogHeader>
-            <DialogTitle>Hapus Tugas Arsip?</DialogTitle>
+            <DialogTitle>{tr("archive_confirm_single_title", "Hapus Tugas Arsip?")}</DialogTitle>
             <DialogDescription>
               Tugas <b>"{confirmSingleTask?.title}"</b> akan dihapus permanen dari arsip dan tidak dapat dipulihkan.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2 sm:gap-2">
-            <button type="button" onClick={() => setConfirmSingleTask(null)} className="btn-ghost h-9 border px-4 text-xs font-semibold">Batal</button>
+            <button type="button" onClick={() => setConfirmSingleTask(null)} className="btn-ghost h-9 border px-4 text-xs font-semibold">{tr("archive_cancel_btn", "Batal")}</button>
             <button
               type="button"
               disabled={busyDelete}
@@ -774,7 +776,7 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
               className="h-9 rounded-full bg-rose-600 px-4 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50 cursor-pointer"
               data-testid="confirm-single-archive-delete-btn"
             >
-              Ya, Hapus Permanen
+              {tr("archive_confirm_single_btn", "Ya, Hapus Permanen")}
             </button>
           </DialogFooter>
         </DialogContent>
@@ -784,13 +786,13 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
       <Dialog open={confirmBulkDelete} onOpenChange={setConfirmBulkDelete}>
         <DialogContent className="bg-surface rounded-3xl max-w-sm">
           <DialogHeader>
-            <DialogTitle>Hapus {selectedIds.length} Tugas Arsip?</DialogTitle>
+            <DialogTitle>{tr("archive_confirm_bulk_title_prefix", "Hapus")} {selectedIds.length} {tr("archive_confirm_bulk_title_suffix", "Tugas Arsip?")}</DialogTitle>
             <DialogDescription>
               Sebanyak <b>{selectedIds.length} tugas arsip</b> yang dipilih akan dihapus permanen dari sistem.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2 sm:gap-2">
-            <button type="button" onClick={() => setConfirmBulkDelete(false)} className="btn-ghost h-9 border px-4 text-xs font-semibold">Batal</button>
+            <button type="button" onClick={() => setConfirmBulkDelete(false)} className="btn-ghost h-9 border px-4 text-xs font-semibold">{tr("archive_cancel_btn", "Batal")}</button>
             <button
               type="button"
               disabled={busyDelete}
@@ -798,7 +800,7 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
               className="h-9 rounded-full bg-rose-600 px-4 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50 cursor-pointer"
               data-testid="confirm-bulk-archive-delete-btn"
             >
-              Hapus {selectedIds.length} Tugas
+              {tr("archive_delete_prefix", "Hapus")} {selectedIds.length} {tr("tasks_tasks_unit", "Tugas")}
             </button>
           </DialogFooter>
         </DialogContent>
@@ -810,14 +812,14 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <ShieldAlert size={18} className="text-amber-600" />
-              Ajukan Hapus Arsip {confirmMonthDelete?.folderName}?
+              {tr("archive_confirm_month_title", "Ajukan Hapus Arsip")} {confirmMonthDelete?.folderName}?
             </DialogTitle>
             <DialogDescription>
-              Folder bulan <b>{confirmMonthDelete?.folderName}</b> berisi <b>{confirmMonthDelete?.count || 0} tugas</b>. Penghapusan 1 bulan penuh memerlukan <b>minimal persetujuan 2 orang</b> sebelum seluruh tugas benar-benar terhapus.
+              Folder bulan <b>{confirmMonthDelete?.folderName}</b> berisi <b>{confirmMonthDelete?.count || 0} {tr("tasks_tasks_unit", "tugas")}</b>. Penghapusan 1 bulan penuh memerlukan <b>minimal persetujuan 2 orang</b> sebelum seluruh tugas benar-benar terhapus.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2 sm:gap-2">
-            <button type="button" onClick={() => setConfirmMonthDelete(null)} className="btn-ghost h-9 border px-4 text-xs font-semibold">Batal</button>
+            <button type="button" onClick={() => setConfirmMonthDelete(null)} className="btn-ghost h-9 border px-4 text-xs font-semibold">{tr("archive_cancel_btn", "Batal")}</button>
             <button
               type="button"
               disabled={busyDelete}
@@ -825,7 +827,7 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
               className="h-9 rounded-full bg-rose-600 px-4 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50 cursor-pointer whitespace-nowrap"
               data-testid="confirm-request-month-delete-btn"
             >
-              Ajukan Penghapusan
+              {tr("archive_confirm_month_btn", "Ajukan Penghapusan")}
             </button>
           </DialogFooter>
         </DialogContent>

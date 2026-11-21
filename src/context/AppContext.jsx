@@ -7,12 +7,15 @@ import { playSound } from "../lib/sound";
 import {
   hydrateConversationsCache,
   upsertConversationInCache,
+  removeConversationFromCache,
+  clearConversationMessagesCache,
   appendMessageToCache,
   updateMessageInCache,
   clearChatCache,
   hydratePostsCache,
   hydrateGroupsCache,
   upsertGroupInCache,
+  removeGroupFromCache,
 } from "../lib/workspaceCaches";
 import { setCachedDriveShortcuts } from "../data/initialDriveShortcuts";
 import { showSystemNotification, syncPushSubscription, syncAppBadge } from "../lib/systemNotifications";
@@ -822,6 +825,17 @@ export function AppProvider({ children }) {
             if (Array.isArray(r.data)) hydrateConversationsCache(r.data, me?.user_id);
           }).catch(() => {});
         }
+        if (evt.type === "conversation:deleted" && evt.id) {
+          const curUid = meRef.current?.user_id || me?.user_id;
+          if (evt.is_circle_clear) {
+            clearConversationMessagesCache(evt.id, curUid);
+          } else {
+            removeConversationFromCache(evt.id, curUid);
+            if (evt.conv_type === "group") {
+              removeGroupFromCache(evt.id, curUid);
+            }
+          }
+        }
         if (evt.type === "workspace:changed" || evt.type === "workspace:updated") {
           if (evt.data && typeof evt.data === "object") {
             setSession((s) => (s ? { ...s, workspace: evt.data } : s));
@@ -960,6 +974,7 @@ export function AppProvider({ children }) {
             "org:changed",
             "groups:changed",
             "conversations:changed",
+            "conversation:deleted",
             "marketplace:changed",
             "auto_backup:created",
           ].includes(evt.type)
@@ -1012,9 +1027,33 @@ export function AppProvider({ children }) {
     };
   }, [me?.user_id]);
 
+  const userMap = useMemo(
+    () => Object.fromEntries((Array.isArray(users) ? users : []).map((u) => [u.user_id, u])),
+    [users]
+  );
+  const labelMap = useMemo(
+    () => Object.fromEntries((Array.isArray(labels) ? labels : []).map((l) => [l.id, l])),
+    [labels]
+  );
+  const statuses = useMemo(
+    () =>
+      (ws?.task_statuses || ["todo", "in_progress", "in_review", "done"]).map((s) =>
+        typeof s === "string"
+          ? { key: s, name: s.replace(/_/g, " "), color: "#F0F4FA", is_done: s === "done" }
+          : s
+      ),
+    [ws?.task_statuses]
+  );
+  const effectiveCopywriting = useMemo(
+    () => getEffectiveCopywriting(ws?.custom_copywriting, prefs?.custom_copywriting),
+    [ws?.custom_copywriting, prefs?.custom_copywriting]
+  );
+  const t = useCallback(
+    (key, fallback) => getTranslation(key, effectiveCopywriting, fallback),
+    [effectiveCopywriting]
+  );
+
   const value = useMemo(() => {
-    const userMap = Object.fromEntries((Array.isArray(users) ? users : []).map((u) => [u.user_id, u]));
-    const labelMap = Object.fromEntries((Array.isArray(labels) ? labels : []).map((l) => [l.id, l]));
     return {
       session, setSession, me, ws, prefs, users, userMap, labels, labelMap, online, unread, setUnread,
       tasks, userDeadlinesToday, hasDeadlineToday,
@@ -1036,13 +1075,13 @@ export function AppProvider({ children }) {
         setTopQuickActionNotifActive(false);
         setTopNotif(null);
       },
-      statuses: (ws?.task_statuses || ["todo", "in_progress", "in_review", "done"]).map((s) => typeof s === "string" ? { key: s, name: s.replace(/_/g, " "), color: "#F0F4FA", is_done: s === "done" } : s),
+      statuses,
       isAdmin: ["super_admin", "workspace_admin"].includes(me?.role),
       isManager: ["super_admin", "workspace_admin", "department_manager", "project_manager"].includes(me?.role),
       isDemo: !!me?.is_demo,
       lang: "en",
-      effectiveCopywriting: getEffectiveCopywriting(ws?.custom_copywriting, prefs?.custom_copywriting),
-      t: (key, fallback) => getTranslation(key, getEffectiveCopywriting(ws?.custom_copywriting, prefs?.custom_copywriting), fallback),
+      effectiveCopywriting,
+      t,
       themeDraft, setThemeDraft,
       reloadUsers: () => api.get("/users").then((r) => {
         if (Array.isArray(r.data)) {
@@ -1146,7 +1185,7 @@ export function AppProvider({ children }) {
       syncCloudNow,
       connectCloudGoogle,
     };
-  }, [session, setSession, me, ws, prefs, users, labels, online, unread, topNotif, themeDraft, tasks, userDeadlinesToday, hasDeadlineToday, checkAuth, loadAll, cloudSyncStatus, syncCloudNow, connectCloudGoogle]);
+  }, [session, setSession, me, ws, prefs, users, userMap, labels, labelMap, statuses, effectiveCopywriting, t, online, unread, topNotif, themeDraft, tasks, userDeadlinesToday, hasDeadlineToday, checkAuth, loadAll, cloudSyncStatus, syncCloudNow, connectCloudGoogle]);
 
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
 }

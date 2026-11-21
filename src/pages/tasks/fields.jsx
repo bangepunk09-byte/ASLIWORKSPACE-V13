@@ -10,8 +10,10 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem, AppSelec
 export const CARD_COLORS = ["#FF5364", "#F59E0B", "#EAB308", "#22C55E", "#0EA5A4", "#2F7DE1", "#8B5CF6", "#EC4899", "#64748B"];
 export const inp = "h-10 w-full rounded-xl border bg-surface2 px-3 text-sm outline-none";
 
-export function UserSelect({ value, onChange, placeholder = "Belum Ditugaskan", testid, ids, emptyMessage = "Belum ada anggota divisi", className }) {
-  const { users } = useApp();
+export function UserSelect({ value, onChange, placeholder, testid, ids, emptyMessage, className }) {
+  const { users, t: tr } = useApp();
+  const resolvedPlaceholder = placeholder ?? tr("table_unassigned", "Belum Ditugaskan");
+  const resolvedEmptyMessage = emptyMessage ?? tr("task_field_no_div_members", "Belum ada anggota divisi");
   const humanUsers = (users || []).filter(
     (u) => u && !u.is_bot && u.role !== "assistant" && u.user_id !== "user_circle_assistant"
   );
@@ -31,15 +33,15 @@ export function UserSelect({ value, onChange, placeholder = "Belum Ditugaskan", 
       className={className || inp}
       data-testid={testid}
     >
-      <option value="">{placeholder}</option>
+      <option value="">{resolvedPlaceholder}</option>
       {legacySelectedUser && (
         <option value={legacySelectedUser.user_id}>
-          {legacySelectedUser.name} · Luar Divisi
+          {legacySelectedUser.name} · {tr("task_field_out_of_div", "Luar Divisi")}
         </option>
       )}
       {list.length === 0 ? (
         <option value="" disabled>
-          {emptyMessage}
+          {resolvedEmptyMessage}
         </option>
       ) : (
         list.map((u) => (
@@ -55,13 +57,15 @@ export function UserSelect({ value, onChange, placeholder = "Belum Ditugaskan", 
 export function MultiUserSelect({
   value = [],
   onChange,
-  placeholder = "Pilih penanggung jawab / PIC...",
+  placeholder,
   ids,
   scopeLabel,
-  emptyMessage = "Belum ada akun aktif di divisi ini.",
+  emptyMessage,
   testid
 }) {
-  const { users, userMap } = useApp();
+  const { users, userMap, t: tr } = useApp();
+  const resolvedPlaceholder = placeholder ?? tr("task_field_pic_ph", "Pilih penanggung jawab / PIC...");
+  const resolvedEmptyMessage = emptyMessage ?? tr("task_field_no_active_members", "Belum ada akun aktif di divisi ini.");
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
 
@@ -119,7 +123,7 @@ export function MultiUserSelect({
                 <span
                   onClick={(e) => removeUser(e, uid)}
                   className="ml-0.5 rounded-full p-0.5 hover:bg-brand/30 text-brand cursor-pointer"
-                  title={`Hapus ${u.name}`}
+                  title={`${tr("task_field_remove_prefix", "Hapus")} ${u.name}`}
                 >
                   <X size={12} />
                 </span>
@@ -127,10 +131,10 @@ export function MultiUserSelect({
             );
           })
         ) : (
-          <span className="text-sub text-xs">{placeholder}</span>
+          <span className="text-sub text-xs">{resolvedPlaceholder}</span>
         )}
         <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold text-brand px-2 py-0.5 rounded-md hover:bg-brand/10">
-          <Plus size={13} /> {selectedIds.length > 0 ? "Tambah orang" : "Pilih PIC"}
+          <Plus size={13} /> {selectedIds.length > 0 ? tr("task_field_add_person", "Tambah orang") : tr("task_field_pick_pic", "Pilih PIC")}
         </span>
       </button>
 
@@ -166,7 +170,7 @@ export function MultiUserSelect({
         </div>
       ) : (
         <p className="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-surface2/50 px-3 py-2 text-xs text-sub" data-testid={`${testid || "assignee"}-empty`}>
-          {emptyMessage}
+          {resolvedEmptyMessage}
         </p>
       )}
 
@@ -174,21 +178,21 @@ export function MultiUserSelect({
         <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-surface p-2.5 shadow-xl space-y-2">
           <div className="flex items-center justify-between px-1">
             <p className="text-[11px] font-bold text-sub uppercase tracking-wider">
-              Pilih Penanggung Jawab · {selectedIds.length} terpilih
+              {tr("task_field_pick_pic_header", "Pilih Penanggung Jawab")} · {selectedIds.length} {tr("task_field_selected_suffix", "terpilih")}
             </p>
             <button
               type="button"
               onClick={() => setOpen(false)}
               className="rounded-lg px-2 py-0.5 text-xs font-semibold text-brand hover:bg-brand/10 cursor-pointer"
             >
-              Selesai
+              {tr("task_field_done_btn", "Selesai")}
             </button>
           </div>
           {safeList.length > 4 && (
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Cari nama atau divisi..."
+              placeholder={tr("task_field_search_member_ph", "Cari nama atau divisi...")}
               className="h-8 w-full rounded-xl border bg-surface2 px-2.5 text-xs outline-none focus:border-brand"
             />
           )}
@@ -210,7 +214,7 @@ export function MultiUserSelect({
                     <div className="truncate text-left">
                       <span className="block truncate font-medium">{u.name}</span>
                       <span className="block text-[10px] text-sub">
-                        {u.job_title || "Anggota"}{u.department ? ` · ${u.department}` : ""}
+                        {u.job_title || tr("task_field_member_fallback", "Anggota")}{u.department ? ` · ${u.department}` : ""}
                       </span>
                     </div>
                   </div>
@@ -222,7 +226,7 @@ export function MultiUserSelect({
             })}
             {filteredList.length === 0 && (
               <p className="py-3 text-center text-xs text-sub">
-                {safeList.length === 0 ? emptyMessage : "Tidak ada anggota yang cocok."}
+                {safeList.length === 0 ? resolvedEmptyMessage : tr("task_field_no_match_member", "Tidak ada anggota yang cocok.")}
               </p>
             )}
           </div>
@@ -233,16 +237,18 @@ export function MultiUserSelect({
 }
 
 export function PrioritySelect({ value, onChange, testid }) {
-  const current = PRIORITY[value || "medium"] || PRIORITY.medium;
+  const { t: tr } = useApp();
+  const currentKey = value || "medium";
+  const current = PRIORITY[currentKey] || PRIORITY.medium;
   return (
-    <Select value={value || "medium"} onValueChange={onChange}>
+    <Select value={currentKey} onValueChange={onChange}>
       <SelectTrigger className="w-full bg-surface2 border-slate-200 dark:border-slate-800 rounded-xl" data-testid={testid}>
-        <SelectValue>{current.name}</SelectValue>
+        <SelectValue>{tr(`common_priority_${currentKey}`, current.name)}</SelectValue>
       </SelectTrigger>
       <SelectContent>
         {Object.entries(PRIORITY).map(([k, p]) => (
           <SelectItem key={k} value={k} data-testid={`priority-option-${k}`}>
-            {p.name}
+            {tr(`common_priority_${k}`, p.name)}
           </SelectItem>
         ))}
       </SelectContent>
@@ -271,7 +277,7 @@ export function StatusSelect({ value, onChange, testid }) {
 }
 
 export function LabelPicker({ value = [], onChange, testid = "label-picker" }) {
-  const { labels, reloadLabels } = useApp();
+  const { labels, reloadLabels, t: tr } = useApp();
   const [name, setName] = useState("");
   const [color, setColor] = useState(CARD_COLORS[5]);
   const create = async () => {
@@ -281,7 +287,7 @@ export function LabelPicker({ value = [], onChange, testid = "label-picker" }) {
     <Popover>
       <PopoverTrigger asChild>
         <button type="button" className="flex min-h-[40px] w-full flex-wrap items-center gap-1 rounded-xl border bg-surface2 px-2 py-1.5 text-left text-sm" data-testid={testid}>
-          {value.length ? value.map((id) => <LabelChip key={id} label={labels.find((l) => l.id === id)} small />) : <span className="text-sub">Tambah label IP / Brand</span>}
+          {value.length ? value.map((id) => <LabelChip key={id} label={labels.find((l) => l.id === id)} small />) : <span className="text-sub">{tr("task_field_add_brand_ph", "Tambah label IP / Brand")}</span>}
         </button>
       </PopoverTrigger>
       <PopoverContent className="w-72 bg-surface p-2" align="start">
@@ -292,9 +298,9 @@ export function LabelPicker({ value = [], onChange, testid = "label-picker" }) {
             </button>); })}
         </div>
         <div className="mt-2 flex items-center gap-1 border-t pt-2">
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Label baru" className="h-8 min-w-0 flex-1 rounded-lg border bg-surface2 px-3 text-xs" data-testid="new-label-input" />
-          <input type="color" value={color} onChange={(e) => setColor(e.target.value)} className="h-8 w-8 rounded" aria-label="Warna label" />
-          <button type="button" onClick={create} disabled={!name.trim()} className="btn-accent h-8 px-2 text-xs disabled:opacity-40" data-testid="create-label-btn">Tambah</button>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder={tr("task_field_new_label_ph", "Label baru")} className="h-8 min-w-0 flex-1 rounded-lg border bg-surface2 px-3 text-xs" data-testid="new-label-input" />
+          <input type="color" value={color} onChange={(e) => setColor(e.target.value)} className="h-8 w-8 rounded" aria-label={tr("task_field_label_color_aria", "Warna label")} />
+          <button type="button" onClick={create} disabled={!name.trim()} className="btn-accent h-8 px-2 text-xs disabled:opacity-40" data-testid="create-label-btn">{tr("task_field_add_btn", "Tambah")}</button>
         </div>
       </PopoverContent>
     </Popover>
@@ -383,7 +389,7 @@ export function ItemChip({ name, small, className = "" }) {
 }
 
 export function ItemPicker({ value, onChange, testid = "item-picker", trigger }) {
-  const { ws, reloadWs } = useApp();
+  const { ws, reloadWs, t: tr } = useApp();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [showAddForm, setShowAddForm] = useState(false);
@@ -420,7 +426,7 @@ export function ItemPicker({ value, onChange, testid = "item-picker", trigger })
     try {
       await api.post("/item-types", payload);
       await reloadWs();
-      toast.success(`Item "${finalName}" berhasil ditambahkan!`);
+      toast.success(`${tr("task_field_item_added_prefix", "Item")} "${finalName}" ${tr("task_field_item_added_suffix", "berhasil ditambahkan!")}`);
       pick(finalName);
     } catch (e) {
       toast.error(errMsg(e));
@@ -465,7 +471,7 @@ export function ItemPicker({ value, onChange, testid = "item-picker", trigger })
             className={`${inp} flex items-center justify-between text-left cursor-pointer transition-colors hover:border-brand/40`}
             data-testid={testid}
           >
-            {value ? <ItemChip name={value} /> : <span className="text-sub text-xs">Pilih jenis item...</span>}
+            {value ? <ItemChip name={value} /> : <span className="text-sub text-xs">{tr("task_field_item_ph", "Pilih jenis item...")}</span>}
             <ChevronDown size={14} className="text-sub shrink-0 ml-1.5" />
           </button>
         )}
@@ -478,7 +484,7 @@ export function ItemPicker({ value, onChange, testid = "item-picker", trigger })
             value={q}
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={onKey}
-            placeholder="Cari atau ketik item baru..."
+            placeholder={tr("task_field_item_search_ph", "Cari atau ketik item baru...")}
             className="h-9 w-full rounded-xl border bg-surface2 px-3 text-xs outline-none transition-colors focus:border-brand focus:ring-1 focus:ring-brand/20"
             data-testid={`${testid}-search`}
           />
@@ -514,7 +520,7 @@ export function ItemPicker({ value, onChange, testid = "item-picker", trigger })
               );
             })
           ) : (
-            <p className="py-2 text-center text-xs text-sub">Tidak ada item yang cocok.</p>
+            <p className="py-2 text-center text-xs text-sub">{tr("task_field_no_match_item", "Tidak ada item yang cocok.")}</p>
           )}
         </div>
 
@@ -526,7 +532,7 @@ export function ItemPicker({ value, onChange, testid = "item-picker", trigger })
             className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-brand/50 bg-brand/5 p-2 text-xs font-semibold text-brand hover:bg-brand/10 transition-colors cursor-pointer"
             data-testid={`${testid}-create-quick`}
           >
-            <Plus size={13} /> Tambah "{q.trim()}"
+            <Plus size={13} /> {tr("task_field_add_btn", "Tambah")} "{q.trim()}"
           </button>
         )}
 
@@ -543,14 +549,14 @@ export function ItemPicker({ value, onChange, testid = "item-picker", trigger })
               data-testid={`${testid}-toggle-add-form`}
             >
               <span className="flex items-center gap-1.5">
-                <Palette size={13} /> Buat Item Baru Kustom
+                <Palette size={13} /> {tr("task_field_create_custom_item", "Buat Item Baru Kustom")}
               </span>
               <Plus size={13} />
             </button>
           ) : (
             <div className="space-y-2 rounded-xl bg-surface2/60 p-2.5 border border-slate-200/60 dark:border-slate-700/60">
               <div className="flex items-center justify-between">
-                <span className="text-[11px] font-bold text-sub uppercase tracking-wider">Tambah Item Baru</span>
+                <span className="text-[11px] font-bold text-sub uppercase tracking-wider">{tr("task_field_add_new_item_hdr", "Tambah Item Baru")}</span>
                 <button
                   type="button"
                   onClick={() => setShowAddForm(false)}
@@ -563,14 +569,14 @@ export function ItemPicker({ value, onChange, testid = "item-picker", trigger })
               <input
                 value={customName}
                 onChange={(e) => setCustomName(e.target.value)}
-                placeholder="Nama item baru, mis. Newsletter"
+                placeholder={tr("task_field_custom_item_name_ph", "Nama item baru, mis. Newsletter")}
                 className="h-8 w-full rounded-lg border bg-surface px-2.5 text-xs outline-none focus:border-brand"
                 data-testid={`${testid}-custom-name`}
               />
 
               {/* Color swatches */}
               <div>
-                <p className="mb-1 text-[10px] font-semibold text-sub">Pilih Warna:</p>
+                <p className="mb-1 text-[10px] font-semibold text-sub">{tr("task_field_pick_color_label", "Pilih Warna:")}</p>
                 <div className="flex flex-wrap items-center gap-1.5">
                   {PRESET_NEW_COLORS.map((p) => {
                     const isSelected = customColor.toLowerCase() === p.bg.toLowerCase();
@@ -587,7 +593,7 @@ export function ItemPicker({ value, onChange, testid = "item-picker", trigger })
                       />
                     );
                   })}
-                  <label className="relative flex h-5 w-5 cursor-pointer items-center justify-center rounded-full border border-dashed border-slate-400 bg-white dark:bg-slate-800 text-[10px] text-sub" title="Pilih warna kustom">
+                  <label className="relative flex h-5 w-5 cursor-pointer items-center justify-center rounded-full border border-dashed border-slate-400 bg-white dark:bg-slate-800 text-[10px] text-sub" title={tr("task_field_pick_custom_color", "Pilih warna kustom")}>
                     +
                     <input
                       type="color"
@@ -602,7 +608,7 @@ export function ItemPicker({ value, onChange, testid = "item-picker", trigger })
               {/* Live Preview */}
               {customName.trim() && (
                 <div className="pt-1">
-                  <span className="text-[10px] text-sub block mb-1">Preview:</span>
+                  <span className="text-[10px] text-sub block mb-1">{tr("task_field_preview_label", "Preview:")}</span>
                   <span
                     className="inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold border shadow-xs"
                     style={{
@@ -623,7 +629,7 @@ export function ItemPicker({ value, onChange, testid = "item-picker", trigger })
                 className="mt-1 flex w-full items-center justify-center gap-1 rounded-lg bg-brand px-3 py-1.5 text-xs font-bold text-white shadow-xs hover:opacity-90 disabled:opacity-40 transition-opacity cursor-pointer"
                 data-testid={`${testid}-submit-custom`}
               >
-                <Plus size={13} /> Tambah & Pilih
+                <Plus size={13} /> {tr("task_field_add_and_pick_btn", "Tambah & Pilih")}
               </button>
             </div>
           )}
@@ -637,7 +643,7 @@ export function ItemPicker({ value, onChange, testid = "item-picker", trigger })
             className="mt-2 w-full rounded-xl py-1.5 text-center text-xs font-medium text-sub hover:bg-surface2 hover:text-ink transition-colors cursor-pointer"
             data-testid={`${testid}-clear`}
           >
-            Kosongkan Pilihan Item
+            {tr("task_field_clear_item_btn", "Kosongkan Pilihan Item")}
           </button>
         )}
       </PopoverContent>
@@ -646,6 +652,7 @@ export function ItemPicker({ value, onChange, testid = "item-picker", trigger })
 }
 
 export function ColorPicker({ value, onChange, style, onStyle }) {
+  const { t: tr } = useApp();
   return (
     <div className="flex flex-wrap items-center gap-2" data-testid="card-color-picker">
       {CARD_COLORS.map((c) => (
@@ -657,7 +664,7 @@ export function ColorPicker({ value, onChange, style, onStyle }) {
             value === c ? "ring-2 ring-offset-2 ring-[var(--c-text)] scale-110" : "hover:scale-105"
           }`}
           style={{ background: c }}
-          aria-label={`Warna ${c}`}
+          aria-label={`${tr("task_field_color_aria", "Warna")} ${c}`}
           data-testid={`card-color-${c.slice(1)}`}
         />
       ))}
@@ -666,7 +673,7 @@ export function ColorPicker({ value, onChange, style, onStyle }) {
         value={value || "#FF5364"}
         onChange={(e) => onChange(e.target.value)}
         className="h-7 w-7 rounded cursor-pointer border-0 p-0 bg-transparent"
-        aria-label="Warna kustom"
+        aria-label={tr("task_field_custom_color_aria", "Warna kustom")}
       />
       <button
         type="button"
@@ -674,7 +681,7 @@ export function ColorPicker({ value, onChange, style, onStyle }) {
         className="text-xs font-semibold text-sub hover:text-ink px-1 cursor-pointer"
         data-testid="card-color-reset"
       >
-        Reset
+        {tr("task_field_reset_btn", "Reset")}
       </button>
 
       {onStyle && (
@@ -684,9 +691,9 @@ export function ColorPicker({ value, onChange, style, onStyle }) {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="accent">Garis aksen</SelectItem>
-              <SelectItem value="tint">Latar lembut</SelectItem>
-              <SelectItem value="badge">Badge saja</SelectItem>
+              <SelectItem value="accent">{tr("task_field_style_accent", "Garis aksen")}</SelectItem>
+              <SelectItem value="tint">{tr("task_field_style_tint", "Latar lembut")}</SelectItem>
+              <SelectItem value="badge">{tr("task_field_style_badge", "Badge saja")}</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -696,15 +703,16 @@ export function ColorPicker({ value, onChange, style, onStyle }) {
 }
 
 export function AttachmentList({ items, onRemove }) {
+  const { t: tr } = useApp();
   return (
     <div className="flex flex-wrap gap-2">
       {items.map((a, idx) => (
         <div key={a.id || a.key || idx} className="relative">
           <a href={a.id ? fileUrl(a.id) : undefined} target="_blank" rel="noreferrer" className="flex h-16 items-center gap-2 rounded-xl border bg-surface2 p-1.5 pr-3 text-xs" data-testid={`attachment-${a.id || idx}`}>
             {a.content_type?.startsWith("image/") && a.id ? <img src={fileUrl(a.id)} alt={a.name} className="h-12 w-12 rounded-lg object-cover" /> : <FileText size={18} className="ml-1 text-brand" />}
-            <span className="max-w-[120px] truncate">{a.uploading ? "Mengunggah…" : a.name}</span>
+            <span className="max-w-[120px] truncate">{a.uploading ? tr("task_field_uploading", "Mengunggah…") : a.name}</span>
           </a>
-          {onRemove && <button type="button" onClick={() => onRemove(a)} className="absolute -right-1.5 -top-1.5 rounded-full bg-ink p-0.5 text-[var(--c-surface)]" aria-label="Hapus lampiran" data-testid={`remove-attachment-${a.id || idx}`}><X size={11} /></button>}
+          {onRemove && <button type="button" onClick={() => onRemove(a)} className="absolute -right-1.5 -top-1.5 rounded-full bg-ink p-0.5 text-[var(--c-surface)]" aria-label={tr("task_field_remove_att_aria", "Hapus lampiran")} data-testid={`remove-attachment-${a.id || idx}`}><X size={11} /></button>}
         </div>
       ))}
     </div>
@@ -712,12 +720,13 @@ export function AttachmentList({ items, onRemove }) {
 }
 
 export function useUploader(setList) {
+  const { t: tr } = useApp();
   const ref = useRef(null);
   const pick = () => ref.current.click();
   const input = <input ref={ref} type="file" multiple hidden onChange={async (e) => {
     const files = Array.from(e.target.files); e.target.value = "";
     for (const f of files) {
-      if (f.size > 15 * 1024 * 1024) { toast.error(`Ukuran ${f.name} melebihi 15 MB`); continue; }
+      if (f.size > 15 * 1024 * 1024) { toast.error(`${tr("task_field_file_too_big_prefix", "Ukuran")} ${f.name} ${tr("task_field_file_too_big_suffix", "melebihi 15 MB")}`); continue; }
       try { const up = await uploadFile(f); setList((x) => [...x, up]); } catch (er) { toast.error(errMsg(er)); }
     }
   }} data-testid="task-attachment-input" />;
@@ -725,6 +734,7 @@ export function useUploader(setList) {
 }
 
 export function ListEditor({ items, onChange, placeholder, field = "text", testid }) {
+  const { t: tr } = useApp();
   const [t, setT] = useState("");
   return (
     <div data-testid={testid}>
@@ -732,11 +742,11 @@ export function ListEditor({ items, onChange, placeholder, field = "text", testi
         <div key={it.id || idx} className="flex items-center gap-2 py-1">
           <input type="checkbox" checked={!!it.done} onChange={() => onChange(items.map((x) => (x.id === it.id ? { ...x, done: !x.done } : x)))} className="h-4 w-4 accent-[var(--c-accent)]" />
           <span className={`flex-1 text-sm ${it.done ? "line-through text-sub" : ""}`}>{it[field]}</span>
-          <button type="button" onClick={() => onChange(items.filter((x) => x.id !== it.id))} className="text-sub" aria-label="Remove"><X size={13} /></button>
+          <button type="button" onClick={() => onChange(items.filter((x) => x.id !== it.id))} className="text-sub" aria-label={tr("task_field_list_remove_aria", "Hapus item")}><X size={13} /></button>
         </div>
       ))}
       <div className="mt-1 flex gap-1"><input value={t} onChange={(e) => setT(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (t.trim()) { onChange([...items, { id: `i${Date.now()}`, [field]: t.trim(), done: false }]); setT(""); } } }} placeholder={placeholder} className="h-9 flex-1 rounded-lg border bg-surface2 px-3 text-sm" />
-        <button type="button" onClick={() => { if (t.trim()) { onChange([...items, { id: `i${Date.now()}`, [field]: t.trim(), done: false }]); setT(""); } }} className="flex h-9 w-9 items-center justify-center rounded-lg border" aria-label="Add"><Plus size={14} /></button></div>
+        <button type="button" onClick={() => { if (t.trim()) { onChange([...items, { id: `i${Date.now()}`, [field]: t.trim(), done: false }]); setT(""); } }} className="flex h-9 w-9 items-center justify-center rounded-lg border" aria-label={tr("task_field_list_add_aria", "Tambah item")}><Plus size={14} /></button></div>
     </div>
   );
 }

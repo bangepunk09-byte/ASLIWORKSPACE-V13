@@ -1219,7 +1219,8 @@ async function startServer() {
       g.is_verified = true;
       g.type = "group";
       const manualIds = Array.isArray(g.manually_joined_ids) ? g.manually_joined_ids : [];
-      g.member_ids = Array.from(new Set([...deptMems, ...manualIds])).filter((id: string) => id !== CIRCLE_BOT_ID);
+      const leftIds = new Set(Array.isArray(g.left_member_ids) ? g.left_member_ids : []);
+      g.member_ids = Array.from(new Set([...deptMems, ...manualIds])).filter((id: string) => id && id !== CIRCLE_BOT_ID && !leftIds.has(id));
       g.members = g.member_ids;
       g.member_count = g.member_ids.length;
     } else {
@@ -1382,14 +1383,16 @@ async function startServer() {
   function getDepartmentGroupMemberIds(divName: string, existingGroup?: any): string[] {
     const cleanDiv = String(divName || "").trim().toLowerCase();
     const manualIds = Array.isArray(existingGroup?.manually_joined_ids) ? existingGroup.manually_joined_ids : [];
+    const leftIds = new Set(Array.isArray(existingGroup?.left_member_ids) ? existingGroup.left_member_ids : []);
     const matchedUserIds = (db.users || [])
       .filter((u: any) => {
         if (!u || u.is_bot || u.role === "assistant" || u.user_id === CIRCLE_BOT_ID) return false;
+        if (leftIds.has(u.user_id)) return false;
         if (u.role === "super_admin") return true;
         return String(u.department || "").trim().toLowerCase() === cleanDiv;
       })
       .map((u: any) => u.user_id);
-    return Array.from(new Set([...matchedUserIds, ...manualIds])).filter((id: string) => Boolean(id) && id !== CIRCLE_BOT_ID);
+    return Array.from(new Set([...matchedUserIds, ...manualIds])).filter((id: string) => Boolean(id) && id !== CIRCLE_BOT_ID && !leftIds.has(id));
   }
 
   // Helper to sync user department <-> org_unit_id AND official division group membership
@@ -1434,7 +1437,8 @@ async function startServer() {
         const gSlug = `group_official_${effectiveDeptLower.replace(/[^a-z0-9]+/g, "_")}`;
         const isMatchingDept = Boolean(effectiveDeptLower) && (gNameLower === effectiveDeptLower || g.id === gSlug);
         const manualIds = Array.isArray(g.manually_joined_ids) ? g.manually_joined_ids : [];
-        const shouldBeMember = isSuperAdmin || isMatchingDept || manualIds.includes(uid);
+        const leftIds = Array.isArray(g.left_member_ids) ? g.left_member_ids : [];
+        const shouldBeMember = !leftIds.includes(uid) && (isSuperAdmin || isMatchingDept || manualIds.includes(uid));
 
         const rawMems = Array.isArray(g.member_ids) ? g.member_ids : (Array.isArray(g.members) ? g.members : []);
         let nextMems = rawMems.filter((id: string) => Boolean(id) && id !== CIRCLE_BOT_ID);
@@ -9793,14 +9797,15 @@ async function startServer() {
     ensureUserCircleConversation(userId);
     syncUserDivisionAndGroupMembership(reqUser);
 
-    // Ensure General group ('conv_1') includes user
+    // Ensure General group ('conv_1') includes user unless they explicitly left
     for (const c of db.conversations || []) {
       if (c && c.id === "conv_1" && c.type === "group") {
+        const leftIds = Array.isArray(c.left_member_ids) ? c.left_member_ids : [];
         const mems = Array.isArray(c.member_ids) ? c.member_ids : (Array.isArray(c.members) ? c.members : []);
-        if (!mems.includes(userId)) {
+        if (!leftIds.includes(userId) && !mems.includes(userId)) {
           mems.push(userId);
         }
-        const clean = Array.from(new Set(mems.filter((id: string) => Boolean(id) && id !== CIRCLE_BOT_ID)));
+        const clean = Array.from(new Set(mems.filter((id: string) => Boolean(id) && id !== CIRCLE_BOT_ID && !leftIds.includes(id))));
         c.member_ids = clean;
         c.members = clean;
       }
@@ -9873,7 +9878,13 @@ async function startServer() {
           members: cleanMems,
           unread: lastReadTs ? unreadCount : (c.unread || 0),
           last_message_preview: lastMsg
-            ? (lastMsg.type === "sticker" ? "[Stiker]" : (lastMsg.type === "poll" ? (lastMsg.text || `📊 Polling: ${lastMsg.poll?.question || ""}`) : (lastMsg.text || "Mengirim lampiran")))
+            ? (lastMsg.type === "sticker"
+                ? "[Stiker]"
+                : lastMsg.type === "poll"
+                ? (lastMsg.text || `📊 Polling: ${lastMsg.poll?.question || ""}`)
+                : lastMsg.type === "sticky_note"
+                ? `📌 ${lastMsg.sticky_note?.title || "Sticky Note"} (${lastMsg.sticky_note?.progress ?? 0}%)`
+                : (lastMsg.text || "Mengirim lampiran"))
             : (String(c.id).startsWith("conv_circle_") ? "Asisten Workspace & Notifikasi Approval" : ""),
           last_message_at: effectiveAt,
           messages: convMsgs
@@ -10436,6 +10447,98 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  app.delete("/api/conversations/:id", (req, res) => {
+    const reqUser = getReqUser(req);
+    const userId = reqUser?.user_id;
+    if (!userId) return res.status(401).json({ detail: "Unauthorized" });
+
+    const { id } = req.params;
+    const convIdx = (db.conversations || []).findIndex((c: any) => c && c.id === id);
+    const grp = (db.groups || []).find((g: any) => g && g.id === id);
+    if (convIdx === -1 && !grp) {
+      return res.status(404).json({ detail: "Percakapan tidak ditemukan." });
+    }
+
+    const conv = convIdx !== -1 ? db.conversations[convIdx] : grp;
+    const isCircleOwn = id === `conv_circle_${userId}`;
+    if (String(id).startsWith("conv_circle_") && !isCircleOwn) {
+      return res.status(403).json({ detail: "Percakapan ini milik akun lain." });
+    }
+
+    const rawMems = Array.isArray(conv.member_ids)
+      ? conv.member_ids
+      : (Array.isArray(conv.members) ? conv.members : []);
+    const mems = Array.from(new Set(rawMems.filter(Boolean)));
+    const isSuperAdmin = ["super_admin", "workspace_admin"].includes(reqUser?.role);
+
+    if (conv.type === "dm") {
+      if (!isCircleOwn && !mems.includes(userId) && !isSuperAdmin) {
+        return res.status(403).json({ detail: "Anda tidak memiliki izin menghapus percakapan ini." });
+      }
+    } else {
+      if (conv.is_default && !isSuperAdmin) {
+        return res.status(403).json({ detail: "Grup utama tidak dapat dihapus." });
+      }
+      if (!isGroupAdmin({ ...grp, ...conv }, reqUser)) {
+        return res.status(403).json({ detail: "Hanya pembuat atau admin grup yang dapat menghapus grup." });
+      }
+      const isOfficialDept = String(id).startsWith("group_official_") || Boolean(conv.is_verified);
+      if (isOfficialDept && !isSuperAdmin) {
+        return res.status(403).json({ detail: "Hanya Super Admin yang dapat menghapus grup divisi resmi." });
+      }
+    }
+
+    db.messages = (db.messages || []).filter((m: any) => m.conversation_id !== id);
+
+    if (isCircleOwn) {
+      if (convIdx !== -1) {
+        db.conversations[convIdx].last_message_preview = "Asisten Workspace & Notifikasi Approval";
+        db.conversations[convIdx].unread = 0;
+        db.conversations[convIdx].reads = { ...(db.conversations[convIdx].reads || {}), [userId]: Date.now() };
+      }
+      saveDbToFile(true);
+      broadcast({
+        type: "conversation:deleted",
+        id,
+        member_ids: mems.length ? mems : [CIRCLE_BOT_ID, userId],
+        conv_type: "dm",
+        is_circle_clear: true,
+      });
+      broadcast({ type: "conversations:changed" });
+      return res.json({ success: true, id, is_circle_clear: true });
+    }
+
+    db.conversations = (db.conversations || []).filter((c: any) => c && c.id !== id);
+    if (conv.type === "group") {
+      db.groups = (db.groups || []).filter((g: any) => g && g.id !== id);
+      if (conv.group_type === "department" || String(id).startsWith("group_official_")) {
+        const gName = String(conv.name || "").trim().toLowerCase();
+        if (gName && Array.isArray(db.workspace?.divisions)) {
+          db.workspace.divisions = db.workspace.divisions.filter((d: string) => d.toLowerCase() !== gName);
+          syncDivisionsToOrgUnits(db.workspace.divisions, { removeMissing: true });
+        }
+      }
+    }
+
+    saveDbToFile(true);
+    broadcast({
+      type: "conversation:deleted",
+      id,
+      member_ids: mems,
+      conv_type: conv.type || "dm",
+      is_circle_clear: false,
+    });
+    if (conv.type === "group") {
+      broadcast({ type: "group:deleted", id });
+      broadcast({ type: "groups:changed" });
+      broadcast({ type: "workspace:changed" });
+      broadcast({ type: "org:changed", units: db.org_units });
+    } else {
+      broadcast({ type: "conversations:changed" });
+    }
+    res.json({ success: true, id, is_circle_clear: false });
+  });
+
   app.post("/api/groups/:id/join", (req, res) => {
     const reqUser = getReqUser(req) || currentSessionUser;
     const userId = reqUser?.user_id;
@@ -10474,6 +10577,9 @@ async function startServer() {
           g.members = cleanMems;
           g.member_count = cleanMems.length;
           g.manually_joined_ids = Array.from(new Set([...(g.manually_joined_ids || []), userId]));
+          if (Array.isArray(g.left_member_ids)) {
+            g.left_member_ids = g.left_member_ids.filter((id: any) => id !== userId);
+          }
           if (Array.isArray(g.invitations)) {
             g.invitations = g.invitations.filter((inv: any) => inv?.user_id !== userId);
           }
@@ -10561,6 +10667,9 @@ async function startServer() {
         g.members = cleanMems;
         g.member_count = cleanMems.length;
         g.manually_joined_ids = Array.from(new Set([...(g.manually_joined_ids || []), userId]));
+        if (Array.isArray(g.left_member_ids)) {
+          g.left_member_ids = g.left_member_ids.filter((id: any) => id !== userId);
+        }
         if (Array.isArray(g.join_requests)) {
           g.join_requests = g.join_requests.filter((r: any) => r?.user_id !== userId);
         }
@@ -10684,6 +10793,9 @@ async function startServer() {
         g.members = cleanMems;
         g.member_count = cleanMems.length;
         g.manually_joined_ids = Array.from(new Set([...(g.manually_joined_ids || []), userId]));
+        if (Array.isArray(g.left_member_ids)) {
+          g.left_member_ids = g.left_member_ids.filter((id: any) => id !== userId);
+        }
         if (Array.isArray(g.invitations)) {
           g.invitations = g.invitations.filter((inv: any) => inv?.user_id !== userId);
         }
@@ -10781,6 +10893,9 @@ async function startServer() {
         g.members = cleanMems;
         g.member_count = cleanMems.length;
         g.manually_joined_ids = Array.from(new Set([...(g.manually_joined_ids || []), targetUid]));
+        if (Array.isArray(g.left_member_ids)) {
+          g.left_member_ids = g.left_member_ids.filter((id: any) => id !== targetUid);
+        }
         updatedGroup = g;
       }
     });
@@ -10869,6 +10984,9 @@ async function startServer() {
           const validAdd = (Array.isArray(req.body.add) ? req.body.add : []).filter((id: string) => id !== CIRCLE_BOT_ID);
           g.member_ids = Array.from(new Set([...g.member_ids, ...validAdd]));
           g.manually_joined_ids = Array.from(new Set([...(g.manually_joined_ids || []), ...validAdd]));
+          if (Array.isArray(g.left_member_ids)) {
+            g.left_member_ids = g.left_member_ids.filter((x: any) => !validAdd.includes(x));
+          }
           if (Array.isArray(g.join_requests)) {
             g.join_requests = g.join_requests.filter((r: any) => !validAdd.includes(r?.user_id));
           }
@@ -10879,6 +10997,7 @@ async function startServer() {
           if (Array.isArray(g.manually_joined_ids)) {
             g.manually_joined_ids = g.manually_joined_ids.filter((x: any) => !removeList.includes(x));
           }
+          g.left_member_ids = Array.from(new Set([...(Array.isArray(g.left_member_ids) ? g.left_member_ids : []), ...removeList]));
           if (Array.isArray(g.admin_ids)) {
             g.admin_ids = g.admin_ids.filter((x: any) => !removeList.includes(x) || x === creatorId);
           }
@@ -10907,13 +11026,16 @@ async function startServer() {
   });
 
   app.post("/api/groups/:id/leave", (req, res) => {
-    const reqUser = getReqUser(req);
-    const userId = reqUser?.user_id || currentSessionUser?.user_id || "user_admin1";
+    const reqUser = getReqUser(req) || currentSessionUser;
+    const userId = reqUser?.user_id;
+    if (!userId) return res.status(401).json({ detail: "Unauthorized" });
+
     let leftGroup: any = null;
     [db.groups, db.conversations].forEach((list) => {
-      const g = list.find((x: any) => x.id === req.params.id);
+      const g = (list || []).find((x: any) => x.id === req.params.id);
       if (g) {
-        g.member_ids = (g.member_ids || []).filter((x: any) => x !== userId && x !== CIRCLE_BOT_ID);
+        const rawMems = Array.isArray(g.member_ids) ? g.member_ids : (Array.isArray(g.members) ? g.members : []);
+        g.member_ids = rawMems.filter((x: any) => x && x !== userId && x !== CIRCLE_BOT_ID);
         g.members = g.member_ids;
         g.member_count = g.member_ids.length;
         if (Array.isArray(g.manually_joined_ids)) {
@@ -10922,15 +11044,23 @@ async function startServer() {
         if (Array.isArray(g.admin_ids) && g.created_by !== userId) {
           g.admin_ids = g.admin_ids.filter((x: any) => x !== userId);
         }
+        if (Array.isArray(g.join_requests)) {
+          g.join_requests = g.join_requests.filter((r: any) => r?.user_id !== userId);
+        }
+        g.left_member_ids = Array.from(new Set([...(Array.isArray(g.left_member_ids) ? g.left_member_ids : []), userId]));
         leftGroup = g;
       }
     });
-    saveDbToFile(true);
-    if (leftGroup) {
-      broadcast({ type: "group:updated", data: leftGroup });
+
+    if (!leftGroup) {
+      return res.status(404).json({ detail: "Grup tidak ditemukan." });
     }
+
+    saveDbToFile(true);
+    broadcast({ type: "group:updated", data: { ...leftGroup, left_user_id: userId }, left_user_id: userId });
+    broadcast({ type: "conversations:changed" });
     broadcast({ type: "groups:changed" });
-    res.json({ success: true });
+    res.json({ success: true, id: req.params.id, left_user_id: userId });
   });
 
   app.patch("/api/groups/:id", (req, res) => {
@@ -12170,21 +12300,13 @@ async function startServer() {
       return res.status(403).json({ detail: "Anda belum menjadi anggota grup ini." });
     }
 
+    const ownerUser = (db.users || []).find((u: any) => u.user_id === note.user_id);
+    const ownerName = ownerUser?.name || reqUser.name || "Anggota";
     const total = note.items.length;
     const doneCount = note.items.filter((i: any) => i.done).length;
     const pct = note.progress;
-    const statusLabel = total > 0 && pct === 100 ? "✅ Terlaksana 100%" : `⏳ Progres ${pct}% (${doneCount}/${total} poin)`;
-
-    const lines = [
-      `📌 *Sticky Note: ${note.title}*`,
-      `Status: ${statusLabel}`,
-      ...(note.items.length > 0
-        ? ["", ...note.items.map((it: any) => `${it.done ? "☑" : "☐"} ${it.text}`)]
-        : note.content
-        ? ["", note.content]
-        : []),
-      ...(String(extra_note || "").trim() ? ["", `💬 ${String(extra_note).trim()}`] : []),
-    ];
+    const cleanExtra = String(extra_note || "").trim();
+    const statusLabel = total > 0 && pct === 100 ? "Terlaksana 100%" : `Progres ${pct}% (${doneCount}/${total} poin)`;
 
     const nowIso = new Date().toISOString();
     const msg = {
@@ -12192,8 +12314,27 @@ async function startServer() {
       conversation_id: conv.id,
       sender_id: reqUser.user_id,
       user_id: reqUser.user_id,
-      text: lines.join("\n"),
-      type: "text",
+      text: `📌 Sticky Note: ${note.title} — ${statusLabel}${cleanExtra ? ` · ${cleanExtra}` : ""}`,
+      type: "sticky_note",
+      sticky_note: {
+        note_id: note.id,
+        owner_id: note.user_id,
+        owner_name: ownerName,
+        title: note.title,
+        color: note.color || "amber",
+        items: note.items.map((it: any) => ({
+          id: it.id,
+          text: it.text,
+          done: Boolean(it.done),
+          ...(it.checked_by_name ? { checked_by_name: it.checked_by_name } : {}),
+        })),
+        content: note.content || "",
+        progress: pct,
+        done_count: doneCount,
+        total_count: total,
+        completed: Boolean(note.completed),
+        extra_note: cleanExtra,
+      },
       sticky_note_meta: {
         note_id: note.id,
         title: note.title,
@@ -12244,6 +12385,109 @@ async function startServer() {
     });
 
     res.json({ success: true, note, message: msg, group_name: conv.name });
+  });
+
+  app.post("/api/messages/:id/sticky-toggle", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+
+    const msgIdx = (db.messages || []).findIndex((m: any) => m && m.id === req.params.id);
+    if (msgIdx === -1) return res.status(404).json({ detail: "Pesan tidak ditemukan." });
+
+    const msg = db.messages[msgIdx];
+    if (!msg.sticky_note) return res.status(400).json({ detail: "Pesan ini bukan Sticky Note." });
+
+    const conv = (db.conversations || []).find((c: any) => c.id === msg.conversation_id);
+    const mems = conv ? (Array.isArray(conv.member_ids) ? conv.member_ids : (Array.isArray(conv.members) ? conv.members : [])) : [];
+    const isSuperAdmin = ["super_admin", "workspace_admin"].includes(reqUser.role);
+    if (conv && !mems.includes(reqUser.user_id) && !isSuperAdmin) {
+      return res.status(403).json({ detail: "Anda bukan anggota percakapan ini." });
+    }
+
+    const { item_id } = req.body || {};
+    if (!item_id) return res.status(400).json({ detail: "item_id wajib diisi." });
+
+    const items = Array.isArray(msg.sticky_note.items) ? msg.sticky_note.items : [];
+    let found = false;
+    const nextItems = items.map((it: any) => {
+      if (it.id !== item_id) return it;
+      found = true;
+      const nextDone = !Boolean(it.done);
+      return {
+        ...it,
+        done: nextDone,
+        checked_by_name: nextDone ? (reqUser.name || "Anggota").split(" ")[0] : undefined,
+      };
+    });
+    if (!found) return res.status(404).json({ detail: "Poin checklist tidak ditemukan." });
+
+    const totalCount = nextItems.length;
+    const doneCount = nextItems.filter((it: any) => it.done).length;
+    const progress = totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0;
+    const completed = totalCount > 0 && doneCount === totalCount;
+    const cleanExtra = String(msg.sticky_note.extra_note || "").trim();
+    const statusLabel = completed ? "Terlaksana 100%" : `Progres ${progress}% (${doneCount}/${totalCount} poin)`;
+
+    msg.sticky_note = {
+      ...msg.sticky_note,
+      items: nextItems,
+      progress,
+      done_count: doneCount,
+      total_count: totalCount,
+      completed,
+    };
+    msg.sticky_note_meta = {
+      ...(msg.sticky_note_meta || {}),
+      note_id: msg.sticky_note.note_id,
+      title: msg.sticky_note.title,
+      color: msg.sticky_note.color,
+      progress,
+      done_count: doneCount,
+      total_count: totalCount,
+    };
+    msg.text = `📌 Sticky Note: ${msg.sticky_note.title} — ${statusLabel}${cleanExtra ? ` · ${cleanExtra}` : ""}`;
+    db.messages[msgIdx] = msg;
+
+    // Sync back to creator's Dashboard Sticky Note if still present
+    let syncedNote: any = null;
+    if (msg.sticky_note.note_id && Array.isArray(db.circle_notes)) {
+      const noteIdx = db.circle_notes.findIndex((n: any) => n && n.id === msg.sticky_note.note_id);
+      if (noteIdx !== -1) {
+        const curNote = db.circle_notes[noteIdx];
+        const doneMap = new Map<string, any>(nextItems.map((it: any) => [String(it.id), it]));
+        const updatedNoteItems = (Array.isArray(curNote.items) ? curNote.items : []).map((it: any) =>
+          doneMap.has(String(it.id)) ? { ...it, done: Boolean(doneMap.get(String(it.id))?.done) } : it
+        );
+        const nowIso = new Date().toISOString();
+        const updatedSentGroups = Array.isArray(curNote.sent_groups)
+          ? curNote.sent_groups.map((sg: any) =>
+              sg.conversation_id === msg.conversation_id ? { ...sg, pct: progress } : sg
+            )
+          : [];
+        syncedNote = normalizeStickyNote({
+          ...curNote,
+          items: updatedNoteItems,
+          sent_groups: updatedSentGroups,
+          updated_at: nowIso,
+        });
+        db.circle_notes[noteIdx] = syncedNote;
+      }
+    }
+
+    if (conv) {
+      const convMsgs = (db.messages || []).filter((m: any) => m.conversation_id === conv.id && !m.deleted);
+      const lastConvMsg = convMsgs[convMsgs.length - 1];
+      if (lastConvMsg && lastConvMsg.id === msg.id) {
+        conv.last_message_preview = `📌 ${msg.sticky_note.title} (${progress}%)`;
+      }
+    }
+
+    saveDbToFile(true);
+    broadcast({ type: "message:update", data: msg });
+    if (syncedNote) {
+      broadcast({ type: "notes:changed", action: "upsert", user_id: syncedNote.user_id, note: syncedNote });
+    }
+    res.json({ success: true, message: msg, note: syncedNote });
   });
 
   app.get("/api/workspace", (req, res) => {

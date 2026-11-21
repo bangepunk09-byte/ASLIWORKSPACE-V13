@@ -10,7 +10,7 @@ const inp = "mt-1 h-11 w-full rounded-xl border bg-surface2 px-3 text-sm outline
 const Field = ({ label, req, children }) => <div className="block text-xs font-semibold text-sub">{label}{req && <span className="text-rose-500"> *</span>}{children}</div>;
 
 export default function Onboarding() {
-  const { me, ws, setSession, labels, showTopNotif } = useApp();
+  const { me, ws, setSession, labels, showTopNotif, t } = useApp();
   const [f, setF] = useState({
     name: me.name || "",
     nickname: me.nickname || "",
@@ -51,20 +51,20 @@ export default function Onboarding() {
   return (
     <div className="flex min-h-dvh items-center justify-center bg-surface2 px-3 py-6 sm:px-4 sm:py-10" data-testid="onboarding-page">
       <form onSubmit={submit} className="card w-full max-w-xl p-5 sm:p-8">
-        <div className="flex items-center gap-3"><Logo ws={ws} size={40} /><div><h1 className="text-xl sm:text-2xl font-bold">Lengkapi profil kamu</h1><p className="text-xs sm:text-sm text-sub">Sekali saja, supaya rekan kerja mudah menemukanmu di Direktori Drive.</p></div></div>
+        <div className="flex items-center gap-3"><Logo ws={ws} size={40} /><div><h1 className="text-xl sm:text-2xl font-bold">{t("onb_title", "Lengkapi profil kamu")}</h1><p className="text-xs sm:text-sm text-sub">{t("onb_subtitle", "Sekali saja, supaya rekan kerja mudah menemukanmu di Direktori Drive.")}</p></div></div>
         <div className="mt-6 grid gap-4 sm:grid-cols-2">
-          <Field label="Nama lengkap" req><input value={f.name} onChange={set("name")} className={inp} data-testid="onb-name-input" /></Field>
-          <Field label="Nama panggilan" req><input value={f.nickname} onChange={set("nickname")} placeholder="mis. Kiki" className={inp} data-testid="onb-nickname-input" /></Field>
-          <Field label="Divisi" req><AppSelect value={f.department} onChange={set("department")} placeholder="Pilih divisi" className={inp} data-testid="onb-division-select"><option value="">Pilih divisi</option>{divisions.map((d) => <option key={d} value={d}>{d}</option>)}</AppSelect></Field>
-          <Field label="Perusahaan" req><input list="onb-companies" value={f.company} onChange={set("company")} placeholder="Pilih atau ketik" className={inp} data-testid="onb-company-input" /><datalist id="onb-companies">{[...new Set(labels.filter((l) => !l.archived).map((l) => l.name))].map((n) => <option key={n} value={n} />)}</datalist></Field>
-          <Field label="Jabatan" req><input value={f.job_title} onChange={set("job_title")} placeholder="mis. Graphic Designer" className={inp} data-testid="onb-jobtitle-input" /></Field>
-          <Field label="Nomor HP"><input type="tel" value={f.phone} onChange={set("phone")} placeholder="08xx" className={inp} data-testid="onb-phone-input" /></Field>
-          <Field label="ID Employee"><input value={f.employee_id} onChange={set("employee_id")} placeholder="mis. EMP-001" className={inp} data-testid="onb-empid-input" /></Field>
-          <Field label="Status Kepegawaian"><AppSelect value={f.employment_status} onChange={set("employment_status")} placeholder="Pilih status" className={inp} data-testid="onb-empstatus-select">{[["Full-time", "Penuh Waktu"], ["Part-time", "Paruh Waktu"], ["Contract", "Kontrak"], ["Intern", "Magang"], ["On leave", "Sedang Cuti"]].map(([v, l]) => <option key={v} value={v}>{l}</option>)}</AppSelect></Field>
-          <Field label="Tanggal Bergabung"><DatePicker showQuickPresets={false} value={f.join_date} onChange={(val) => setF({ ...f, join_date: val })} placeholder="Pilih tanggal bergabung" className={inp} data-testid="onb-joindate-input" /></Field>
+          <Field label={t("onb_name_label", "Nama lengkap")} req><input value={f.name} onChange={set("name")} className={inp} data-testid="onb-name-input" /></Field>
+          <Field label={t("onb_nickname_label", "Nama panggilan")} req><input value={f.nickname} onChange={set("nickname")} placeholder={t("onb_nickname_ph", "mis. Kiki")} className={inp} data-testid="onb-nickname-input" /></Field>
+          <Field label={t("onb_division_label", "Divisi")} req><AppSelect value={f.department} onChange={set("department")} placeholder={t("onb_division_ph", "Pilih divisi")} className={inp} data-testid="onb-division-select"><option value="">{t("onb_division_ph", "Pilih divisi")}</option>{divisions.map((d) => <option key={d} value={d}>{d}</option>)}</AppSelect></Field>
+          <Field label={t("onb_company_label", "Perusahaan")} req><input list="onb-companies" value={f.company} onChange={set("company")} placeholder={t("onb_company_ph", "Pilih atau ketik")} className={inp} data-testid="onb-company-input" /><datalist id="onb-companies">{[...new Set(labels.filter((l) => !l.archived).map((l) => l.name))].map((n) => <option key={n} value={n} />)}</datalist></Field>
+          <Field label={t("onb_job_label", "Jabatan")} req><input value={f.job_title} onChange={set("job_title")} placeholder={t("onb_job_ph", "mis. Graphic Designer")} className={inp} data-testid="onb-jobtitle-input" /></Field>
+          <Field label={t("onb_phone_label", "Nomor HP")}><input type="tel" value={f.phone} onChange={set("phone")} placeholder={t("onb_phone_ph", "08xx")} className={inp} data-testid="onb-phone-input" /></Field>
+          <Field label={t("onb_empid_label", "ID Employee")}><input value={f.employee_id} onChange={set("employee_id")} placeholder={t("onb_empid_ph", "mis. EMP-001")} className={inp} data-testid="onb-empid-input" /></Field>
+          <Field label={t("onb_empstatus_label", "Status Kepegawaian")}><AppSelect value={f.employment_status} onChange={set("employment_status")} placeholder={t("onb_empstatus_ph", "Pilih status")} className={inp} data-testid="onb-empstatus-select">{[["Full-time", t("onb_status_fulltime", "Penuh Waktu")], ["Part-time", t("onb_status_parttime", "Paruh Waktu")], ["Contract", t("onb_status_contract", "Kontrak")], ["Intern", t("onb_status_intern", "Magang")], ["On leave", t("onb_status_leave", "Sedang Cuti")]].map(([v, l]) => <option key={v} value={v}>{l}</option>)}</AppSelect></Field>
+          <Field label={t("onb_joindate_label", "Tanggal Bergabung")}><DatePicker showQuickPresets={false} value={f.join_date} onChange={(val) => setF({ ...f, join_date: val })} placeholder={t("onb_joindate_ph", "Pilih tanggal bergabung")} className={inp} data-testid="onb-joindate-input" /></Field>
         </div>
-        {!divisions.length && <p className="mt-4 text-xs text-rose-500" data-testid="onb-no-divisions">Daftar divisi belum diatur admin. Hubungi admin workspace.</p>}
-        <button type="submit" disabled={!ok || busy} className="btn-accent mt-6 h-11 w-full text-sm font-semibold disabled:opacity-50" data-testid="onb-submit-btn">{busy ? "Menyimpan…" : "Simpan & masuk"}</button>
+        {!divisions.length && <p className="mt-4 text-xs text-rose-500" data-testid="onb-no-divisions">{t("onb_no_divisions", "Daftar divisi belum diatur admin. Hubungi admin workspace.")}</p>}
+        <button type="submit" disabled={!ok || busy} className="btn-accent mt-6 h-11 w-full text-sm font-semibold disabled:opacity-50" data-testid="onb-submit-btn">{busy ? t("onb_saving", "Menyimpan…") : t("onb_submit", "Simpan & masuk")}</button>
       </form>
     </div>
   );

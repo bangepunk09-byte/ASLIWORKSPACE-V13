@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { formatDistanceToNowStrict } from "date-fns";
 import { id as localeId } from "date-fns/locale";
 import { api, errMsg } from "../../lib/api";
+import { playSound } from "../../lib/sound";
 import { useApp } from "../../context/AppContext";
 import { AvatarStack } from "../../components/common";
 
@@ -11,7 +12,7 @@ import { POLL_CACHE, seedPollCache } from "../../lib/workspaceCaches";
 export { POLL_CACHE, seedPollCache };
 
 export default function PollCard({ pollId, poll: initial, compact }) {
-  const { me, subscribe } = useApp();
+  const { me, subscribe, t: tr } = useApp();
   const [p, setP] = useState(() => {
     const resolved = initial || (pollId ? POLL_CACHE[pollId] : null) || null;
     if (resolved && resolved.id) POLL_CACHE[resolved.id] = resolved;
@@ -64,7 +65,10 @@ export default function PollCard({ pollId, poll: initial, compact }) {
   const myVote = Array.isArray(p.my_vote) ? p.my_vote : [];
   const voted = myVote.length > 0;
   const canVote = open && (!voted || p.allow_change);
-  const pick = (id) => setSel(p.multiple ? (sel.includes(id) ? sel.filter((x) => x !== id) : [...sel, id]) : [id]);
+  const pick = (id) => {
+    playSound("click");
+    setSel(p.multiple ? (sel.includes(id) ? sel.filter((x) => x !== id) : [...sel, id]) : [id]);
+  };
 
   const submit = async () => {
     if (!sel.length) return;
@@ -94,6 +98,7 @@ export default function PollCard({ pollId, poll: initial, compact }) {
     };
     POLL_CACHE[p.id] = optimistic;
     setP(optimistic);
+    playSound("success");
     toast.success("Suara Anda tersimpan");
 
     try {
@@ -111,7 +116,7 @@ export default function PollCard({ pollId, poll: initial, compact }) {
 
   return (
     <div className={`w-full ${compact ? "" : "max-w-sm"} rounded-2xl border bg-surface p-4`} data-testid={`poll-card-${p.id}`}>
-      <div className="flex items-center gap-2 text-xs font-semibold text-sub"><BarChart3 size={14} className="text-brand" />Polling · {p.multiple ? "Pilihan ganda" : "Pilihan tunggal"}{p.anonymous && <span className="flex items-center gap-1"><Lock size={11} />Anonim</span>}</div>
+      <div className="flex items-center gap-2 text-xs font-semibold text-sub"><BarChart3 size={14} className="text-brand" />{tr("poll_card_label", "Polling")} · {p.multiple ? tr("poll_multi_label", "Pilihan ganda") : tr("poll_single_label", "Pilihan tunggal")}{p.anonymous && <span className="flex items-center gap-1"><Lock size={11} />{tr("poll_anon_badge", "Anonim")}</span>}</div>
       <p className="mt-2 font-semibold">{p.question}</p>
       <div className="mt-3 space-y-2">
         {(p.options || []).map((o) => {
@@ -133,8 +138,8 @@ export default function PollCard({ pollId, poll: initial, compact }) {
         })}
       </div>
       <div className="mt-3 flex items-center justify-between text-xs text-sub">
-        <span data-testid="poll-total-votes">{p.total_votes || 0} suara · <span className={open ? "text-emerald-600" : ""}>{open ? "Aktif" : "Ditutup"}</span>{open && p.expires_at && <span className="ml-1 inline-flex items-center gap-1"><Clock size={11} />tersisa {formatDistanceToNowStrict(new Date(p.expires_at), { locale: localeId })}</span>}</span>
-        {canVote && <button onClick={submit} disabled={!sel.length} className="btn-accent h-8 px-3 text-xs font-semibold disabled:opacity-40" data-testid="poll-vote-btn">{voted ? "Ubah Pilihan" : "Pilih"}</button>}
+        <span data-testid="poll-total-votes">{p.total_votes || 0} {tr("poll_votes_unit", "suara")} · <span className={open ? "text-emerald-600" : ""}>{open ? tr("poll_status_open", "Aktif") : tr("poll_status_closed", "Ditutup")}</span>{open && p.expires_at && <span className="ml-1 inline-flex items-center gap-1"><Clock size={11} />{tr("poll_remaining_prefix", "tersisa")} {formatDistanceToNowStrict(new Date(p.expires_at), { locale: localeId })}</span>}</span>
+        {canVote && <button onClick={submit} disabled={!sel.length} className="btn-accent h-8 px-3 text-xs font-semibold disabled:opacity-40" data-testid="poll-vote-btn">{voted ? tr("poll_change_vote_btn", "Ubah Pilihan") : tr("poll_vote_btn", "Pilih")}</button>}
       </div>
     </div>
   );

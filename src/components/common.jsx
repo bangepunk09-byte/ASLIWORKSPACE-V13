@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { format, formatDistanceToNowStrict, isToday, isPast, differenceInHours } from "date-fns";
 import { id as localeId } from "date-fns/locale";
@@ -53,11 +53,12 @@ export function getAvailabilityStatusMeta(status) {
   return AVAILABILITY_STATUS_OPTIONS.find((opt) => opt.value === normalized) || AVAILABILITY_STATUS_OPTIONS[0];
 }
 
-export function Avatar({ user, size = 36, showStatus = true, className = "", ringDeadline = true }) {
-  const { online, ws, me, users, userDeadlinesToday, hasDeadlineToday } = useApp() || {};
+export const Avatar = memo(function Avatar({ user, size = 36, showStatus = true, className = "", ringDeadline = true }) {
+  const { online, ws, me, userMap, users, userDeadlinesToday, hasDeadlineToday, t } = useApp() || {};
+  const tr = t || ((_k, fb) => fb || _k);
   const isCircleBot = user?.user_id === "user_circle_assistant" || user?.role === "assistant";
-  const liveUser = (!isCircleBot && user?.user_id && Array.isArray(users))
-    ? (users.find((u) => u.user_id === user.user_id) || user)
+  const liveUser = (!isCircleBot && user?.user_id)
+    ? (userMap?.[user.user_id] || (Array.isArray(users) ? users.find((u) => u.user_id === user.user_id) : null) || user)
     : user;
   const name = isCircleBot ? (ws?.assistant_name || user?.name || "Circle") : (liveUser?.name || user?.name || "?");
   const avatarSrc = isCircleBot
@@ -78,6 +79,7 @@ export function Avatar({ user, size = 36, showStatus = true, className = "", rin
         ? (me?.availability_status || liveUser?.availability_status || "online")
         : (liveUser?.availability_status || user?.availability_status || "online"));
   const statusMeta = getAvailabilityStatusMeta(rawAvailability);
+  const statusLabel = tr(`nav_status_${statusMeta.value}`, statusMeta.label);
   const dotColorClass = isCircleBot
     ? "bg-emerald-500"
     : (statusMeta.value !== "online"
@@ -93,22 +95,22 @@ export function Avatar({ user, size = 36, showStatus = true, className = "", rin
 
   const ringClass = (ringDeadline && user?.user_id && !isCircleBot && size >= 24)
     ? (hasDeadline
-        ? "ring-[2px] ring-red-500 ring-offset-2 ring-offset-[var(--c-surface)] shadow-[0_0_12px_rgba(239,68,68,0.85)] animate-pulse"
-        : "ring-[2px] ring-emerald-500 ring-offset-2 ring-offset-[var(--c-surface)] shadow-[0_0_6px_rgba(16,185,129,0.35)]")
+        ? "ring-[2px] ring-red-500 ring-offset-2 ring-offset-[var(--c-surface)] shadow-[0_0_8px_rgba(239,68,68,0.55)]"
+        : "ring-[2px] ring-emerald-500 ring-offset-2 ring-offset-[var(--c-surface)] shadow-[0_0_6px_rgba(16,185,129,0.3)]")
     : "";
 
   return (
     <span
-      className={`relative inline-flex shrink-0 rounded-full transition-all duration-300 ${ringClass} ${className}`}
+      className={`relative inline-flex shrink-0 rounded-full transition-colors duration-200 ${ringClass} ${className}`}
       style={{ width: size, height: size }}
       title={
         user?.user_id && !isCircleBot
-          ? `${name} (${statusMeta.label}) · ${hasDeadline ? "Ada deadline tugas hari ini!" : "Bebas deadline (Aman)"}`
+          ? `${name} (${statusLabel}) · ${hasDeadline ? tr("common_deadline_today_tip", "Ada deadline tugas hari ini!") : tr("common_deadline_safe_tip", "Bebas deadline (Aman)")}`
           : name
       }
     >
       {avatarSrc ? (
-        <img src={avatarSrc} alt={name} className="h-full w-full rounded-full object-cover" referrerPolicy="no-referrer" />
+        <img src={avatarSrc} alt={name} loading="lazy" decoding="async" className="h-full w-full rounded-full object-cover" referrerPolicy="no-referrer" />
       ) : (
         <span className={`flex h-full w-full items-center justify-center rounded-full bg-gradient-to-br ${GRADS[hash(name) % GRADS.length]} font-semibold text-white`} style={{ fontSize: size * 0.38 }}>
           {initials}
@@ -118,31 +120,32 @@ export function Avatar({ user, size = 36, showStatus = true, className = "", rin
         <span
           className={`absolute bottom-0 right-0 rounded-full border-2 border-[var(--c-surface)] ${dotColorClass}`}
           style={{ width: Math.max(8, size * 0.28), height: Math.max(8, size * 0.28) }}
-          title={statusMeta.label}
+          title={statusLabel}
           data-testid="online-indicator"
         />
       )}
     </span>
   );
-}
+});
 
-export function VerifiedBadge({ user, size = 15, className = "" }) {
-  const { users, me } = useApp() || {};
+export const VerifiedBadge = memo(function VerifiedBadge({ user, size = 15, className = "" }) {
+  const { userMap, users, me, t } = useApp() || {};
+  const tr = t || ((_k, fb) => fb || _k);
   if (!user) return null;
   const isCircleBot = user?.user_id === "user_circle_assistant" || user?.role === "assistant";
   if (isCircleBot) return null;
   const liveUser =
     user?.user_id && me?.user_id === user.user_id
       ? me
-      : (user?.user_id && Array.isArray(users) ? users.find((u) => u.user_id === user.user_id) : null) || user;
+      : (user?.user_id ? (userMap?.[user.user_id] || (Array.isArray(users) ? users.find((u) => u.user_id === user.user_id) : null)) : null) || user;
   const verified = Boolean(liveUser?.is_verified || user?.is_verified || getProfileCompletion(liveUser).isVerified);
   if (!verified) return null;
   return (
     <span
       className={`inline-flex shrink-0 items-center justify-center align-middle ${className}`}
-      title="Profil Terverifikasi"
+      title={tr("common_verified_title", "Profil Terverifikasi")}
       data-testid="verified-badge"
-      aria-label="Terverifikasi"
+      aria-label={tr("common_verified_aria", "Terverifikasi")}
     >
       <svg
         width={size}
@@ -164,9 +167,11 @@ export function VerifiedBadge({ user, size = 15, className = "" }) {
       </svg>
     </span>
   );
-}
+});
 
 export function ImageLightbox({ image, onClose }) {
+  const { t } = useApp() || {};
+  const tr = t || ((_k, fb) => fb || _k);
   const [zoomed, setZoomed] = useState(false);
 
   useEffect(() => {
@@ -229,18 +234,18 @@ export function ImageLightbox({ image, onClose }) {
       >
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-bold text-white">{fileName}</p>
-          <p className="hidden sm:block text-[11px] text-white/70">Tekan tombol ESC atau klik di luar foto untuk menutup</p>
+          <p className="hidden sm:block text-[11px] text-white/70">{tr("common_lightbox_hint", "Tekan tombol ESC atau klik di luar foto untuk menutup")}</p>
         </div>
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           <button
             type="button"
             onClick={() => setZoomed((z) => !z)}
             className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-white/15 hover:bg-white/25 px-2.5 sm:px-3 text-xs font-semibold text-white transition-colors cursor-pointer"
-            title={zoomed ? "Perkecil" : "Perbesar"}
+            title={zoomed ? tr("common_lightbox_zoom_out", "Sesuaikan Layar") : tr("common_lightbox_zoom_in", "Perbesar")}
             data-testid="lightbox-zoom-btn"
           >
             {zoomed ? <ZoomOut size={15} /> : <ZoomIn size={15} />}
-            <span className="hidden sm:inline">{zoomed ? "Sesuaikan Layar" : "Perbesar"}</span>
+            <span className="hidden sm:inline">{zoomed ? tr("common_lightbox_zoom_out", "Sesuaikan Layar") : tr("common_lightbox_zoom_in", "Perbesar")}</span>
           </button>
           <button
             type="button"
@@ -249,15 +254,15 @@ export function ImageLightbox({ image, onClose }) {
             data-testid="lightbox-download-btn"
           >
             <Download size={15} />
-            <span className="sm:hidden">Unduh</span>
-            <span className="hidden sm:inline">Unduh Resolusi Penuh</span>
+            <span className="sm:hidden">{tr("common_lightbox_download_short", "Unduh")}</span>
+            <span className="hidden sm:inline">{tr("common_lightbox_download_full", "Unduh Resolusi Penuh")}</span>
           </button>
           <button
             type="button"
             onClick={() => onClose?.()}
             className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-white/15 hover:bg-rose-500 text-white transition-colors cursor-pointer"
-            aria-label="Tutup pratinjau"
-            title="Tutup"
+            aria-label={tr("common_lightbox_close", "Tutup")}
+            title={tr("common_lightbox_close", "Tutup")}
             data-testid="lightbox-close-btn"
           >
             <X size={18} />
@@ -291,7 +296,7 @@ export function GroupIcon({ c, size = 42, rounded = "rounded-2xl" }) {
   return <span className={`flex shrink-0 items-center justify-center ${rounded} bg-soft-purple font-bold text-ink`} style={{ width: size, height: size, fontSize: size * 0.4 }} data-testid={`group-avatar-${c?.id}`}>{(c?.name || "#").trim().slice(0, 1).toUpperCase()}</span>;
 }
 
-export function AvatarStack({ ids = [], max = 4, size = 26 }) {
+export const AvatarStack = memo(function AvatarStack({ ids = [], max = 4, size = 26 }) {
   const { userMap } = useApp();
   return (
     <div className="flex -space-x-1.5">
@@ -299,9 +304,9 @@ export function AvatarStack({ ids = [], max = 4, size = 26 }) {
       {ids.length > max && <span className="relative flex items-center justify-center rounded-full bg-surface2 text-[10px] font-semibold text-sub border-2 border-[var(--c-surface)]" style={{ width: size, height: size, zIndex: 0 }}>+{ids.length - max}</span>}
     </div>
   );
-}
+});
 
-export function LabelChip({ label, small }) {
+export const LabelChip = memo(function LabelChip({ label, small }) {
   if (!label) return null;
   return (
     <span className={`inline-flex items-center gap-1 rounded-full font-semibold whitespace-nowrap ${small ? "px-2 py-0.5 text-[10px]" : "px-2.5 py-0.5 text-xs"}`}
@@ -309,9 +314,9 @@ export function LabelChip({ label, small }) {
       <span className="h-1.5 w-1.5 rounded-full" style={{ background: label.color }} />{label.name}
     </span>
   );
-}
+});
 
-export function Labels({ ids = [], small, max = 3 }) {
+export const Labels = memo(function Labels({ ids = [], small, max = 3 }) {
   const { labelMap } = useApp();
   const ls = ids.map((i) => labelMap[i]).filter(Boolean);
   return (
@@ -320,7 +325,7 @@ export function Labels({ ids = [], small, max = 3 }) {
       {ls.length > max && <span className="text-[10px] text-sub">+{ls.length - max}</span>}
     </div>
   );
-}
+});
 
 export const PRIORITY = {
   low: { name: "Rendah", cls: "bg-soft-green text-emerald-700 dark:text-emerald-300" },
@@ -328,12 +333,15 @@ export const PRIORITY = {
   high: { name: "Tinggi", cls: "bg-soft-yellow text-amber-700 dark:text-amber-300" },
   urgent: { name: "Urgent", cls: "bg-soft-red text-rose-600 dark:text-rose-300" },
 };
-export function PriorityBadge({ value }) {
-  const p = PRIORITY[value] || PRIORITY.medium;
-  return <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap shrink-0 ${p.cls}`}>{p.name}</span>;
-}
+export const PriorityBadge = memo(function PriorityBadge({ value }) {
+  const { t } = useApp() || {};
+  const tr = t || ((_k, fb) => fb || _k);
+  const key = value in PRIORITY ? value : "medium";
+  const p = PRIORITY[key] || PRIORITY.medium;
+  return <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap shrink-0 ${p.cls}`}>{tr(`common_priority_${key}`, p.name)}</span>;
+});
 
-export function StatusBadge({ status }) {
+export const StatusBadge = memo(function StatusBadge({ status }) {
   const { statuses } = useApp();
   const s = statuses.find((x) => x.key === status);
   return (
@@ -341,7 +349,7 @@ export function StatusBadge({ status }) {
       <span className="h-2 w-2 rounded-full" style={{ background: s?.is_done ? "#22A06B" : "var(--c-accent2)", opacity: s?.is_done ? 1 : 0.7 }} />{s?.name || status}
     </span>
   );
-}
+});
 
 export function dueInfo(deadline, done) {
   if (!deadline) return null;
@@ -412,10 +420,13 @@ export function Empty({ icon: Icon, title, text, description, action }) {
   );
 }
 
-export function Spinner({ label = "Memuat" }) {
+export function Spinner({ label }) {
+  const { t } = useApp() || {};
+  const tr = t || ((_k, fb) => fb || _k);
+  const text = label || tr("common_loading", "Memuat");
   return (
     <div className="flex items-center justify-center gap-2 py-16 text-sm text-sub" data-testid="loading-state">
-      <span className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--c-border)] border-t-[var(--c-accent)]" />{label}…
+      <span className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--c-border)] border-t-[var(--c-accent)]" />{text}…
     </div>
   );
 }
@@ -478,10 +489,28 @@ export function getTaskComplianceDetail(t) {
 }
 
 const escapeRegex = (s) => String(s || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const MENTION_MATCHER_CACHE = new WeakMap();
+const EMPTY_MENTION_MATCHER = { pattern: "", regex: null, resolve: () => null };
 
 export function buildMentionMatcher(userMap, mentionIds = []) {
-  const allUsers = Object.values(userMap || {}).filter((u) => u && u.user_id && u.name);
-  if (!allUsers.length) return { regex: null, resolve: () => null };
+  if (!userMap || typeof userMap !== "object") return EMPTY_MENTION_MATCHER;
+
+  const mentionKey = Array.isArray(mentionIds) && mentionIds.length > 0
+    ? [...mentionIds].sort().join("|")
+    : "";
+  let innerCache = MENTION_MATCHER_CACHE.get(userMap);
+  if (!innerCache) {
+    innerCache = new Map();
+    MENTION_MATCHER_CACHE.set(userMap, innerCache);
+  }
+  const cached = innerCache.get(mentionKey);
+  if (cached) return cached;
+
+  const allUsers = Object.values(userMap).filter((u) => u && u.user_id && u.name);
+  if (!allUsers.length) {
+    innerCache.set(mentionKey, EMPTY_MENTION_MATCHER);
+    return EMPTY_MENTION_MATCHER;
+  }
 
   const mentionedSet = new Set(Array.isArray(mentionIds) ? mentionIds : []);
   const orderedUsers = [
@@ -529,10 +558,13 @@ export function buildMentionMatcher(userMap, mentionIds = []) {
   }
 
   tokenList.sort((a, b) => b.length - a.length);
-  if (!tokenList.length) return { regex: null, resolve: () => null };
+  if (!tokenList.length) {
+    innerCache.set(mentionKey, EMPTY_MENTION_MATCHER);
+    return EMPTY_MENTION_MATCHER;
+  }
 
   const pattern = `(?<![\\p{L}\\p{N}._])@(?:${tokenList.map(escapeRegex).join("|")})(?![\\p{L}\\p{N}_])`;
-  return {
+  const result = {
     pattern,
     regex: new RegExp(`(${pattern})`, "giu"),
     resolve: (part) => {
@@ -540,9 +572,12 @@ export function buildMentionMatcher(userMap, mentionIds = []) {
       return tokenToUser.get(part.slice(1).toLowerCase()) || null;
     },
   };
+  if (innerCache.size > 60) innerCache.clear();
+  innerCache.set(mentionKey, result);
+  return result;
 }
 
-export function MentionText({
+export const MentionText = memo(function MentionText({
   text,
   mentionIds = [],
   linkClassName = "font-semibold text-brand hover:underline",
@@ -574,4 +609,4 @@ export function MentionText({
     }
     return part;
   });
-}
+});

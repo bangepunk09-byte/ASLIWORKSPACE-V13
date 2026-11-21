@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Newspaper,
@@ -144,7 +144,7 @@ function TopicPickerPopover({ value, onSelect, onClose, trendingItems = [] }) {
         label,
         count: item.count || 0,
         is_topic: Boolean(item.is_topic),
-        desc: item.is_topic ? "Topik aktif di Beranda" : "Tagar aktif di Beranda"
+        desc: item.is_topic ? t("beranda_topic_active_desc", "Topik aktif di Beranda") : t("beranda_hashtag_active_desc", "Tagar aktif di Beranda")
       });
     });
     DEFAULT_WORKSPACE_TOPICS.forEach((wt) => {
@@ -222,7 +222,7 @@ function TopicPickerPopover({ value, onSelect, onClose, trendingItems = [] }) {
             className="flex w-full items-center justify-between rounded-xl px-2.5 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
             data-testid="topic-picker-clear"
           >
-            <span>Hapus topik "{value}"</span>
+            <span>{t("beranda_topic_clear", "Hapus topik")} "{value}"</span>
             <X size={13} />
           </button>
         )}
@@ -244,7 +244,7 @@ function TopicPickerPopover({ value, onSelect, onClose, trendingItems = [] }) {
               <p className="truncate text-xs font-bold text-brand">
                 {t("beranda_topic_create_prefix", "Buat topik baru")} "{cleanedQuery}"
               </p>
-              <p className="text-[11px] text-sub">Tekan Enter atau klik untuk menyematkan topik ini</p>
+              <p className="text-[11px] text-sub">{t("beranda_topic_create_hint", "Tekan Enter atau klik untuk menyematkan topik ini")}</p>
             </div>
           </button>
         )}
@@ -276,7 +276,7 @@ function TopicPickerPopover({ value, onSelect, onClose, trendingItems = [] }) {
                       <span className="truncate text-xs font-semibold">{item.label}</span>
                       {item.count > 0 && (
                         <span className="shrink-0 rounded-full bg-surface2 px-1.5 py-0.2 text-[10px] font-medium text-sub">
-                          {item.count} utas
+                          {item.count} {t("beranda_topic_threads_unit", "utas")}
                         </span>
                       )}
                     </div>
@@ -290,9 +290,9 @@ function TopicPickerPopover({ value, onSelect, onClose, trendingItems = [] }) {
         ) : (
           !cleanedQuery && (
             <div className="px-3 py-4 text-center" data-testid="topic-picker-empty">
-              <p className="text-xs font-semibold text-ink">Belum ada pilihan topik</p>
+              <p className="text-xs font-semibold text-ink">{t("beranda_topic_empty_picker_title", "Belum ada pilihan topik")}</p>
               <p className="mt-0.5 text-[11px] text-sub leading-relaxed">
-                Ketik nama topik di kolom atas lalu tekan <b>Enter</b> untuk membuat topik baru.
+                {t("beranda_topic_empty_picker_desc", "Ketik nama topik di kolom atas lalu tekan Enter untuk membuat topik baru.")}
               </p>
             </div>
           )
@@ -446,7 +446,7 @@ function Composer({ parentId, onPosted, placeholder, compact = false, defaultTop
           {/* Threads-style Author › Topic Header */}
           {!parentId && (
             <div className="relative mb-1.5 flex flex-wrap items-center gap-1.5 text-sm">
-              <span className="font-bold text-ink leading-snug">{me?.name || "Anda"}</span>
+              <span className="font-bold text-ink leading-snug">{me?.name || t("beranda_you_label", "Anda")}</span>
               <ChevronRight size={14} className="text-sub/70 shrink-0" />
               {topic ? (
                 <div className="inline-flex items-center gap-1 rounded-full bg-brand/10 dark:bg-brand/20 pl-2.5 pr-1.5 py-0.5 text-xs font-semibold text-brand">
@@ -462,7 +462,7 @@ function Composer({ parentId, onPosted, placeholder, compact = false, defaultTop
                     type="button"
                     onClick={() => setTopic("")}
                     className="rounded-full p-0.5 hover:bg-brand/20 text-brand cursor-pointer"
-                    title="Hapus topik"
+                    title={t("beranda_topic_clear", "Hapus topik")}
                     data-testid="composer-clear-topic-btn"
                   >
                     <X size={11} />
@@ -510,7 +510,7 @@ function Composer({ parentId, onPosted, placeholder, compact = false, defaultTop
                 data-testid="composer-promote-hashtag-topic"
               >
                 <Hash size={11} />
-                <span>Sematkan "{detectedInlineHashtag}" sebagai Topik Utas</span>
+                <span>{t("beranda_promote_hashtag_prefix", "Sematkan")} "{detectedInlineHashtag}" {t("beranda_promote_hashtag_suffix", "sebagai Topik Utas")}</span>
               </button>
             </div>
           )}
@@ -553,7 +553,7 @@ function Composer({ parentId, onPosted, placeholder, compact = false, defaultTop
                 className={`btn-ghost flex items-center gap-1.5 px-2 text-sub ${compact ? "h-8 text-xs font-semibold" : "h-9 text-sm"}`}
                 data-testid="post-add-photo-btn"
               >
-                <ImagePlus size={compact ? 15 : 17} />Foto
+                <ImagePlus size={compact ? 15 : 17} />{t("beranda_photo_btn", "Foto")}
               </button>
               {!parentId && (
                 <>
@@ -563,7 +563,7 @@ function Composer({ parentId, onPosted, placeholder, compact = false, defaultTop
                     className="btn-ghost flex h-9 items-center gap-1.5 px-2 text-sm text-sub"
                     data-testid="post-add-poll-btn"
                   >
-                    <BarChart3 size={17} />Polling
+                    <BarChart3 size={17} />{t("beranda_poll_btn", "Polling")}
                   </button>
                   <button
                     type="button"
@@ -574,7 +574,7 @@ function Composer({ parentId, onPosted, placeholder, compact = false, defaultTop
                     data-testid="post-add-topic-btn"
                   >
                     <Hash size={16} />
-                    <span>{topic ? topic : "Topik"}</span>
+                    <span>{topic ? topic : t("beranda_topic_btn", "Topik")}</span>
                   </button>
                 </>
               )}
@@ -583,7 +583,7 @@ function Composer({ parentId, onPosted, placeholder, compact = false, defaultTop
               <CreatePollDialog
                 open={pollOpen}
                 onOpenChange={setPollOpen}
-                onSubmitPoll={(poll) => submit(poll).then(() => toast.success("Polling diposting"))}
+                onSubmitPoll={(poll) => submit(poll).then(() => toast.success(t("beranda_poll_posted_toast", "Polling diposting")))}
               />
             )}
             <input
@@ -612,7 +612,7 @@ function Composer({ parentId, onPosted, placeholder, compact = false, defaultTop
 }
 
 function ReactionPicker({ p, onChange }) {
-  const { me } = useApp();
+  const { me, t: tr } = useApp();
   const [open, setOpen] = useState(false);
   const timerRef = useRef(null);
 
@@ -640,6 +640,7 @@ function ReactionPicker({ p, onChange }) {
   }, []);
 
   const react = (emoji) => {
+    playSound("pop");
     setOpen(false);
     clearTimer();
     // 100% Optimistic reaction toggle (0ms latency)
@@ -675,11 +676,11 @@ function ReactionPicker({ p, onChange }) {
         type="button"
         onClick={() => setOpen((prev) => !prev)}
         className="flex h-8 items-center gap-1.5 rounded-full px-2.5 text-sm text-sub hover:bg-surface2/60 hover:text-ink transition-colors"
-        aria-label="Beri reaksi"
+        aria-label={tr("beranda_react_btn", "Reaksi")}
         data-testid={`post-react-btn-${p.id}`}
       >
         <SmilePlus size={16} />
-        <span className="font-medium">Reaksi</span>
+        <span className="font-medium">{tr("beranda_react_btn", "Reaksi")}</span>
       </button>
 
       {open && (
@@ -716,6 +717,7 @@ function ReactionPicker({ p, onChange }) {
 function ReactionBadges({ p, onChange }) {
   const { me } = useApp();
   const react = (emoji) => {
+    playSound("pop");
     const currentList = p.reactions?.[emoji] || [];
     const uid = me?.user_id;
     const hasReacted = uid ? currentList.includes(uid) : false;
@@ -761,7 +763,7 @@ function ReactionBadges({ p, onChange }) {
   );
 }
 
-function PostCard({ p, onChange, onDelete, reply }) {
+const PostCard = memo(function PostCard({ p, onChange, onDelete, reply }) {
   const { me, userMap, isAdmin, t } = useApp();
   const author = userMap[p.author_id];
   const [editing, setEditing] = useState(false);
@@ -800,6 +802,7 @@ function PostCard({ p, onChange, onDelete, reply }) {
 
   const toggleComments = async (e) => {
     e?.stopPropagation?.();
+    playSound("click");
     const nextState = !showComments;
     setShowComments(nextState);
 
@@ -888,8 +891,9 @@ function PostCard({ p, onChange, onDelete, reply }) {
 
   const del = (e) => {
     e?.stopPropagation?.();
+    playSound("trash");
     onDelete(p.id);
-    toast.success("Postingan dihapus");
+    toast.success(t("beranda_post_deleted_toast", "Postingan dihapus"));
     if (!String(p.id).startsWith("pst_opt_")) {
       api.delete(`/posts/${p.id}`).catch((err) => toast.error(errMsg(err)));
     }
@@ -920,7 +924,7 @@ function PostCard({ p, onChange, onDelete, reply }) {
 
   const saveEdit = async () => {
     if (!editText.trim() && editFiles.length === 0 && !p.poll_id && !p.poll) {
-      toast.error("Postingan tidak boleh kosong");
+      toast.error(t("beranda_post_empty_toast", "Postingan tidak boleh kosong"));
       return;
     }
     const cleanedTopic = !reply && editTopic ? editTopic.replace(/^#+/, "").trim().slice(0, 50) : null;
@@ -935,7 +939,8 @@ function PostCard({ p, onChange, onDelete, reply }) {
     };
     onChange(nextPost);
     setEditing(false);
-    toast.success("Postingan berhasil diperbarui");
+    playSound("success");
+    toast.success(t("beranda_post_updated_toast", "Postingan berhasil diperbarui"));
 
     if (String(p.id).startsWith("pst_opt_")) return;
     setSavingEdit(true);
@@ -982,7 +987,7 @@ function PostCard({ p, onChange, onDelete, reply }) {
               )}
               <span className="text-xs text-sub leading-snug">
                 {author?.job_title ? `${author.job_title} · ` : ""}{rel(p.created_at)}
-                {p.edited && <span className="ml-1 italic text-sub/80" data-testid={`post-edited-badge-${p.id}`}>· diedit</span>}
+                {p.edited && <span className="ml-1 italic text-sub/80" data-testid={`post-edited-badge-${p.id}`}>{t("beranda_edited_badge", "· diedit")}</span>}
               </span>
             </div>
           </div>
@@ -992,8 +997,8 @@ function PostCard({ p, onChange, onDelete, reply }) {
                 type="button"
                 onClick={startEdit}
                 className="flex h-7 w-7 items-center justify-center rounded-lg text-sub hover:bg-surface2 hover:text-ink transition-colors"
-                title="Ubah postingan"
-                aria-label="Ubah postingan"
+                title={t("beranda_edit_post_title", "Ubah postingan")}
+                aria-label={t("beranda_edit_post_title", "Ubah postingan")}
                 data-testid={`post-edit-${p.id}`}
               >
                 <Pencil size={13.5} />
@@ -1002,8 +1007,8 @@ function PostCard({ p, onChange, onDelete, reply }) {
                 type="button"
                 onClick={del}
                 className="flex h-7 w-7 items-center justify-center rounded-lg text-sub hover:bg-rose-50 dark:hover:bg-rose-950/30 hover:text-rose-500 transition-colors"
-                title="Hapus postingan"
-                aria-label="Hapus"
+                title={t("beranda_delete_post_title", "Hapus postingan")}
+                aria-label={t("common_delete", "Hapus")}
                 data-testid={`post-delete-${p.id}`}
               >
                 <Trash2 size={14} />
@@ -1016,7 +1021,7 @@ function PostCard({ p, onChange, onDelete, reply }) {
           <div className="mt-2 rounded-2xl border bg-surface2/70 p-3 space-y-2.5" data-testid={`post-edit-form-${p.id}`}>
             {!reply && (
               <div className="relative flex items-center gap-1.5 text-xs">
-                <span className="font-semibold text-sub">Topik Utas:</span>
+                <span className="font-semibold text-sub">{t("beranda_edit_topic_label", "Topik Utas:")}</span>
                 {editTopic ? (
                   <span className="inline-flex items-center gap-1 rounded-full bg-brand/10 px-2.5 py-0.5 font-semibold text-brand">
                     <button type="button" onClick={() => setEditTopicPickerOpen((v) => !v)} className="hover:underline">
@@ -1049,7 +1054,7 @@ function PostCard({ p, onChange, onDelete, reply }) {
               value={editText}
               onChange={(e) => setEditText(e.target.value)}
               rows={reply ? 2 : 3}
-              placeholder="Ubah isi postingan..."
+              placeholder={t("beranda_edit_placeholder", "Ubah isi postingan...")}
               className="w-full resize-none rounded-xl border bg-surface p-2.5 text-[14.5px] text-ink outline-none focus:border-brand"
               data-testid={`post-edit-input-${p.id}`}
             />
@@ -1077,7 +1082,7 @@ function PostCard({ p, onChange, onDelete, reply }) {
                   onClick={() => editFileRef.current?.click()}
                   className="btn-ghost inline-flex h-8 items-center gap-1.5 px-2.5 text-xs font-semibold text-sub hover:text-ink"
                 >
-                  <ImagePlus size={14} /> Tambah Foto
+                  <ImagePlus size={14} /> {t("beranda_add_photo_btn", "Tambah Foto")}
                 </button>
                 <input
                   ref={editFileRef}
@@ -1098,7 +1103,7 @@ function PostCard({ p, onChange, onDelete, reply }) {
                   className="h-8 rounded-full border bg-surface px-3.5 text-xs font-semibold text-sub hover:text-ink"
                   data-testid={`post-edit-cancel-${p.id}`}
                 >
-                  Batal
+                  {t("common_cancel", "Batal")}
                 </button>
                 <button
                   type="button"
@@ -1107,7 +1112,7 @@ function PostCard({ p, onChange, onDelete, reply }) {
                   className="btn-accent inline-flex h-8 items-center gap-1 rounded-full px-4 text-xs font-semibold text-white disabled:opacity-50"
                   data-testid={`post-edit-save-${p.id}`}
                 >
-                  <Check size={13} /> Simpan Perubahan
+                  <Check size={13} /> {t("beranda_save_changes_btn", "Simpan Perubahan")}
                 </button>
               </div>
             </div>
@@ -1128,6 +1133,8 @@ function PostCard({ p, onChange, onDelete, reply }) {
                     <img
                       src={fileUrl(a.id)}
                       alt={a.name}
+                      loading="lazy"
+                      decoding="async"
                       className={`object-cover transition-transform duration-200 group-hover:scale-[1.01] ${p.attachments.length > 1 ? "aspect-square w-full" : "max-h-[420px] w-auto max-w-full"}`}
                     />
                   </button>
@@ -1153,7 +1160,7 @@ function PostCard({ p, onChange, onDelete, reply }) {
               title={showComments ? "Tutup kolom balasan" : "Balas postingan"}
             >
               <MessageCircle size={16} />
-              <span>{p.reply_count > 0 ? `${p.reply_count} Balas` : "Balas"}</span>
+              <span>{p.reply_count > 0 ? `${p.reply_count} ${t("beranda_reply_btn", "Balas")}` : t("beranda_reply_btn", "Balas")}</span>
               {showComments && <ChevronUp size={13} className="ml-0.5 opacity-70" />}
             </button>
           )}
@@ -1170,7 +1177,7 @@ function PostCard({ p, onChange, onDelete, reply }) {
               data-testid={`post-expand-comments-${p.id}`}
             >
               <MessageCircle size={13} />
-              <span>Lihat {p.reply_count} balasan</span>
+              <span>Lihat {p.reply_count} {t("beranda_replies_suffix", "balasan")}</span>
               <ChevronDown size={13} className="transition-transform group-hover:translate-y-0.5" />
             </button>
           </div>
@@ -1189,14 +1196,14 @@ function PostCard({ p, onChange, onDelete, reply }) {
             <div className="overflow-hidden">
               <div className="space-y-3 rounded-2xl bg-surface2/35 p-3 sm:p-3.5">
                 <div className="flex items-center justify-between text-xs font-semibold text-sub px-0.5">
-                  <span>{replies.length > 0 ? `${replies.length} balasan` : "0 balasan"}</span>
+                  <span>{replies.length > 0 ? `${replies.length} ${t("beranda_replies_suffix", "balasan")}` : `0 ${t("beranda_replies_suffix", "balasan")}`}</span>
                   <button
                     type="button"
                     onClick={() => setShowComments(false)}
                     className="flex items-center gap-1 text-xs text-sub hover:text-ink rounded-lg px-2 py-0.5 hover:bg-surface2 transition-colors"
                     title="Tutup kolom balasan"
                   >
-                    <span>Tutup</span>
+                    <span>{t("beranda_reply_close", "Tutup")}</span>
                     <ChevronUp size={13} />
                   </button>
                 </div>
@@ -1204,7 +1211,7 @@ function PostCard({ p, onChange, onDelete, reply }) {
                 {loadingReplies ? (
                   <div className="flex items-center justify-center py-6 text-xs text-sub gap-2">
                     <Loader2 size={16} className="animate-spin text-brand" />
-                    <span>Memuat balasan...</span>
+                    <span>{t("beranda_replies_loading", "Memuat balasan...")}</span>
                   </div>
                 ) : replies.length > 0 ? (
                   <div className="divide-y divide-subtle/60 rounded-xl bg-surface px-3 border border-subtle/50">
@@ -1220,14 +1227,14 @@ function PostCard({ p, onChange, onDelete, reply }) {
                   </div>
                 ) : (
                   <div className="py-2.5 text-center text-xs text-sub">
-                    Belum ada balasan. Tulis balasan pertama di bawah!
+                    {t("beranda_replies_empty", "Belum ada balasan. Tulis balasan pertama di bawah!")}
                   </div>
                 )}
 
                 <Composer
                   parentId={p.id}
                   compact
-                  placeholder="Balas postingan ini..."
+                  placeholder={t("beranda_reply_placeholder", "Balas postingan ini...")}
                   onPosted={handleReplyPosted}
                 />
               </div>
@@ -1238,7 +1245,7 @@ function PostCard({ p, onChange, onDelete, reply }) {
       <ImageLightbox image={lightboxImg} onClose={() => setLightboxImg(null)} />
     </article>
   );
-}
+});
 
 const THREAD_CACHE = {};
 
@@ -1333,7 +1340,7 @@ function Trending({ compact }) {
 
       {!displayItems.length ? (
         <p className="text-xs text-sub leading-relaxed" data-testid="trending-empty">
-          Belum ada topik aktif. Klik <b>Tambahkan topik</b> saat menulis postingan untuk membuat topik pertamamu.
+          {t("beranda_trending_empty", "Belum ada topik aktif. Klik Tambahkan topik saat menulis postingan untuk membuat topik pertamamu.")}
         </p>
       ) : (
         <ol className="space-y-1">
@@ -1360,7 +1367,7 @@ function Trending({ compact }) {
                       </span>
                     </div>
                     <span className="text-[11px] text-sub">
-                      {item.count > 0 ? `${item.count} utas diskusi` : "Topik baru"}
+                      {item.count > 0 ? `${item.count} ${t("beranda_trending_threads_suffix", "utas diskusi")}` : t("beranda_trending_new_topic", "Topik baru")}
                     </span>
                   </Link>
                   <button
@@ -1542,20 +1549,28 @@ function Feed() {
         setMore(r.data.length === 30);
       });
 
-  const persistFeedCache = (next) => {
+  const persistFeedCache = useCallback((next) => {
     if (tag) return;
     const clean = (next || []).map(({ _clientKey, _justPosted, ...rest }) => rest);
     setPostsCache(clean);
     try { localStorage.setItem("circle_cache_posts_feed", JSON.stringify(clean)); } catch {}
-  };
+  }, [tag]);
 
-  const upd = (np) => {
+  const upd = useCallback((np) => {
     setPosts((ps) => {
       const next = ps.map((x) => (x.id === np.id ? { ...x, ...np } : x));
       persistFeedCache(next);
       return next;
     });
-  };
+  }, [persistFeedCache]);
+
+  const handleDelete = useCallback((id) => {
+    setPosts((ps) => {
+      const next = ps.filter((x) => x.id !== id);
+      persistFeedCache(next);
+      return next;
+    });
+  }, [persistFeedCache]);
 
   const handlePosted = (newPost, replaceId) => {
     setPosts((ps) => {
@@ -1629,6 +1644,7 @@ function Feed() {
           <button
             type="button"
             onClick={() => {
+              if (tag) playSound("tab");
               params.delete("tag");
               setParams(params);
             }}
@@ -1650,6 +1666,7 @@ function Feed() {
                 key={topicLabel}
                 type="button"
                 onClick={() => {
+                  playSound("tab");
                   if (isActive) {
                     params.delete("tag");
                     setParams(params);
@@ -1683,7 +1700,7 @@ function Feed() {
                   <Hash size={13} />
                   <span>{t("beranda_topic_stream_kicker", "TOPIK DISKUSI")}</span>
                   <span>·</span>
-                  <span>{posts.length} utas</span>
+                  <span>{posts.length} {t("beranda_topic_threads_unit", "utas")}</span>
                 </div>
                 <h2 className="mt-0.5 text-lg sm:text-xl font-extrabold text-ink tracking-tight truncate">
                   {String(tag).replace(/^#+/, "")}
@@ -1709,7 +1726,10 @@ function Feed() {
 
                 <button
                   type="button"
-                  onClick={() => togglePinActiveTopic(tag)}
+                  onClick={() => {
+                    playSound("pop");
+                    togglePinActiveTopic(tag);
+                  }}
                   className={`inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-semibold transition-colors cursor-pointer ${
                     isCurrentTopicPinned
                       ? "bg-brand/15 text-brand border border-brand/30"
@@ -1735,7 +1755,7 @@ function Feed() {
                   data-testid="clear-tag-filter"
                 >
                   <X size={13} />
-                  <span>Semua Utas</span>
+                  <span>{t("beranda_all_posts_btn", "Semua Utas")}</span>
                 </button>
               </div>
             </div>
@@ -1752,7 +1772,7 @@ function Feed() {
             <p className="text-sm font-bold text-ink">
               {tag
                 ? t("beranda_topic_empty_title", "Belum ada utas di topik ini")
-                : "Belum ada postingan. Jadilah yang pertama!"}
+                : t("beranda_feed_empty", "Belum ada postingan. Jadilah yang pertama!")}
             </p>
             {tag && (
               <p className="mt-1 text-xs text-sub max-w-md mx-auto">
@@ -1766,13 +1786,7 @@ function Feed() {
               key={p._clientKey || p.id}
               p={p}
               onChange={upd}
-              onDelete={(id) => {
-                setPosts((ps) => {
-                  const next = ps.filter((x) => x.id !== id);
-                  persistFeedCache(next);
-                  return next;
-                });
-              }}
+              onDelete={handleDelete}
             />
           ))
         )}
@@ -1787,7 +1801,7 @@ function Feed() {
 }
 
 function Thread({ pid }) {
-  const { me, subscribe } = useApp();
+  const { me, subscribe, t: tr } = useApp();
   const navigate = useNavigate();
   const getInitialThread = (id) => {
     if (THREAD_CACHE[id]) return THREAD_CACHE[id];
@@ -1865,7 +1879,7 @@ function Thread({ pid }) {
     }
   }), [subscribe, load, pid, me?.user_id, navigate]);
 
-  if (!t) return <p className="py-10 text-center text-sm text-sub">Postingan tidak ditemukan.</p>;
+  if (!t) return <p className="py-10 text-center text-sm text-sub">{tr("beranda_thread_not_found", "Postingan tidak ditemukan.")}</p>;
   const replies = t.replies || [];
   const updReply = (np) => setT((prev) => {
     const next = { ...prev, replies: (prev.replies || []).map((r) => (r.id === np.id ? { ...r, ...np } : r)) };
@@ -1874,16 +1888,16 @@ function Thread({ pid }) {
   });
   return (
     <div className="space-y-4" data-testid="post-thread">
-      <button onClick={() => navigate("/beranda")} className="flex items-center gap-1.5 text-sm font-semibold text-sub hover:text-ink" data-testid="thread-back-btn"><ArrowLeft size={16} />Beranda</button>
+      <button onClick={() => navigate("/beranda")} className="flex items-center gap-1.5 text-sm font-semibold text-sub hover:text-ink" data-testid="thread-back-btn"><ArrowLeft size={16} />{tr("beranda_thread_back", "Beranda")}</button>
       <PostCard p={t} onChange={(np) => setT((prev) => { const next = { ...prev, ...np }; THREAD_CACHE[pid] = next; return next; })} onDelete={() => navigate("/beranda")} />
       <div className="card px-4" data-testid="thread-replies">
-        <p className="border-b py-3 text-sm font-bold">{replies.length} balasan</p>
+        <p className="border-b py-3 text-sm font-bold">{replies.length} {tr("beranda_replies_suffix", "balasan")}</p>
         <div className="divide-y">{replies.map((r) => <PostCard key={r.id} p={r} reply onChange={updReply} onDelete={(id) => setT((prev) => { const nextReplies = (prev.replies || []).filter((x) => x.id !== id); const next = { ...prev, reply_count: nextReplies.length, replies: nextReplies }; THREAD_CACHE[pid] = next; return next; })} />)}</div>
-        {!replies.length && <p className="py-6 text-center text-sm text-sub">Belum ada balasan.</p>}
+        {!replies.length && <p className="py-6 text-center text-sm text-sub">{tr("beranda_thread_no_replies", "Belum ada balasan.")}</p>}
       </div>
       <Composer
         parentId={t.id}
-        placeholder="Balas postingan ini…"
+        placeholder={tr("beranda_reply_placeholder", "Balas postingan ini...")}
         onPosted={(r, replaceId) => {
           setT((x) => {
             const existing = x.replies || [];

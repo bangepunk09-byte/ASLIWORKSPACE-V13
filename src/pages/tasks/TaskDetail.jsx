@@ -23,7 +23,7 @@ function Row({ label, children }) {
 }
 
 function Comments({ t, reload }) {
-  const { users, userMap, me } = useApp();
+  const { users, userMap, me, t: tr } = useApp();
   const [text, setText] = useState("");
   const [mentionIds, setMentionIds] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -38,7 +38,7 @@ function Comments({ t, reload }) {
         .map((uid) => userMap?.[uid]?.name)
         .filter(Boolean);
       if (notifiedNames.length > 0) {
-        toast.success(`Komentar terkirim · Notifikasi dikirim ke ${notifiedNames.join(", ")}`);
+        toast.success(`${tr("task_comment_sent_notif_prefix", "Komentar terkirim · Notifikasi dikirim ke")} ${notifiedNames.join(", ")}`);
       }
       setText("");
       setMentionIds([]);
@@ -58,7 +58,7 @@ function Comments({ t, reload }) {
         mentionIds={mentionIds}
         onMentionIdsChange={setMentionIds}
         onSubmit={send}
-        placeholder="Tulis komentar… ketik @Nama untuk menyebut rekan"
+        placeholder={tr("task_comment_ph", "Tulis komentar… ketik @Nama untuk menyebut rekan")}
         testid="task-comment-input"
         rightSlot={
           <button
@@ -66,7 +66,7 @@ function Comments({ t, reload }) {
             onClick={send}
             disabled={busy || !text.trim()}
             className="btn-accent flex h-11 w-11 shrink-0 items-center justify-center disabled:opacity-40 cursor-pointer"
-            aria-label="Kirim komentar"
+            aria-label={tr("task_comment_send_label", "Kirim komentar")}
             data-testid="task-comment-submit"
           >
             <Send size={16} />
@@ -106,7 +106,7 @@ const getInitialTask = (id) => {
 };
 
 export default function TaskDetail({ id, onClose, onChanged }) {
-  const { me, statuses, userMap, labelMap, isManager, subscribe } = useApp();
+  const { me, statuses, userMap, labelMap, isManager, subscribe, t: tr } = useApp();
   const [t, setT] = useState(() => getInitialTask(id));
   const [boards, setBoards] = useState(() => {
     try {
@@ -173,7 +173,7 @@ export default function TaskDetail({ id, onClose, onChanged }) {
   };
   const setAtt = (fn) => patch({ attachments: fn(t.attachments) });
   const { pick, input } = useUploader(setAtt);
-  const share = async (cid) => { try { await api.patch(`/tasks/${id}`, { status: "in_review" }); await api.post(`/tasks/${id}/share`, { conversation_id: cid }); toast.success("Preview dikirim ke grup dan status diubah ke In Review"); setGroups(null); load(); } catch (e) { toast.error(errMsg(e)); } };
+  const share = async (cid) => { try { await api.patch(`/tasks/${id}`, { status: "in_review" }); await api.post(`/tasks/${id}/share`, { conversation_id: cid }); toast.success(tr("task_share_sent_toast", "Preview dikirim ke grup dan status diubah ke In Review")); setGroups(null); load(); } catch (e) { toast.error(errMsg(e)); } };
   const done = statuses.find((s) => s.key === t?.status)?.is_done;
   const ro = t ? t.can_edit === false : false;
   const d = t && dueInfo(t.deadline, done);
@@ -222,7 +222,7 @@ export default function TaskDetail({ id, onClose, onChanged }) {
         targetCid = deptGroup?.id || dmWithAssignee?.id || anyGroup?.id || "";
       } catch {}
     }
-    toast.info("Mengarahkan ke chat untuk mengirim catatan revisi");
+    toast.info(tr("task_revise_redirect_toast", "Mengarahkan ke chat untuk mengirim catatan revisi"));
     onChanged?.();
     onClose?.();
     const qs = new URLSearchParams({
@@ -253,10 +253,10 @@ export default function TaskDetail({ id, onClose, onChanged }) {
       }
       if (updatedTask?.status === "done" || nextApproved.length >= 2) {
         playSound("task_done");
-        toast.success("Tugas disetujui 2/2 (100%) dan otomatis dipindah ke Done!");
+        toast.success(tr("task_approved_full_toast", "Tugas disetujui 2/2 (100%) dan otomatis dipindah ke Done!"));
       } else {
         playSound("click");
-        toast.success("Disetujui 1/2 (50%). Menunggu 1 persetujuan lagi.");
+        toast.success(tr("task_approved_half_toast", "Disetujui 1/2 (50%). Menunggu 1 persetujuan lagi."));
       }
       load();
       onChanged?.(updatedTask);
@@ -272,7 +272,7 @@ export default function TaskDetail({ id, onClose, onChanged }) {
     <Sheet open={!!id} onOpenChange={(v) => !v && onClose()}>
       <SheetContent className="w-full max-w-full overflow-y-auto overflow-x-hidden bg-surface p-0 sm:max-w-3xl print:max-w-none print:static print:shadow-none print:border-0" data-testid="task-detail-panel">
         <SheetHeader className="flex flex-row items-center justify-between border-b px-4 py-3 sm:px-6 sm:py-4">
-          <SheetTitle className="text-base font-bold">Detail Tugas</SheetTitle>
+          <SheetTitle className="text-base font-bold">{tr("task_detail_title", "Detail Tugas")}</SheetTitle>
           <div className="flex items-center gap-1 print:hidden">
             <button
               type="button"
@@ -282,17 +282,17 @@ export default function TaskDetail({ id, onClose, onChanged }) {
                 }
               }}
               className="flex h-9 sm:h-10 items-center gap-2 rounded-full border px-3 sm:px-4 text-sm font-semibold text-sub hover:bg-surface2 hover:text-ink transition-colors cursor-pointer"
-              title="Cetak Detail Tugas"
+              title={tr("task_detail_print_title", "Cetak Detail Tugas")}
               data-testid="task-detail-print-btn"
             >
               <Printer size={16} />
-              <span className="hidden sm:inline">Cetak / PDF</span>
+              <span className="hidden sm:inline">{tr("task_detail_print_btn", "Cetak / PDF")}</span>
             </button>
             <button
               type="button"
               onClick={onClose}
               className="rounded-full p-2 text-sub hover:bg-surface2 hover:text-ink transition-colors cursor-pointer"
-              aria-label="Tutup detail"
+              aria-label={tr("task_detail_close_label", "Tutup detail")}
               data-testid="task-detail-close-btn"
             >
               <X size={18} />
@@ -304,7 +304,7 @@ export default function TaskDetail({ id, onClose, onChanged }) {
             <div className="h-2" style={{ background: t.card_color || "transparent" }} />
             <div className="w-full max-w-full min-w-0 space-y-4 sm:space-y-5 p-4 sm:p-6 overflow-x-hidden">
               <div>
-                <p className="text-xs font-semibold text-sub" data-testid="task-detail-id">{t.number_str}{t.archived && " · Diarsipkan"}{done && t.completed_at && <span className="text-emerald-600"> · Selesai {fmtDate(t.completed_at, "d MMM yyyy HH:mm")} oleh {userMap[t.completed_by]?.name}</span>}</p>
+                <p className="text-xs font-semibold text-sub" data-testid="task-detail-id">{t.number_str}{t.archived && ` · ${tr("task_detail_archived_tag", "Diarsipkan")}`}{done && t.completed_at && <span className="text-emerald-600"> · {tr("task_detail_done_prefix", "Selesai")} {fmtDate(t.completed_at, "d MMM yyyy HH:mm")} {tr("task_detail_by_prefix", "oleh")} {userMap[t.completed_by]?.name}</span>}</p>
                 <input defaultValue={t.title} key={t.updated_at} disabled={ro} onBlur={(e) => e.target.value.trim() && e.target.value !== t.title && patch({ title: e.target.value })} className="mt-1 w-full bg-transparent text-xl sm:text-2xl font-bold outline-none" data-testid="task-detail-title" />
               </div>
               {ro ? (
@@ -340,7 +340,7 @@ export default function TaskDetail({ id, onClose, onChanged }) {
                           : "text-amber-800 dark:text-amber-200"
                       }`}
                     >
-                      {isApprovedFull ? "✓ Disetujui 100% · Status: Done" : "Menunggu Approval"}
+                      {isApprovedFull ? tr("task_approval_done_banner", "✓ Disetujui 100% · Status: Done") : tr("task_approval_waiting_banner", "Menunggu Approval")}
                     </span>
                     <span
                       className={`rounded-full px-2.5 py-0.5 text-[11px] sm:text-xs font-bold whitespace-nowrap shrink-0 ${
@@ -350,8 +350,8 @@ export default function TaskDetail({ id, onClose, onChanged }) {
                       }`}
                     >
                       {isApprovedFull
-                        ? `${approvedCount >= 2 ? `${approvedCount}/2` : "2/2"} Disetujui`
-                        : `${approvedCount}/2 Disetujui`}
+                        ? `${approvedCount >= 2 ? `${approvedCount}/2` : "2/2"} ${tr("task_approval_approved_suffix", "Disetujui")}`
+                        : `${approvedCount}/2 ${tr("task_approval_approved_suffix", "Disetujui")}`}
                     </span>
                   </div>
                   <div
@@ -375,7 +375,7 @@ export default function TaskDetail({ id, onClose, onChanged }) {
                           : "text-amber-800 dark:text-amber-300"
                       }`}
                     >
-                      <span>Telah disetujui oleh:</span>
+                      <span>{tr("task_approval_approved_by", "Telah disetujui oleh:")}</span>
                       <b>{approvedList.map((uid) => userMap[uid]?.name?.split(" ")[0] || uid).join(", ")}</b>
                     </div>
                   )}
@@ -387,7 +387,7 @@ export default function TaskDetail({ id, onClose, onChanged }) {
                         className="flex h-10 flex-1 items-center justify-center gap-1.5 rounded-xl border border-amber-300 bg-surface px-4 text-xs font-bold text-amber-800 hover:bg-amber-100 dark:bg-surface2 cursor-pointer"
                         data-testid="request-revision-btn"
                       >
-                        <RotateCcw size={14} /> Revisi
+                        <RotateCcw size={14} /> {tr("task_approval_revise_btn", "Revisi")}
                       </button>
                       <button
                         type="button"
@@ -397,7 +397,7 @@ export default function TaskDetail({ id, onClose, onChanged }) {
                         data-testid="approve-task-btn"
                       >
                         <CheckCircle2 size={14} />
-                        {approving ? "Memproses…" : alreadyApprovedByMe ? "Sudah Setuju ✓" : "Setuju"}
+                        {approving ? tr("task_approval_processing", "Memproses…") : alreadyApprovedByMe ? tr("task_approval_already_btn", "Sudah Setuju ✓") : tr("task_approval_approve_btn", "Setuju")}
                       </button>
                     </div>
                   ) : (
@@ -410,7 +410,7 @@ export default function TaskDetail({ id, onClose, onChanged }) {
                           className="w-full h-9 rounded-xl border border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30 text-xs font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 disabled:opacity-50 transition-colors cursor-pointer"
                           data-testid="approve-task-more-btn"
                         >
-                          + Setuju Juga ({approvedCount} telah setuju)
+                          {tr("task_approval_more_prefix", "+ Setuju Juga")} ({approvedCount} {tr("task_approval_more_suffix", "telah setuju")})
                         </button>
                       </div>
                     )
@@ -420,11 +420,11 @@ export default function TaskDetail({ id, onClose, onChanged }) {
 
 
               <div className="space-y-3">
-                <Row label="Status">
+                <Row label={tr("task_field_status", "Status")}>
                   <div className="space-y-1.5 w-full">
                     <Select value={t.status} disabled={ro} onValueChange={(val) => patch({ status: val })}>
                       <SelectTrigger className="w-full bg-surface2 border-slate-200 dark:border-slate-800 rounded-xl" data-testid="task-detail-status">
-                        <SelectValue placeholder="Pilih status..." />
+                        <SelectValue placeholder={tr("task_status_ph", "Pilih status...")} />
                       </SelectTrigger>
                       <SelectContent>
                         {statuses.map((s) => (
@@ -438,6 +438,11 @@ export default function TaskDetail({ id, onClose, onChanged }) {
                       const comp = getTaskCompliance(t);
                       const detail = getTaskComplianceDetail(t);
                       if (!comp) return null;
+                      const compLabel = comp === "On time"
+                        ? tr("compliance_on_time", "On time")
+                        : comp === "Overdue"
+                        ? tr("compliance_late", "Overdue")
+                        : tr("compliance_in_progress", comp);
                       return (
                         <div className="flex items-center gap-1.5 pt-0.5">
                           <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${
@@ -448,7 +453,7 @@ export default function TaskDetail({ id, onClose, onChanged }) {
                               : "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
                           }`}>
                             <span className={`h-1.5 w-1.5 rounded-full ${comp === "On time" ? "bg-emerald-500" : comp === "Overdue" ? "bg-rose-500" : "bg-amber-500"}`} />
-                            {comp}
+                            {compLabel}
                           </span>
                           <span className="text-[11px] text-sub truncate">{detail}</span>
                         </div>
@@ -458,22 +463,22 @@ export default function TaskDetail({ id, onClose, onChanged }) {
                 </Row>
 
                 {/* Multi Requestor */}
-                <Row label="Requestor">
+                <Row label={tr("task_field_requestor", "Requestor")}>
                   <div className="space-y-1.5">
                     <div className="flex flex-wrap items-center gap-1.5">
                       {reqIds.map((uid) => (
                         <span key={uid} className="inline-flex items-center gap-1.5 rounded-full border bg-surface2 px-2.5 py-1 text-xs font-semibold">
                           <Avatar user={userMap[uid]} size={18} showStatus={false} />
-                          {userMap[uid]?.name || "Pengguna"}
+                          {userMap[uid]?.name || tr("task_user_fallback", "Pengguna")}
                           {!ro && reqIds.length > 1 && (
                             <button
                               type="button"
                               onClick={() => {
                                 const next = reqIds.filter((x) => x !== uid);
-                                patch({ requestor_ids: next, reviewer_ids: next }, "Requestor diperbarui");
+                                patch({ requestor_ids: next, reviewer_ids: next }, tr("task_requestor_updated", "Requestor diperbarui"));
                               }}
                               className="ml-0.5 text-slate-400 hover:text-rose-500"
-                              title="Hapus requestor"
+                              title={tr("task_requestor_remove_title", "Hapus requestor")}
                             >
                               ×
                             </button>
@@ -486,12 +491,12 @@ export default function TaskDetail({ id, onClose, onChanged }) {
                           onChange={(e) => {
                             if (e.target.value && !reqIds.includes(e.target.value)) {
                               const next = [...reqIds, e.target.value];
-                              patch({ requestor_ids: next, reviewer_ids: next }, "Requestor ditambah");
+                              patch({ requestor_ids: next, reviewer_ids: next }, tr("task_requestor_added", "Requestor ditambah"));
                             }
                           }}
                           className="h-7 rounded-full border bg-surface px-2.5 text-xs font-medium"
                         >
-                          <option value="">+ Tambah Requestor</option>
+                          <option value="">{tr("task_requestor_add_opt", "+ Tambah Requestor")}</option>
                           {Object.values(userMap || {})
                             .filter((u) => u && !u.is_bot && u.role !== "assistant" && u.user_id !== "user_circle_assistant" && !reqIds.includes(u.user_id))
                             .map((u) => (
@@ -503,7 +508,7 @@ export default function TaskDetail({ id, onClose, onChanged }) {
                   </div>
                 </Row>
 
-                <Row label="Assignee">
+                <Row label={tr("task_field_assignee", "Assignee")}>
                   <MultiUserSelect
                     value={t.assignee_ids && t.assignee_ids.length ? t.assignee_ids : (t.assignee_id ? [t.assignee_id] : [])}
                     ids={members}
@@ -531,13 +536,13 @@ export default function TaskDetail({ id, onClose, onChanged }) {
                     testid="task-detail-assignee"
                   />
                 </Row>
-                <Row label="Prioritas"><PrioritySelect value={t.priority} onChange={(v) => patch({ priority: v })} testid="task-detail-priority" /></Row>
-                <Row label="Tanggal Mulai"><DatePicker disabled={ro} value={t.start_date || (t.created_at ? fmtDate(t.created_at, "yyyy-MM-dd") : "")} onChange={(val) => { const nextVal = val || (t.created_at ? fmtDate(t.created_at, "yyyy-MM-dd") : null); if (nextVal !== (t.start_date || null)) patch({ start_date: nextVal }); }} placeholder="Pilih tanggal mulai" className={inp} data-testid="task-detail-start-date" /></Row>
-                <Row label="Deadline"><div className="flex flex-wrap items-center gap-2"><DateTimePicker disabled={ro} value={t.deadline ? fmtDate(t.deadline, "yyyy-MM-dd'T'HH:mm") : ""} onChange={(val) => { const v = val ? new Date(val).toISOString() : null; if (v !== t.deadline) patch({ deadline: v }); }} placeholder="Pilih deadline & jam" className={`${inp} flex-1 min-w-[180px]`} data-testid="task-detail-deadline" />{d && <span className={`whitespace-nowrap text-xs ${d.cls}`}>{d.state === "overdue" ? "Overdue" : d.state === "today" ? "Hari Ini" : ""}</span>}</div></Row>
-                <Row label="IP / Brand"><LabelPicker value={t.label_ids} onChange={(v) => patch({ label_ids: v })} testid="task-detail-labels" /></Row>
-                <Row label="Jenis Item"><ItemPicker value={t.item_type} onChange={(v) => patch({ item_type: v })} testid="task-detail-item" /></Row>
-                <Row label="Link File / Folder"><input disabled={ro} defaultValue={t.link_url || ""} key={`l${t.link_url}`} onBlur={(e) => e.target.value.trim() !== (t.link_url || "") && patch({ link_url: e.target.value.trim() })} placeholder="https://…" className={inp} data-testid="task-detail-link" /></Row>
-                <Row label="Board">
+                <Row label={tr("task_field_priority", "Prioritas")}><PrioritySelect value={t.priority} onChange={(v) => patch({ priority: v })} testid="task-detail-priority" /></Row>
+                <Row label={tr("task_field_start_date", "Tanggal Mulai")}><DatePicker disabled={ro} value={t.start_date || (t.created_at ? fmtDate(t.created_at, "yyyy-MM-dd") : "")} onChange={(val) => { const nextVal = val || (t.created_at ? fmtDate(t.created_at, "yyyy-MM-dd") : null); if (nextVal !== (t.start_date || null)) patch({ start_date: nextVal }); }} placeholder={tr("task_start_date_ph_detail", "Pilih tanggal mulai")} className={inp} data-testid="task-detail-start-date" /></Row>
+                <Row label={tr("task_field_deadline", "Deadline")}><div className="flex flex-wrap items-center gap-2"><DateTimePicker disabled={ro} value={t.deadline ? fmtDate(t.deadline, "yyyy-MM-dd'T'HH:mm") : ""} onChange={(val) => { const v = val ? new Date(val).toISOString() : null; if (v !== t.deadline) patch({ deadline: v }); }} placeholder={tr("task_deadline_dt_ph", "Pilih deadline & jam")} className={`${inp} flex-1 min-w-[180px]`} data-testid="task-detail-deadline" />{d && <span className={`whitespace-nowrap text-xs ${d.cls}`}>{d.state === "overdue" ? tr("task_overdue_label", "Overdue") : d.state === "today" ? tr("task_today_label", "Hari Ini") : ""}</span>}</div></Row>
+                <Row label={tr("task_field_brand", "IP / Brand")}><LabelPicker value={t.label_ids} onChange={(v) => patch({ label_ids: v })} testid="task-detail-labels" /></Row>
+                <Row label={tr("task_field_item_type", "Jenis Item")}><ItemPicker value={t.item_type} onChange={(v) => patch({ item_type: v })} testid="task-detail-item" /></Row>
+                <Row label={tr("task_field_link_url", "Link File / Folder")}><input disabled={ro} defaultValue={t.link_url || ""} key={`l${t.link_url}`} onBlur={(e) => e.target.value.trim() !== (t.link_url || "") && patch({ link_url: e.target.value.trim() })} placeholder="https://…" className={inp} data-testid="task-detail-link" /></Row>
+                <Row label={tr("task_field_board", "Board")}>
                   <Select
                     value={t.board_id || "none"}
                     disabled={ro}
@@ -547,37 +552,37 @@ export default function TaskDetail({ id, onClose, onChanged }) {
                       patch({
                         board_id: nextBoardId,
                         ...(b?.department ? { department: b.department } : {}),
-                      }, "Board tugas diperbarui");
+                      }, tr("task_board_updated", "Board tugas diperbarui"));
                     }}
                   >
                     <SelectTrigger className="w-full bg-surface2 border-slate-200 dark:border-slate-800 rounded-xl" data-testid="task-detail-board">
-                      <SelectValue placeholder="Pilih board..." />
+                      <SelectValue placeholder={tr("task_board_ph", "Pilih board...")} />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="none">Semua Board</SelectItem>
+                      <SelectItem value="none">{tr("task_board_all_opt", "Semua Board")}</SelectItem>
                       {boards.map((b) => (
                         <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </Row>
-                <Row label="Warna Kartu"><ColorPicker value={t.card_color} onChange={(v) => patch({ card_color: v })} style={t.card_style} onStyle={(v) => patch({ card_style: v })} /></Row>
-                {t.estimate && <Row label="Estimasi"><span className="text-sm">{t.estimate}</span></Row>}
+                <Row label={tr("task_field_card_color", "Warna Kartu")}><ColorPicker value={t.card_color} onChange={(v) => patch({ card_color: v })} style={t.card_style} onStyle={(v) => patch({ card_style: v })} /></Row>
+                {t.estimate && <Row label={tr("task_field_estimate_short", "Estimasi")}><span className="text-sm">{t.estimate}</span></Row>}
               </div>
               <Checkpoints t={t} ro={ro} patch={patch} reload={load} members={members} emptyMessage={assigneeScope.emptyMessage} />
-              {t.links?.length > 0 && <section><h4 className="mb-2 text-sm font-bold">Link Referensi</h4>{t.links.map((l, i) => <a key={`${l}-${i}`} href={l} target="_blank" rel="noreferrer" className="flex items-center gap-2 py-0.5 text-sm text-brand"><Link2 size={13} /><span className="truncate">{l}</span></a>)}</section>}
-              <section><div className="mb-2 flex items-center justify-between"><h4 className="text-sm font-bold">Lampiran · {(t.attachments || []).length}</h4>{!ro && <button onClick={pick} className="flex items-center gap-1 text-xs font-semibold text-brand" data-testid="task-detail-add-attachment"><Paperclip size={12} />Tambah</button>}{input}</div><AttachmentList items={t.attachments || []} onRemove={ro ? null : (a) => setAtt((x) => x.filter((y) => y.id !== a.id))} /></section>
+              {t.links?.length > 0 && <section><h4 className="mb-2 text-sm font-bold">{tr("task_field_ref_links", "Link Referensi")}</h4>{t.links.map((l, i) => <a key={`${l}-${i}`} href={l} target="_blank" rel="noreferrer" className="flex items-center gap-2 py-0.5 text-sm text-brand"><Link2 size={13} /><span className="truncate">{l}</span></a>)}</section>}
+              <section><div className="mb-2 flex items-center justify-between"><h4 className="text-sm font-bold">{tr("task_field_attachments", "Lampiran")} · {(t.attachments || []).length}</h4>{!ro && <button onClick={pick} className="flex items-center gap-1 text-xs font-semibold text-brand" data-testid="task-detail-add-attachment"><Paperclip size={12} />{tr("task_add_att_short", "Tambah")}</button>}{input}</div><AttachmentList items={t.attachments || []} onRemove={ro ? null : (a) => setAtt((x) => x.filter((y) => y.id !== a.id))} /></section>
 
               <div className="flex flex-wrap gap-2">
-                <button onClick={() => (groups ? setGroups(null) : api.get("/conversations").then((r) => setGroups((Array.isArray(r.data) ? r.data : []).filter((c) => c.type === "group"))).catch((e) => toast.error(errMsg(e, "Gagal memuat daftar grup"))))} className="btn-accent flex h-10 items-center gap-1.5 px-4 text-sm font-semibold shadow-sm" data-testid="task-share-btn"><Share2 size={15} />Kirim Preview ke Grup</button>
-                {t.conversation_id && <button onClick={() => navigate(`/messages/${t.conversation_id}`)} className="btn-ghost flex h-10 items-center gap-1.5 border px-4 text-sm font-semibold" data-testid="task-open-conversation"><MessageSquare size={14} />Buka Obrolan</button>}
-                {(isManager || (me?.user_id && reqIds.includes(me.user_id))) && <button onClick={() => patch({ archived: !t.archived }, t.archived ? "Dipulihkan" : "Diarsipkan")} className="btn-ghost flex h-10 items-center gap-1.5 border px-4 text-sm font-semibold" data-testid="task-archive-btn"><Archive size={14} />{t.archived ? "Pulihkan" : "Arsipkan"}</button>}
+                <button onClick={() => (groups ? setGroups(null) : api.get("/conversations").then((r) => setGroups((Array.isArray(r.data) ? r.data : []).filter((c) => c.type === "group"))).catch((e) => toast.error(errMsg(e, tr("task_share_load_groups_err", "Gagal memuat daftar grup")))))} className="btn-accent flex h-10 items-center gap-1.5 px-4 text-sm font-semibold shadow-sm" data-testid="task-share-btn"><Share2 size={15} />{tr("task_share_preview_btn", "Kirim Preview ke Grup")}</button>
+                {t.conversation_id && <button onClick={() => navigate(`/messages/${t.conversation_id}`)} className="btn-ghost flex h-10 items-center gap-1.5 border px-4 text-sm font-semibold" data-testid="task-open-conversation"><MessageSquare size={14} />{tr("task_open_chat_btn", "Buka Obrolan")}</button>}
+                {(isManager || (me?.user_id && reqIds.includes(me.user_id))) && <button onClick={() => patch({ archived: !t.archived }, t.archived ? tr("task_restored_toast", "Dipulihkan") : tr("task_archived_toast", "Diarsipkan"))} className="btn-ghost flex h-10 items-center gap-1.5 border px-4 text-sm font-semibold" data-testid="task-archive-btn"><Archive size={14} />{t.archived ? tr("task_restore_btn", "Pulihkan") : tr("task_archive_btn", "Arsipkan")}</button>}
               </div>
               {groups && (
                 <div className="rounded-2xl border bg-surface2/60 p-3 space-y-2">
-                  <p className="text-xs font-bold text-sub">Pilih grup tujuan pengiriman preview & approval:</p>
+                  <p className="text-xs font-bold text-sub">{tr("task_share_pick_title", "Pilih grup tujuan pengiriman preview & approval:")}</p>
                   {groups.length === 0 ? (
-                    <p className="text-xs text-sub py-2">Anda belum bergabung ke grup mana pun.</p>
+                    <p className="text-xs text-sub py-2">{tr("task_share_no_groups", "Anda belum bergabung ke grup mana pun.")}</p>
                   ) : (
                     <div className="grid gap-1 sm:grid-cols-2">
                       {groups.map((g) => (
@@ -596,10 +601,10 @@ export default function TaskDetail({ id, onClose, onChanged }) {
                 </div>
               )}
               <section>
-                <div className="mb-3 flex items-center gap-1 border-b text-sm font-semibold">{[["comments", MessageSquare, `Komentar · ${(t.comments || []).length}`], ["activity", History, `Aktivitas · ${(t.activity || []).length}`]].map(([k, I, l]) => <button key={k} type="button" onClick={() => setTab(k)} className={`-mb-px flex items-center gap-1.5 rounded-none border-b-2 px-3 py-2 transition-colors cursor-pointer ${tab === k ? "border-[var(--c-accent)] text-ink" : "border-transparent text-sub hover:text-ink hover:border-slate-300 dark:hover:border-slate-700"}`} data-testid={`task-tab-${k}`}><I size={14} />{l}</button>)}</div>
+                <div className="mb-3 flex items-center gap-1 border-b text-sm font-semibold">{[["comments", MessageSquare, `${tr("task_tab_comments", "Komentar")} · ${(t.comments || []).length}`], ["activity", History, `${tr("task_tab_activity", "Aktivitas")} · ${(t.activity || []).length}`]].map(([k, I, l]) => <button key={k} type="button" onClick={() => setTab(k)} className={`-mb-px flex items-center gap-1.5 rounded-none border-b-2 px-3 py-2 transition-colors cursor-pointer ${tab === k ? "border-[var(--c-accent)] text-ink" : "border-transparent text-sub hover:text-ink hover:border-slate-300 dark:hover:border-slate-700"}`} data-testid={`task-tab-${k}`}><I size={14} />{l}</button>)}</div>
                 {tab === "comments" ? <Comments t={t} reload={load} /> : (
                   (t.activity || []).length === 0 ? (
-                    <p className="py-4 text-center text-xs text-sub">Belum ada riwayat aktivitas pada tugas ini.</p>
+                    <p className="py-4 text-center text-xs text-sub">{tr("task_activity_empty", "Belum ada riwayat aktivitas pada tugas ini.")}</p>
                   ) : (
                     <ul className="space-y-3" data-testid="task-activity">
                       {(t.activity || []).map((a, i) => (
@@ -607,7 +612,7 @@ export default function TaskDetail({ id, onClose, onChanged }) {
                           <Avatar user={userMap[a.actor_id]} size={26} showStatus={false} className="mt-0.5" />
                           <div className="min-w-0 flex-1">
                             <p className="leading-snug">
-                              <b className="text-ink">{userMap[a.actor_id]?.name || "Pengguna"}</b>{" "}
+                              <b className="text-ink">{userMap[a.actor_id]?.name || tr("task_user_fallback", "Pengguna")}</b>{" "}
                               <span className="text-sub">{a.action}</span>
                               {!a.detail && a.changes?.from !== undefined && a.changes?.to !== undefined && typeof a.changes.to !== "object" && a.changes.to !== null && (
                                 <span className="text-sub">
@@ -640,7 +645,7 @@ export default function TaskDetail({ id, onClose, onChanged }) {
       onOpenChange={setPrintPreviewOpen}
       mode="detail"
       task={t}
-      boardName={activeBoardObj?.name || t?.department || "Detail Tugas"}
+      boardName={activeBoardObj?.name || t?.department || tr("task_detail_title", "Detail Tugas")}
       userMap={userMap}
       labelMap={labelMap}
       statuses={statuses}

@@ -1,8 +1,10 @@
-import { useState, useEffect, useRef } from "react";
+import { memo, useState, useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Reply, Smile, Pencil, Trash2, Pin, CheckSquare, FileText, MoreHorizontal, Check, CheckCheck } from "lucide-react";
+import { Reply, Smile, Pencil, Trash2, Pin, CheckSquare, FileText, MoreHorizontal, Check, CheckCheck, StickyNote, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import { api, errMsg, fileUrl } from "../../lib/api";
+import { playSound } from "../../lib/sound";
+import { updateMessageInCache } from "../../lib/workspaceCaches";
 import { useApp } from "../../context/AppContext";
 import { Avatar, StatusBadge, PriorityBadge, fmtTime, ImageLightbox, VerifiedBadge, buildMentionMatcher } from "../../components/common";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../../components/ui/dropdown-menu";
@@ -10,8 +12,221 @@ import { AppSelect } from "../../components/ui/select";
 import PollCard from "./PollCard";
 import { StickerTile } from "./Composer";
 
+const STICKY_THEMES = {
+  amber: {
+    card: "bg-amber-50/95 border-amber-200/90 dark:bg-amber-950/35 dark:border-amber-800/70",
+    topBar: "#F59E0B",
+    badge: "bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200",
+    barFill: "bg-amber-500",
+    checkBg: "bg-amber-500 border-amber-500 text-white",
+  },
+  emerald: {
+    card: "bg-emerald-50/90 border-emerald-200/90 dark:bg-emerald-950/35 dark:border-emerald-800/70",
+    topBar: "#10B981",
+    badge: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-200",
+    barFill: "bg-emerald-500",
+    checkBg: "bg-emerald-500 border-emerald-500 text-white",
+  },
+  sky: {
+    card: "bg-sky-50/95 border-sky-200/90 dark:bg-sky-950/35 dark:border-sky-800/70",
+    topBar: "#0EA5E9",
+    badge: "bg-sky-100 text-sky-800 dark:bg-sky-900/60 dark:text-sky-200",
+    barFill: "bg-sky-500",
+    checkBg: "bg-sky-500 border-sky-500 text-white",
+  },
+  rose: {
+    card: "bg-rose-50/90 border-rose-200/90 dark:bg-rose-950/35 dark:border-rose-800/70",
+    topBar: "#F43F5E",
+    badge: "bg-rose-100 text-rose-800 dark:bg-rose-900/60 dark:text-rose-200",
+    barFill: "bg-rose-500",
+    checkBg: "bg-rose-500 border-rose-500 text-white",
+  },
+  violet: {
+    card: "bg-violet-50/90 border-violet-200/90 dark:bg-violet-950/35 dark:border-violet-800/70",
+    topBar: "#8B5CF6",
+    badge: "bg-violet-100 text-violet-800 dark:bg-violet-900/60 dark:text-violet-200",
+    barFill: "bg-violet-500",
+    checkBg: "bg-violet-500 border-violet-500 text-white",
+  },
+};
+
+function StickyNoteMessageCard({ m }) {
+  const { me, t: tr } = useApp();
+  const [noteState, setNoteState] = useState(() => m.sticky_note || {});
+  const [busyId, setBusyId] = useState(null);
+
+  useEffect(() => {
+    if (m.sticky_note) setNoteState(m.sticky_note);
+  }, [m.sticky_note]);
+
+  const theme = STICKY_THEMES[noteState.color] || STICKY_THEMES.amber;
+  const items = Array.isArray(noteState.items) ? noteState.items : [];
+  const total = items.length;
+  const doneCount = items.filter((it) => it?.done).length;
+  const progress = total > 0 ? Math.round((doneCount / total) * 100) : noteState.completed ? 100 : (noteState.progress || 0);
+  const isExecuted = total > 0 ? doneCount === total : Boolean(noteState.completed);
+
+  const handleToggleItem = async (itemId) => {
+    if (busyId === itemId) return;
+    const prevState = noteState;
+    const targetItem = items.find((it) => it.id === itemId);
+    const nextDone = targetItem ? !targetItem.done : true;
+    const myFirstName = (me?.name || "Anggota").split(" ")[0];
+    const nextItems = items.map((it) =>
+      it.id === itemId
+        ? { ...it, done: nextDone, checked_by_name: nextDone ? myFirstName : undefined }
+        : it
+    );
+    const nextDoneCount = nextItems.filter((it) => it.done).length;
+    const nextProgress = total > 0 ? Math.round((nextDoneCount / total) * 100) : 0;
+    const nextExecuted = total > 0 && nextDoneCount === total;
+
+    const optimisticNote = {
+      ...noteState,
+      items: nextItems,
+      done_count: nextDoneCount,
+      total_count: total,
+      progress: nextProgress,
+      completed: nextExecuted,
+    };
+    setNoteState(optimisticNote);
+    updateMessageInCache({ ...m, sticky_note: optimisticNote });
+
+    if (nextExecuted && progress < 100) {
+      playSound("task_done");
+    } else {
+      playSound(nextDone ? "check" : "uncheck");
+    }
+
+    setBusyId(itemId);
+    try {
+      const { data } = await api.post(`/messages/${m.id}/sticky-toggle`, { item_id: itemId });
+      if (data?.message) {
+        if (data.message.sticky_note) setNoteState(data.message.sticky_note);
+        updateMessageInCache(data.message);
+      }
+    } catch (err) {
+      setNoteState(prevState);
+      updateMessageInCache({ ...m, sticky_note: prevState });
+      toast.error(errMsg(err, "Gagal memperbarui checklist sticky note"));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <div
+      className={`w-[min(22rem,calc(100vw-5.5rem))] sm:w-[360px] max-w-full rounded-2xl border border-t-[3px] p-3.5 sm:p-4 text-left text-ink shadow-sm ${theme.card}`}
+      style={{ borderTopColor: theme.topBar }}
+      data-testid={`message-sticky-note-${m.id}`}
+    >
+      {/* Header Badge & Progress */}
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${theme.badge}`}>
+            <StickyNote size={10} />
+            {tr("notes_group_card_badge", "Sticky Note")}
+          </span>
+          <h4 className="mt-1.5 text-sm font-extrabold text-ink break-words leading-snug">
+            {noteState.title || tr("notes_default_title", "Catatan Checklist")}
+          </h4>
+        </div>
+
+        <div
+          className={`inline-flex shrink-0 items-center gap-1 font-mono text-xs font-extrabold tabular-nums ${
+            isExecuted ? "text-emerald-700 dark:text-emerald-300" : "text-slate-700 dark:text-slate-200"
+          }`}
+        >
+          {isExecuted && <CheckCircle2 size={13} className="text-emerald-600 shrink-0" />}
+          <span>
+            {progress}%{isExecuted ? ` · ${tr("notes_status_done", "Terlaksana")}` : ""}
+          </span>
+        </div>
+      </div>
+
+      {/* Progress Bar */}
+      <div className="mt-2 flex items-center gap-2">
+        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-900/10 dark:bg-white/10">
+          <div
+            className={`h-full rounded-full transition-all duration-300 ${
+              isExecuted ? "bg-emerald-500" : theme.barFill
+            }`}
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+        <span className="text-[10.5px] font-semibold text-sub tabular-nums shrink-0">
+          {doneCount}/{total}
+        </span>
+      </div>
+
+      {/* Interactive Checklist */}
+      {items.length > 0 ? (
+        <ul className="mt-2.5 space-y-1.5">
+          {items.map((it) => (
+            <li key={it.id}>
+              <button
+                type="button"
+                onClick={() => handleToggleItem(it.id)}
+                disabled={busyId === it.id}
+                className="group/item flex w-full items-start gap-2 rounded-lg px-1.5 py-1 text-left hover:bg-white/75 dark:hover:bg-slate-900/50 transition-colors cursor-pointer"
+                data-testid={`group-sticky-check-${it.id}`}
+              >
+                <span
+                  className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors ${
+                    it.done
+                      ? theme.checkBg
+                      : "border-slate-400/70 bg-white/90 dark:border-slate-600 dark:bg-slate-900/70 group-hover/item:border-slate-600"
+                  }`}
+                >
+                  {it.done && <Check size={11} strokeWidth={3} />}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span
+                    className={`block text-xs leading-relaxed break-words [overflow-wrap:anywhere] ${
+                      it.done
+                        ? "line-through text-slate-400 dark:text-slate-500"
+                        : "text-slate-800 dark:text-slate-100 font-medium"
+                    }`}
+                  >
+                    {it.text}
+                  </span>
+                  {it.done && it.checked_by_name && (
+                    <span className="block text-[10px] font-medium text-emerald-700/80 dark:text-emerald-300/80">
+                      ✓ {tr("notes_group_checked_by_prefix", "Dicentang")} {it.checked_by_name}
+                    </span>
+                  )}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : noteState.content ? (
+        <p className="mt-2 text-xs text-slate-700 dark:text-slate-200 whitespace-pre-line break-words">
+          {noteState.content}
+        </p>
+      ) : (
+        <p className="mt-2 text-[11px] italic text-sub">
+          {tr("notes_group_empty_points", "Belum ada poin checklist.")}
+        </p>
+      )}
+
+      {noteState.extra_note && (
+        <div className="mt-2.5 rounded-xl border border-black/10 dark:border-white/10 bg-white/60 dark:bg-slate-900/40 px-2.5 py-1.5 text-xs text-ink break-words">
+          💬 {noteState.extra_note}
+        </div>
+      )}
+
+      {noteState.owner_name && (
+        <p className="mt-2.5 pt-2 border-t border-black/8 dark:border-white/10 text-[10.5px] font-semibold text-sub">
+          {tr("notes_group_owner_prefix", "Dari Sticky Note")} {noteState.owner_name}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function TaskPreview({ m }) {
-  const { userMap, me, isManager, isAdmin, subscribe } = useApp();
+  const { userMap, me, isManager, isAdmin, subscribe, t: tr } = useApp();
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
   const [task, setTask] = useState(m.task || {});
@@ -56,6 +271,7 @@ function TaskPreview({ m }) {
         message_id: m.id
       });
       if (decision === "approve") {
+        playSound("task_done");
         const nextApproved = res.data?.approvals?.approved_by || [];
         if (nextApproved.length >= 2) {
           toast.success("Persetujuan tercapai 100%! Status Selesai.");
@@ -63,6 +279,7 @@ function TaskPreview({ m }) {
           toast.success("Persetujuan 1/2 tercatat. Menunggu 1 orang lagi.");
         }
       } else {
+        playSound("click");
         const prefillText = `Revisi ${t.number_str || `T-${t.number || ""}`} — ${t.title || ""}: `;
         window.dispatchEvent(
           new CustomEvent("circle:composer-prefill", {
@@ -97,13 +314,13 @@ function TaskPreview({ m }) {
       {/* 2-Person Approval Progress */}
       <div className="mt-3.5 pt-3 border-t">
         <div className="flex items-center justify-between gap-2 text-xs font-semibold mb-1.5">
-          <span className="text-slate-500 truncate">Progres Approval</span>
+          <span className="text-slate-500 truncate">{tr("chat_task_approval_progress", "Progres Approval")}</span>
           <span className={`font-bold shrink-0 whitespace-nowrap ${isApprovedFull ? "text-emerald-600" : approvedCount === 1 ? "text-amber-600" : "text-slate-500"}`}>
             {isApprovedFull
-              ? `${approvedCount >= 2 ? `${approvedCount}/2` : "2/2"} Disetujui`
+              ? `${approvedCount >= 2 ? `${approvedCount}/2` : "2/2"} ${tr("chat_task_approved_suffix", "Disetujui")}`
               : approvedCount === 1
-              ? "1/2 Disetujui"
-              : "0/2 Disetujui"}
+              ? `1/2 ${tr("chat_task_approved_suffix", "Disetujui")}`
+              : `0/2 ${tr("chat_task_approved_suffix", "Disetujui")}`}
           </span>
         </div>
         <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
@@ -115,7 +332,7 @@ function TaskPreview({ m }) {
 
         {approvedList.length > 0 && (
           <p className="mt-2 text-[11px] text-slate-500">
-            Disetujui: <b className="text-ink">{approvedList.map((uid) => userMap[uid]?.name?.split(" ")[0] || uid).join(", ")}</b>
+            {tr("chat_task_approved_suffix", "Disetujui")}: <b className="text-ink">{approvedList.map((uid) => userMap[uid]?.name?.split(" ")[0] || uid).join(", ")}</b>
           </p>
         )}
       </div>
@@ -130,7 +347,7 @@ function TaskPreview({ m }) {
               className="h-9 rounded-xl bg-emerald-500 text-xs font-bold text-white shadow-sm hover:bg-emerald-600 disabled:opacity-50 transition-colors"
               data-testid={`task-preview-approve-${m.id}`}
             >
-              {alreadyApproved ? "Sudah Setuju ✓" : "Setuju"}
+              {alreadyApproved ? tr("chat_task_already_approved_btn", "Sudah Setuju ✓") : tr("chat_task_approve_btn", "Setuju")}
             </button>
             <button
               disabled={busy}
@@ -138,16 +355,16 @@ function TaskPreview({ m }) {
               className="h-9 rounded-xl border border-amber-300 bg-amber-50 dark:bg-amber-950/30 text-xs font-bold text-amber-700 dark:text-amber-300 hover:bg-amber-100 disabled:opacity-50 transition-colors"
               data-testid={`task-preview-revise-${m.id}`}
             >
-              Revisi
+              {tr("chat_task_revise_btn", "Revisi")}
             </button>
           </div>
         ) : (
-          <p className="mt-3 text-center text-xs text-sub">Menunggu persetujuan.</p>
+          <p className="mt-3 text-center text-xs text-sub">{tr("chat_task_waiting_approval", "Menunggu persetujuan.")}</p>
         )
       ) : (
         <div className="mt-3 space-y-2">
           <div className="rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 p-2 text-center text-xs font-bold text-emerald-700 dark:text-emerald-300">
-            ✓ Disetujui 100% · Status: Done
+            {tr("chat_task_approved_done_banner", "✓ Disetujui 100% · Status: Done")}
           </div>
           {/* Allow additional approvals beyond 2 people */}
           {!alreadyApproved ? (
@@ -157,11 +374,11 @@ function TaskPreview({ m }) {
               className="w-full h-8 rounded-xl border border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30 text-xs font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 disabled:opacity-50 transition-colors"
               data-testid={`task-preview-approve-more-${m.id}`}
             >
-              + Setuju Juga ({approvedCount} telah setuju)
+              {tr("chat_task_approve_more_prefix", "+ Setuju Juga")} ({approvedCount} {tr("chat_task_approve_more_suffix", "telah setuju")})
             </button>
           ) : (
             <p className="text-center text-[11px] text-emerald-600 font-medium">
-              Anda telah menyetujui tugas ini ✓
+              {tr("chat_task_you_approved", "Anda telah menyetujui tugas ini ✓")}
             </p>
           )}
         </div>
@@ -171,7 +388,7 @@ function TaskPreview({ m }) {
 }
 
 function AccessRequestCard({ m }) {
-  const { me, isManager, isAdmin, subscribe } = useApp();
+  const { me, isManager, isAdmin, subscribe, t: tr } = useApp();
   const [busy, setBusy] = useState(false);
   const [req, setReq] = useState(m.access_request || {});
   const [assignedRole, setAssignedRole] = useState(req.assigned_role || req.job_title || "employee");
@@ -269,9 +486,9 @@ function AccessRequestCard({ m }) {
           </div>
           <div className="min-w-0 flex-1">
             <h4 className="text-xs font-bold text-ink leading-tight truncate">
-              {isDeleteReq ? "Persetujuan Hapus Karyawan" : isPasswordReset ? "Permintaan Reset Password" : "Permintaan Akses Masuk"}
+              {isDeleteReq ? tr("chat_access_del_title", "Persetujuan Hapus Karyawan") : isPasswordReset ? tr("chat_access_pw_title", "Permintaan Reset Password") : tr("chat_access_login_title", "Permintaan Akses Masuk")}
             </h4>
-            <p className="text-[10px] text-sub font-medium truncate">Asisten Workspace: Circle</p>
+            <p className="text-[10px] text-sub font-medium truncate">{tr("chat_access_subtitle", "Asisten Workspace: Circle")}</p>
           </div>
         </div>
         <span className={`inline-flex shrink-0 items-center rounded-full px-2.5 py-0.5 text-[11px] font-bold whitespace-nowrap ${
@@ -281,7 +498,7 @@ function AccessRequestCard({ m }) {
             ? "bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300"
             : "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
         }`}>
-          {isApproved ? (isDeleteReq ? "✓ Dihapus" : isPasswordReset ? "✓ Direset" : "✓ Disetujui") : isRejected ? "✕ Ditolak" : "⏳ Menunggu"}
+          {isApproved ? (isDeleteReq ? tr("chat_access_status_deleted", "✓ Dihapus") : isPasswordReset ? tr("chat_access_status_reset", "✓ Direset") : tr("chat_access_status_approved", "✓ Disetujui")) : isRejected ? tr("chat_access_status_rejected", "✕ Ditolak") : tr("chat_access_status_waiting", "⏳ Menunggu")}
         </span>
       </div>
 
@@ -299,31 +516,31 @@ function AccessRequestCard({ m }) {
 
         <div className="grid grid-cols-2 gap-2 text-[11.5px]">
           <div className="rounded-lg border bg-surface2/40 px-2.5 py-1.5">
-            <span className="block text-[10px] uppercase font-bold text-sub tracking-wider">Divisi</span>
-            <span className="font-semibold text-ink">{req.department || "Umum"}</span>
+            <span className="block text-[10px] uppercase font-bold text-sub tracking-wider">{tr("chat_access_div_label", "Divisi")}</span>
+            <span className="font-semibold text-ink">{req.department || tr("dash_tasks_general_label", "Umum")}</span>
           </div>
           <div className="rounded-lg border bg-surface2/40 px-2.5 py-1.5">
-            <span className="block text-[10px] uppercase font-bold text-sub tracking-wider">Jabatan / Posisi</span>
-            <span className="font-semibold text-ink truncate block">{req.job_title || "Karyawan"}</span>
+            <span className="block text-[10px] uppercase font-bold text-sub tracking-wider">{tr("chat_access_job_label", "Jabatan / Posisi")}</span>
+            <span className="font-semibold text-ink truncate block">{req.job_title || tr("common_role_employee", "Karyawan")}</span>
           </div>
         </div>
 
         {req.requested_by && (
           <div className="rounded-lg border bg-surface2/30 p-2 text-[11.5px]">
-            <span className="block text-[10px] uppercase font-bold text-sub tracking-wider mb-0.5">Diajukan oleh:</span>
+            <span className="block text-[10px] uppercase font-bold text-sub tracking-wider mb-0.5">{tr("chat_access_req_by", "Diajukan oleh:")}</span>
             <p className="text-ink font-semibold">{req.requested_by}</p>
           </div>
         )}
 
         {req.note && req.note !== "-" && (
           <div className="rounded-lg border bg-surface2/30 p-2 text-[11.5px]">
-            <span className="block text-[10px] uppercase font-bold text-sub tracking-wider mb-0.5">Alasan / Catatan:</span>
+            <span className="block text-[10px] uppercase font-bold text-sub tracking-wider mb-0.5">{tr("chat_access_note", "Alasan / Catatan:")}</span>
             <p className="text-ink/80 italic font-medium">"{req.note}"</p>
           </div>
         )}
 
         <p className="text-[10px] text-sub text-right pt-1">
-          Diajukan: {fmtTime(req.created_at)}
+          {tr("chat_access_submitted_prefix", "Diajukan:")} {fmtTime(req.created_at)}
         </p>
       </div>
 
@@ -334,17 +551,17 @@ function AccessRequestCard({ m }) {
             <div className="space-y-2">
               {!isDeleteReq && !isPasswordReset && (
                 <div className="flex items-center gap-1.5 text-xs">
-                  <span className="text-[11px] text-sub font-medium">Tetapkan Role:</span>
+                  <span className="text-[11px] text-sub font-medium">{tr("chat_access_assign_role", "Tetapkan Role:")}</span>
                   <AppSelect
                     value={assignedRole}
                     onChange={(e) => setAssignedRole(e.target.value)}
                     className="h-8 flex-1 rounded-xl border bg-surface px-2.5 text-xs font-semibold text-ink"
                     data-testid="access-role-select"
                   >
-                    <option value="employee">Karyawan</option>
-                    <option value="project_manager">Project Manager</option>
+                    <option value="employee">{tr("common_role_employee", "Karyawan")}</option>
+                    <option value="project_manager">{tr("common_role_project_manager", "Project Manager")}</option>
                     <option value="department_manager">Department Manager</option>
-                    <option value="workspace_admin">Workspace Admin</option>
+                    <option value="workspace_admin">{tr("common_role_workspace_admin", "Workspace Admin")}</option>
                   </AppSelect>
                 </div>
               )}
@@ -355,7 +572,7 @@ function AccessRequestCard({ m }) {
                   className={`flex h-9 items-center justify-center gap-1.5 rounded-xl font-bold text-xs text-white shadow-xs disabled:opacity-50 transition-colors ${isDeleteReq ? "bg-rose-600 hover:bg-rose-700" : isPasswordReset ? "bg-indigo-600 hover:bg-indigo-700" : "bg-emerald-600 hover:bg-emerald-700"}`}
                   data-testid={`approve-access-btn-${req.id}`}
                 >
-                  {isDeleteReq ? "Setujui Hapus" : isPasswordReset ? "Setujui Reset" : "Setujui Akses"}
+                  {isDeleteReq ? tr("chat_access_approve_del", "Setujui Hapus") : isPasswordReset ? tr("chat_access_approve_pw", "Setujui Reset") : tr("chat_access_approve_login", "Setujui Akses")}
                 </button>
                 <button
                   disabled={busy}
@@ -363,13 +580,13 @@ function AccessRequestCard({ m }) {
                   className="flex h-9 items-center justify-center gap-1 rounded-xl border border-slate-300 dark:border-slate-700 bg-surface hover:bg-surface2 font-bold text-xs text-ink disabled:opacity-50 transition-colors"
                   data-testid={`reject-access-btn-${req.id}`}
                 >
-                  Tolak
+                  {tr("chat_reject_btn", "Tolak")}
                 </button>
               </div>
             </div>
           ) : (
             <p className="text-center text-xs text-sub italic">
-              Menunggu persetujuan dari Manajer Divisi / Super Admin.
+              {tr("chat_access_waiting_mgr", "Menunggu persetujuan dari Manajer Divisi / Super Admin.")}
             </p>
           )
         ) : isApproved ? (
@@ -567,8 +784,8 @@ function MessageEmojiPicker({ onReact, messageId, isMine }) {
   );
 }
 
-export default function MessageItem({ m, mine, grouped, conv, onReply, onCreateTask, readBy }) {
-  const { userMap, me } = useApp();
+function MessageItem({ m, mine, grouped, conv, onReply, onCreateTask, readBy }) {
+  const { userMap, me, t: tr } = useApp();
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState(m.text);
   const [lightboxImg, setLightboxImg] = useState(null);
@@ -576,12 +793,19 @@ export default function MessageItem({ m, mine, grouped, conv, onReply, onCreateT
   useEffect(() => {
     setLocalReactions(m.reactions || {});
   }, [m.reactions]);
-  const navigate = useNavigate();
   const senderId = m.sender_id || m.user_id;
   const isMine = Boolean(mine || (me?.user_id && senderId === me.user_id));
   const sender = userMap[senderId] || (isMine ? me : null);
-  const act = (fn) => async () => { try { await fn(); } catch (e) { toast.error(errMsg(e)); } };
+  const act = (fn, sfx) => async () => {
+    try {
+      await fn();
+      if (sfx) playSound(sfx);
+    } catch (e) {
+      toast.error(errMsg(e));
+    }
+  };
   const react = async (emoji) => {
+    playSound("pop");
     const uid = me?.user_id;
     const prev = localReactions;
     if (uid) {
@@ -606,13 +830,14 @@ export default function MessageItem({ m, mine, grouped, conv, onReply, onCreateT
       toast.error(errMsg(e));
     }
   };
-  const save = act(async () => { await api.patch(`/messages/${m.id}`, { text: val }); setEditing(false); });
+  const save = act(async () => { await api.patch(`/messages/${m.id}`, { text: val }); setEditing(false); }, "success");
 
   const bubble = isMine ? "bg-brand text-white rounded-br-md shadow-xs" : "bg-surface border border-slate-200/80 dark:border-slate-700 text-ink rounded-bl-md shadow-xs";
   const images = (m.attachments || []).filter((a) => a.content_type?.startsWith("image/") || (!a.content_type && /\.(png|jpe?g|gif|webp|svg)$/i.test(a.name || "")));
   const docs = (m.attachments || []).filter((a) => !images.includes(a));
   const isPoll = m.type === "poll" || Boolean(m.poll_id || m.poll);
-  const plain = m.type === "sticker" || isPoll || m.type === "task" || m.type === "approval_card" || m.type === "access_request_card";
+  const isStickyNote = m.type === "sticky_note" || Boolean(m.sticky_note);
+  const plain = m.type === "sticker" || isPoll || isStickyNote || m.type === "task" || m.type === "approval_card" || m.type === "access_request_card";
   return (
     <div className={`group flex w-full gap-2 sm:gap-2.5 ${isMine ? "flex-row-reverse justify-start" : "flex-row justify-start"} ${grouped ? "mt-0.5" : "mt-3.5 sm:mt-4"}`} data-testid={`message-${m.id}`}>
       {!isMine && (
@@ -625,11 +850,11 @@ export default function MessageItem({ m, mine, grouped, conv, onReply, onCreateT
           <p className={`mb-1 px-1 text-[11px] text-sub ${isMine ? "text-right" : "text-left"}`}>
             {isMine ? (
               <b className="inline-flex items-center gap-1 font-semibold text-ink">
-                <span>Anda</span>
+                <span>{tr("beranda_you_label", "Anda")}</span>
               </b>
             ) : (
               <Link to={`/people/${senderId}`} className="inline-flex items-center gap-1 font-semibold text-ink hover:underline">
-                <span>{sender?.name || "Anggota"}</span>
+                <span>{sender?.name || tr("chat_msg_member_fallback", "Anggota")}</span>
                 <VerifiedBadge user={sender} size={12} />
               </Link>
             )} · {fmtTime(m.created_at)}
@@ -639,15 +864,16 @@ export default function MessageItem({ m, mine, grouped, conv, onReply, onCreateT
         {m.reply_to && <div className={`mb-1 max-w-full truncate rounded-xl border-l-4 border-[var(--c-accent)] bg-surface2 px-2.5 py-1 text-xs text-sub`}>{userMap[m.reply_to.sender_id]?.name}: {m.reply_to.text}</div>}
         <div className="flex items-center gap-1">
           <div className={`min-w-0 ${isMine ? "order-2" : ""}`}>
-            {m.deleted ? <div className="rounded-2xl border border-dashed px-3 py-2 text-sm italic text-sub">Pesan telah dihapus</div> : (<>
+            {m.deleted ? <div className="rounded-2xl border border-dashed px-3 py-2 text-sm italic text-sub">{tr("chat_msg_deleted", "Pesan telah dihapus")}</div> : (<>
               {m.type === "sticker" && m.sticker && <StickerTile s={m.sticker} size={120} />}
               {isPoll && <PollCard pollId={m.poll_id || m.poll?.id} poll={m.poll} />}
+              {isStickyNote && m.sticky_note && <StickyNoteMessageCard m={m} />}
               {(m.type === "task" || m.type === "approval_card") && m.task && <TaskPreview m={m} />}
               {m.type === "access_request_card" && (m.access_request || m.data) && <AccessRequestCard m={m} />}
-              {(m.text && !isPoll && m.type !== "access_request_card") && (editing ? (
+              {(m.text && !isPoll && !isStickyNote && m.type !== "access_request_card") && (editing ? (
                 <div className="flex flex-col gap-1"><textarea value={val} onChange={(e) => setVal(e.target.value)} className="w-72 max-w-full rounded-xl border bg-surface p-2 text-sm text-ink" data-testid="edit-message-input" />
-                  <div className="flex gap-2 text-xs"><button onClick={save} className="font-semibold text-brand" data-testid="save-edit-btn">Simpan</button><button onClick={() => setEditing(false)} className="text-sub">Batal</button></div></div>
-              ) : <div className={`${plain ? "mt-1 text-sm" : `rounded-2xl px-3.5 py-2 text-[14.5px] leading-relaxed ${bubble}`} whitespace-pre-wrap break-words`}>{renderText(m.text, userMap, isMine, m.mention_ids)}{m.edited && <span className="ml-1 text-[10px] opacity-70">· diedit</span>}</div>)}
+                  <div className="flex gap-2 text-xs"><button onClick={save} className="font-semibold text-brand" data-testid="save-edit-btn">{tr("chat_msg_save_edit", "Simpan")}</button><button onClick={() => setEditing(false)} className="text-sub">{tr("chat_msg_cancel_edit", "Batal")}</button></div></div>
+              ) : <div className={`${plain ? "mt-1 text-sm" : `rounded-2xl px-3.5 py-2 text-[14.5px] leading-relaxed ${bubble}`} whitespace-pre-wrap break-words`}>{renderText(m.text, userMap, isMine, m.mention_ids)}{m.edited && <span className="ml-1 text-[10px] opacity-70">{tr("chat_msg_edited", "· diedit")}</span>}</div>)}
               {images.length > 0 && (
                 <div className={`mt-1 grid gap-1.5 ${images.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
                   {images.map((a) => (
@@ -662,6 +888,7 @@ export default function MessageItem({ m, mine, grouped, conv, onReply, onCreateT
                         src={fileUrl(a.id)}
                         alt={a.name || "Photo"}
                         loading="lazy"
+                        decoding="async"
                         className={`${images.length > 1 ? "h-32 w-32 sm:h-44 sm:w-44" : "max-h-72 w-auto max-w-[min(260px,calc(100vw-7rem))] sm:max-w-[340px]"} rounded-xl object-cover transition-transform duration-200 group-hover/img:scale-[1.02]`}
                       />
                     </button>
@@ -677,11 +904,11 @@ export default function MessageItem({ m, mine, grouped, conv, onReply, onCreateT
                 <DropdownMenuTrigger asChild><button className="flex h-7 w-7 sm:h-8 sm:w-8 items-center justify-center rounded-full text-sub hover:bg-surface2" aria-label="Opsi pesan" data-testid={`message-actions-${m.id}`}><MoreHorizontal size={15} /></button></DropdownMenuTrigger>
                 <DropdownMenuContent align={isMine ? "end" : "start"} className="bg-surface">
                   <div className="flex gap-0.5 p-1">{QUICK.map((e) => <DropdownMenuItem key={e} onClick={() => react(e)} className="h-8 w-8 justify-center rounded-lg p-0 text-lg" data-testid={`react-${e}`}>{e}</DropdownMenuItem>)}</div>
-                  <DropdownMenuItem onClick={() => onReply(m)} data-testid="action-reply"><Reply size={14} className="mr-2" />Balas</DropdownMenuItem>
-                  <DropdownMenuItem onClick={act(() => api.post(`/messages/${m.id}/pin`))} data-testid="action-pin"><Pin size={14} className="mr-2" />{m.pinned ? "Lepas Sematan" : "Sematkan"}</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => onCreateTask(m)} data-testid="action-create-task"><CheckSquare size={14} className="mr-2" />Buat Tugas</DropdownMenuItem>
-                  {isMine && m.type === "text" && <DropdownMenuItem onClick={() => setEditing(true)} data-testid="action-edit"><Pencil size={14} className="mr-2" />Ubah</DropdownMenuItem>}
-                  {(isMine || conv?.admin_ids?.includes(me?.user_id) || conv?.type === "dm" || conv?.type === "group_message") && <DropdownMenuItem onClick={act(() => api.delete(`/messages/${m.id}`))} className="text-rose-600" data-testid="action-delete"><Trash2 size={14} className="mr-2" />Hapus</DropdownMenuItem>}
+                  <DropdownMenuItem onClick={() => onReply(m)} data-testid="action-reply"><Reply size={14} className="mr-2" />{tr("chat_msg_action_reply", "Balas")}</DropdownMenuItem>
+                  <DropdownMenuItem onClick={act(() => api.post(`/messages/${m.id}/pin`), "pop")} data-testid="action-pin"><Pin size={14} className="mr-2" />{m.pinned ? tr("chat_msg_action_unpin", "Lepas Sematan") : tr("chat_msg_action_pin", "Sematkan")}</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => onCreateTask(m)} data-testid="action-create-task"><CheckSquare size={14} className="mr-2" />{tr("chat_msg_action_task", "Buat Tugas")}</DropdownMenuItem>
+                  {isMine && m.type === "text" && <DropdownMenuItem onClick={() => setEditing(true)} data-testid="action-edit"><Pencil size={14} className="mr-2" />{tr("chat_msg_action_edit", "Ubah")}</DropdownMenuItem>}
+                  {(isMine || conv?.admin_ids?.includes(me?.user_id) || conv?.type === "dm" || conv?.type === "group_message") && <DropdownMenuItem onClick={act(() => api.delete(`/messages/${m.id}`), "trash")} className="text-rose-600" data-testid="action-delete"><Trash2 size={14} className="mr-2" />{tr("chat_msg_action_delete", "Hapus")}</DropdownMenuItem>}
                 </DropdownMenuContent>
               </DropdownMenu>
               <MessageEmojiPicker onReact={react} messageId={m.id} isMine={isMine} />
@@ -691,9 +918,11 @@ export default function MessageItem({ m, mine, grouped, conv, onReply, onCreateT
         {Object.keys(localReactions || {}).length > 0 && (
           <div className="mt-1 flex flex-wrap gap-1">{Object.entries(localReactions).map(([e, us]) => <button key={e} onClick={() => react(e)} title={us.map((u) => userMap[u]?.name).join(", ")} className={`rounded-full border px-2 py-0.5 text-xs ${us.includes(me?.user_id) ? "border-[var(--c-accent)] bg-soft-red" : "bg-surface"}`} data-testid={`reaction-${e}`}>{e} {us.length}</button>)}</div>
         )}
-        {isMine && readBy !== undefined && <span className="mt-0.5 flex items-center gap-0.5 text-[10px] text-sub" data-testid="read-receipt">{readBy > 0 ? <><CheckCheck size={12} className="text-blue-500" />Dibaca{conv.type === "group" ? ` oleh ${readBy}` : ""}</> : <><Check size={12} />Terkirim</>}</span>}
+        {isMine && readBy !== undefined && <span className="mt-0.5 flex items-center gap-0.5 text-[10px] text-sub" data-testid="read-receipt">{readBy > 0 ? <><CheckCheck size={12} className="text-blue-500" />{tr("chat_msg_read_label", "Dibaca")}{conv.type === "group" ? ` ${tr("chat_msg_read_by_prefix", "oleh")} ${readBy}` : ""}</> : <><Check size={12} />{tr("chat_msg_sent_label", "Terkirim")}</>}</span>}
       </div>
       <ImageLightbox image={lightboxImg} onClose={() => setLightboxImg(null)} />
     </div>
   );
 }
+
+export default memo(MessageItem);

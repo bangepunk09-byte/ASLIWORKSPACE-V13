@@ -24,6 +24,23 @@ const Beranda = lazy(routeLoaders["/beranda"]);
 const Schedule = lazy(routeLoaders["/schedule"]);
 const Marketplace = lazy(routeLoaders["/marketplace"]);
 
+function ErrorFallback({ onReload }) {
+  const { t } = useApp() || {};
+  const tr = t || ((_k, fb) => fb || _k);
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-background p-6 text-center text-ink">
+      <p className="text-base font-bold">{tr("err_page_title", "Terjadi kendala saat memuat halaman.")}</p>
+      <button
+        type="button"
+        onClick={onReload}
+        className="btn-accent h-10 px-5 text-xs font-bold"
+      >
+        {tr("err_reload_btn", "Muat Ulang Halaman")}
+      </button>
+    </div>
+  );
+}
+
 class AppErrorBoundary extends Component {
   constructor(props) {
     super(props);
@@ -35,19 +52,12 @@ class AppErrorBoundary extends Component {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-background p-6 text-center text-ink">
-          <p className="text-base font-bold">Terjadi kendala saat memuat halaman.</p>
-          <button
-            type="button"
-            onClick={() => {
-              this.setState({ hasError: false });
-              window.location.reload();
-            }}
-            className="btn-accent h-10 px-5 text-xs font-bold"
-          >
-            Muat Ulang Halaman
-          </button>
-        </div>
+        <ErrorFallback
+          onReload={() => {
+            this.setState({ hasError: false });
+            window.location.reload();
+          }}
+        />
       );
     }
     return this.props.children;
@@ -57,7 +67,7 @@ class AppErrorBoundary extends Component {
 function AuthCallback() {
   const done = useRef(false);
   const navigate = useNavigate();
-  const { setSession } = useApp();
+  const { setSession, t } = useApp();
   useEffect(() => {
     if (done.current) return;
     done.current = true;
@@ -67,12 +77,12 @@ function AuthCallback() {
       .then(({ data }) => { setSession(data); navigate("/", { replace: true }); })
       .catch((e) => { setSession(null); navigate(`/login?status=${e?.response?.data?.detail || "error"}`, { replace: true }); });
   }, [navigate, setSession]);
-  return <Spinner label="Signing you in" />;
+  return <Spinner label={t("err_signing_in", "Signing you in")} />;
 }
 
 function Protected({ children }) {
-  const { session } = useApp();
-  if (session === undefined) return <Spinner label="Loading CIRCLE" />;
+  const { session, t } = useApp();
+  if (session === undefined) return <Spinner label={t("err_loading_circle", "Loading CIRCLE")} />;
   if (!session?.user?.user_id) return <Navigate to="/login" replace />;
   if (session.user?.needs_onboarding) return <Onboarding />;
   return children;
@@ -80,9 +90,10 @@ function Protected({ children }) {
 
 function Router() {
   const location = useLocation();
+  const { t } = useApp();
   if (location.hash?.includes("session_id=")) return <AuthCallback />;
   return (
-    <Suspense fallback={<Spinner label="Memuat halaman" />}>
+    <Suspense fallback={<Spinner label={t("err_loading_page", "Memuat halaman")} />}>
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route element={<Protected><Shell /></Protected>}>

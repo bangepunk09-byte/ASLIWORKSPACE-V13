@@ -3,8 +3,11 @@ import { Download, Smartphone, Share, PlusSquare, CheckCircle2, WifiOff, X, Exte
 import { usePWAInstall, useOnlineStatus } from "../hooks/usePWAInstall";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
 import { toast } from "sonner";
+import { useApp } from "../context/AppContext";
 
 export function PWAInstallButton({ variant = "default", compact = false }) {
+  const { t } = useApp() || {};
+  const tr = t || ((_k, fb) => fb || _k);
   const { canNativeInstall, isInstalled, isIOS, isInIframe, install } = usePWAInstall();
   const [showGuide, setShowGuide] = useState(false);
 
@@ -16,8 +19,8 @@ export function PWAInstallButton({ variant = "default", compact = false }) {
         <div className="flex items-center gap-3 rounded-2xl border border-emerald-200 dark:border-emerald-900/50 bg-emerald-50/70 dark:bg-emerald-950/30 p-3.5">
           <CheckCircle2 size={20} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
           <div className="min-w-0 flex-1">
-            <p className="text-xs font-bold text-ink">Aplikasi PWA Terpasang</p>
-            <p className="text-[11px] text-sub">CIRCLE berjalan dalam mode aplikasi mandiri.</p>
+            <p className="text-xs font-bold text-ink">{tr("pwa_installed_title", "Aplikasi PWA Terpasang")}</p>
+            <p className="text-[11px] text-sub">{tr("pwa_installed_desc", "CIRCLE berjalan dalam mode aplikasi mandiri.")}</p>
           </div>
         </div>
       );
@@ -29,7 +32,7 @@ export function PWAInstallButton({ variant = "default", compact = false }) {
     if (canNativeInstall) {
       const accepted = await install();
       if (accepted) {
-        toast.success("Aplikasi CIRCLE berhasil dipasang ke perangkat Anda!");
+        toast.success(tr("pwa_install_success", "Aplikasi CIRCLE berhasil dipasang ke perangkat Anda!"));
         return;
       }
     }
@@ -43,24 +46,24 @@ export function PWAInstallButton({ variant = "default", compact = false }) {
           type="button"
           onClick={handleInstallClick}
           className="inline-flex h-8 items-center gap-1 rounded-xl bg-brand px-2.5 text-[11px] font-bold text-white shadow-xs active:scale-95 transition-transform shrink-0"
-          aria-label="Pasang Aplikasi PWA"
+          aria-label={tr("pwa_install_aria", "Pasang Aplikasi PWA")}
           data-testid="pwa-install-mobile-btn"
         >
           <Download size={13} />
-          <span>Pasang</span>
+          <span>{tr("pwa_install_short", "Pasang")}</span>
         </button>
       ) : variant === "sidebar" ? (
         <button
           type="button"
           onClick={handleInstallClick}
-          title="Pasang Aplikasi CIRCLE"
+          title={tr("pwa_guide_title", "Install Aplikasi CIRCLE")}
           className={`inline-flex items-center justify-center gap-1.5 rounded-lg border border-brand/30 bg-brand/10 text-brand hover:bg-brand hover:text-white transition-colors font-semibold text-[11px] ${
             compact ? "h-8 w-8 p-0 mx-auto" : "h-8 flex-1 min-w-0 px-2.5"
           }`}
           data-testid="pwa-install-sidebar-btn"
         >
           <Download size={13} className="shrink-0" />
-          {!compact && <span className="truncate">Pasang PWA</span>}
+          {!compact && <span className="truncate">{tr("pwa_install_sidebar", "Pasang PWA")}</span>}
         </button>
       ) : variant === "card" ? (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-surface2/60 p-3.5">
@@ -69,8 +72,8 @@ export function PWAInstallButton({ variant = "default", compact = false }) {
               <Smartphone size={19} />
             </div>
             <div className="min-w-0">
-              <p className="text-xs font-bold text-ink">Pasang CIRCLE di Layar Utama</p>
-              <p className="text-[11px] text-sub">Akses lebih cepat, layar penuh, dan dukungan offline.</p>
+              <p className="text-xs font-bold text-ink">{tr("pwa_card_title", "Pasang CIRCLE di Layar Utama")}</p>
+              <p className="text-[11px] text-sub">{tr("pwa_card_desc", "Akses lebih cepat, layar penuh, dan dukungan offline.")}</p>
             </div>
           </div>
           <button
@@ -80,7 +83,7 @@ export function PWAInstallButton({ variant = "default", compact = false }) {
             data-testid="pwa-install-card-btn"
           >
             <Download size={14} />
-            <span>Pasang Aplikasi</span>
+            <span>{tr("pwa_install_btn", "Pasang Aplikasi")}</span>
           </button>
         </div>
       ) : (
@@ -91,7 +94,7 @@ export function PWAInstallButton({ variant = "default", compact = false }) {
           data-testid="pwa-install-btn"
         >
           <Download size={15} />
-          <span>{isIOS ? "Pasang di iOS" : "Pasang Aplikasi"}</span>
+          <span>{isIOS ? tr("pwa_install_ios_btn", "Pasang di iOS") : tr("pwa_install_btn", "Pasang Aplikasi")}</span>
         </button>
       )}
 
@@ -102,22 +105,22 @@ export function PWAInstallButton({ variant = "default", compact = false }) {
               <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand text-white">
                 <Smartphone size={18} />
               </div>
-              <span>Install Aplikasi CIRCLE</span>
+              <span>{tr("pwa_guide_title", "Install Aplikasi CIRCLE")}</span>
             </DialogTitle>
           </DialogHeader>
 
           <div className="mt-2 space-y-4 text-sm">
             <p className="text-xs text-sub leading-relaxed">
-              Pasang <strong>CIRCLE Workspace</strong> langsung di perangkat Anda untuk pengalaman layar penuh, akses instan, dan dukungan offline.
+              {tr("pwa_guide_desc", "Pasang CIRCLE Workspace langsung di perangkat Anda untuk pengalaman layar penuh, akses instan, dan dukungan offline.")}
             </p>
 
             {isInIframe && (
               <div className="space-y-2.5 rounded-2xl border border-amber-200 dark:border-amber-900/50 bg-amber-50/70 dark:bg-amber-950/30 p-3.5">
                 <p className="text-xs font-bold text-amber-800 dark:text-amber-300">
-                  Sedang dibuka di mode pratinjau
+                  {tr("pwa_iframe_title", "Sedang dibuka di mode pratinjau")}
                 </p>
                 <p className="text-[11px] text-amber-700 dark:text-amber-200/90 leading-relaxed">
-                  Browser tidak mengizinkan instalasi PWA dari dalam pratinjau. Buka aplikasi di tab browser penuh agar tombol Install muncul otomatis.
+                  {tr("pwa_iframe_desc", "Browser tidak mengizinkan instalasi PWA dari dalam pratinjau. Buka aplikasi di tab browser penuh agar tombol Install muncul otomatis.")}
                 </p>
                 <a
                   href={fullTabUrl}
@@ -127,41 +130,41 @@ export function PWAInstallButton({ variant = "default", compact = false }) {
                   data-testid="pwa-open-new-tab-link"
                 >
                   <ExternalLink size={14} />
-                  <span>Buka di Tab Browser Penuh</span>
+                  <span>{tr("pwa_open_tab_btn", "Buka di Tab Browser Penuh")}</span>
                 </a>
               </div>
             )}
 
             {isIOS ? (
               <div className="space-y-2.5 rounded-2xl border bg-surface2/60 p-3.5">
-                <p className="text-xs font-bold text-ink">Panduan untuk iPhone / iPad:</p>
+                <p className="text-xs font-bold text-ink">{tr("pwa_guide_ios_title", "Panduan untuk iPhone / iPad:")}</p>
                 <div className="flex items-start gap-2.5 text-xs text-sub">
                   <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand text-[11px] font-bold text-white">1</span>
-                  <p>Ketuk ikon <strong>Bagikan</strong> <Share size={13} className="inline text-brand mx-0.5" /> di bilah bawah Safari.</p>
+                  <p>{tr("pwa_guide_ios_step1_prefix", "Ketuk ikon")} <strong>{tr("pwa_guide_ios_step1_bold", "Bagikan")}</strong> <Share size={13} className="inline text-brand mx-0.5" /> {tr("pwa_guide_ios_step1_suffix", "di bilah bawah Safari.")}</p>
                 </div>
                 <div className="flex items-start gap-2.5 text-xs text-sub">
                   <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand text-[11px] font-bold text-white">2</span>
-                  <p>Gulir ke bawah dan pilih <strong>Tambah ke Layar Utama</strong> <PlusSquare size={13} className="inline text-brand mx-0.5" />.</p>
+                  <p>{tr("pwa_guide_ios_step2_prefix", "Gulir ke bawah dan pilih")} <strong>{tr("pwa_guide_ios_step2_bold", "Tambah ke Layar Utama")}</strong> <PlusSquare size={13} className="inline text-brand mx-0.5" />.</p>
                 </div>
                 <div className="flex items-start gap-2.5 text-xs text-sub">
                   <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand text-[11px] font-bold text-white">3</span>
-                  <p>Ketuk <strong>Tambah</strong> di pojok kanan atas.</p>
+                  <p>{tr("pwa_guide_ios_step3_prefix", "Ketuk")} <strong>{tr("pwa_guide_ios_step3_bold", "Tambah")}</strong> {tr("pwa_guide_ios_step3_suffix", "di pojok kanan atas.")}</p>
                 </div>
               </div>
             ) : (
               <div className="space-y-2.5 rounded-2xl border bg-surface2/60 p-3.5">
-                <p className="text-xs font-bold text-ink">Panduan untuk Android / Chrome / Edge Desktop:</p>
+                <p className="text-xs font-bold text-ink">{tr("pwa_guide_other_title", "Panduan untuk Android / Chrome / Edge Desktop:")}</p>
                 <div className="flex items-start gap-2.5 text-xs text-sub">
                   <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand text-[11px] font-bold text-white">1</span>
-                  <p>Pastikan aplikasi dibuka langsung di tab Chrome atau Edge.</p>
+                  <p>{tr("pwa_guide_other_step1", "Pastikan aplikasi dibuka langsung di tab Chrome atau Edge.")}</p>
                 </div>
                 <div className="flex items-start gap-2.5 text-xs text-sub">
                   <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand text-[11px] font-bold text-white">2</span>
-                  <p>Klik ikon <strong>Install App</strong> di kanan kolom URL bar browser, atau buka menu browser.</p>
+                  <p>{tr("pwa_guide_other_step2_prefix", "Klik ikon")} <strong>{tr("pwa_guide_other_step2_bold", "Install App")}</strong> {tr("pwa_guide_other_step2_suffix", "di kanan kolom URL bar browser, atau buka menu browser.")}</p>
                 </div>
                 <div className="flex items-start gap-2.5 text-xs text-sub">
                   <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand text-[11px] font-bold text-white">3</span>
-                  <p>Pilih <strong>Install Aplikasi / Tambahkan ke Layar Utama</strong>.</p>
+                  <p>{tr("pwa_guide_other_step3_prefix", "Pilih")} <strong>{tr("pwa_guide_other_step3_bold", "Install Aplikasi / Tambahkan ke Layar Utama")}</strong>.</p>
                 </div>
               </div>
             )}
@@ -172,7 +175,7 @@ export function PWAInstallButton({ variant = "default", compact = false }) {
               className="h-10 w-full rounded-xl bg-brand text-xs font-bold text-white shadow-xs hover:opacity-95"
               data-testid="pwa-guide-close-btn"
             >
-              Mengerti
+              {tr("pwa_guide_ok_btn", "Mengerti")}
             </button>
           </div>
         </DialogContent>
@@ -182,6 +185,8 @@ export function PWAInstallButton({ variant = "default", compact = false }) {
 }
 
 export function OfflineIndicator() {
+  const { t } = useApp() || {};
+  const tr = t || ((_k, fb) => fb || _k);
   const isOnline = useOnlineStatus();
   const [dismissed, setDismissed] = useState(false);
 
@@ -194,13 +199,13 @@ export function OfflineIndicator() {
     >
       <div className="flex items-center gap-2">
         <WifiOff size={15} className="shrink-0" />
-        <span>Mode Offline — Menggunakan data tersimpan.</span>
+        <span>{tr("pwa_offline_banner", "Mode Offline — Menggunakan data tersimpan.")}</span>
       </div>
       <button
         type="button"
         onClick={() => setDismissed(true)}
         className="rounded-lg p-1 hover:bg-white/20"
-        aria-label="Tutup"
+        aria-label={tr("common_close", "Tutup")}
       >
         <X size={14} />
       </button>

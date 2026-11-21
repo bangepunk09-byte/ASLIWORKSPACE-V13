@@ -125,6 +125,7 @@ function TeamChart({ data, type }) {
 const Dot = ({ c, label }) => <span className="flex items-center gap-2 text-sm text-sub"><i className="h-3 w-3 rounded-full" style={{ background: c }} />{label}</span>;
 
 function BoardScopeDropdown({ scopeLabel, boardColor, activeMode, availableScopes = [], activeBoardId, isAdmin, onSelectBoard, testId = "stats-board-dropdown" }) {
+  const { t: tr } = useApp();
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -170,7 +171,7 @@ function BoardScopeDropdown({ scopeLabel, boardColor, activeMode, availableScope
               data-testid={`${testId}-option-all`}
             >
               <span className="h-2 w-2 rounded-full shrink-0 bg-slate-400" />
-              <span className="flex-1 truncate">Semua Divisi</span>
+              <span className="flex-1 truncate">{tr("stats_all_divisions", "Semua Divisi")}</span>
               {activeMode === "all" && <Check size={14} className="text-brand shrink-0" />}
             </DropdownMenuItem>
           </>
@@ -181,14 +182,14 @@ function BoardScopeDropdown({ scopeLabel, boardColor, activeMode, availableScope
 }
 
 function TeamPerformance({ data, anchor, setAnchor, range, setRange, scopeLabel, availableScopes = [], activeBoardId, canSwitchBoards, isAdmin, onSelectBoard }) {
-  const { t } = useApp();
+  const { t: tr } = useApp();
   const [type, setType] = useState("line");
   const s = data?.summary || INITIAL_DATA.summary;
   const boardColor = data?.scope?.color;
   const activeMode = data?.scope?.mode || "board";
 
   const showDropdown = Boolean(canSwitchBoards && scopeLabel);
-  const baseTitle = t("dash_perf_title", "Performa & Beban Kerja Tim");
+  const baseTitle = tr("dash_perf_title", "Performa & Beban Kerja Tim");
   const headingTitle = !showDropdown && scopeLabel && activeMode !== "all"
     ? `${baseTitle} ${scopeLabel}`
     : baseTitle;
@@ -217,29 +218,30 @@ function TeamPerformance({ data, anchor, setAnchor, range, setRange, scopeLabel,
         </div>
         <div className="flex flex-col items-start gap-2.5 lg:items-end shrink-0">
           <div className="flex flex-wrap items-center gap-2">
-            <div className="flex rounded-2xl bg-surface2 p-1"><button onClick={() => setRange("7d")} className={seg(range === "7d")} data-testid="team-range-7d">7 Hari</button><button onClick={() => setRange("4w")} className={seg(range === "4w")} data-testid="team-range-4w"><span className="sm:hidden">1 Bulan</span><span className="hidden sm:inline">1 Bulan Terakhir</span></button></div>
+            <div className="flex rounded-2xl bg-surface2 p-1"><button onClick={() => setRange("7d")} className={seg(range === "7d")} data-testid="team-range-7d">{tr("stats_range_7d", "7 Hari")}</button><button onClick={() => setRange("4w")} className={seg(range === "4w")} data-testid="team-range-4w"><span className="sm:hidden">{tr("stats_range_4w_short", "1 Bulan")}</span><span className="hidden sm:inline">{tr("stats_range_4w_long", "1 Bulan Terakhir")}</span></button></div>
             <div className="flex rounded-2xl bg-surface2 p-1"><button onClick={() => setType("line")} className={`${seg(type === "line")} px-2.5`} aria-label="Grafik garis" data-testid="team-chart-line"><LineIcon size={16} /></button><button onClick={() => setType("bar")} className={`${seg(type === "bar")} px-2.5`} aria-label="Grafik batang" data-testid="team-chart-bar"><BarChart3 size={16} /></button></div>
           </div>
         </div>
       </div>
       <div className="mt-4 sm:mt-6 grid grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-4 min-w-0">
-        <StatCard tone="green" label={t("dash_perf_done", "Tugas Selesai")} value={s.done ?? 0} note={s.done ? `${s.done} tugas selesai` : "Belum ada selesai"} icon={CheckCircle2} testid="team-stat-done" />
-        <StatCard tone="red" label={t("dash_perf_overdue", "Overdue")} value={s.overdue ?? 0} note={s.overdue ? `${s.overdue} lewat deadline` : "Tidak ada telat"} icon={AlertTriangle} testid="team-stat-overdue" />
-        <StatCard tone="gray" label={t("dash_perf_ontime", "Ketepatan Waktu")} value={`${s.on_time_rate ?? 0}%`} note={s.due ? `${s.on_time} dari ${s.due} tugas tepat waktu` : "Belum ada data tugas"} icon={Target} testid="team-stat-ontime" className="col-span-2 sm:col-span-1" />
+        <StatCard tone="green" label={tr("dash_perf_done", "Tugas Selesai")} value={s.done ?? 0} note={s.done ? `${s.done} ${tr("stats_done_unit", "tugas selesai")}` : tr("stats_no_done", "Belum ada selesai")} icon={CheckCircle2} testid="team-stat-done" />
+        <StatCard tone="red" label={tr("dash_perf_overdue", "Overdue")} value={s.overdue ?? 0} note={s.overdue ? `${s.overdue} ${tr("stats_late_unit", "lewat deadline")}` : tr("stats_no_late", "Tidak ada telat")} icon={AlertTriangle} testid="team-stat-overdue" />
+        <StatCard tone="gray" label={tr("dash_perf_ontime", "Ketepatan Waktu")} value={`${s.on_time_rate ?? 0}%`} note={s.due ? `${s.on_time} ${tr("stats_ontime_of", "dari")} ${s.due} ${tr("stats_ontime_suffix", "tugas tepat waktu")}` : tr("stats_no_task_data", "Belum ada data tugas")} icon={Target} testid="team-stat-ontime" className="col-span-2 sm:col-span-1" />
       </div>
       <div className="mt-4 sm:mt-5 w-full min-w-0">
         <TeamChart data={data} type={type} />
       </div>
-      <div className="mt-3 sm:mt-4 flex flex-wrap items-center justify-between gap-2 border-t pt-3 sm:pt-4"><div className="flex flex-wrap gap-4 sm:gap-5"><Dot c={GREEN} label={t("dash_perf_done", "Tugas Selesai")} /><Dot c={RED} label={t("dash_perf_overdue", "Overdue")} /></div><span className="text-xs sm:text-sm text-sub">{scopeLabel ? `Diperbarui otomatis dari board ${scopeLabel}` : t("dash_perf_updated_note", "Diperbarui otomatis dari papan tugas")}</span></div>
+      <div className="mt-3 sm:mt-4 flex flex-wrap items-center justify-between gap-2 border-t pt-3 sm:pt-4"><div className="flex flex-wrap gap-4 sm:gap-5"><Dot c={GREEN} label={tr("dash_perf_done", "Tugas Selesai")} /><Dot c={RED} label={tr("dash_perf_overdue", "Overdue")} /></div><span className="text-xs sm:text-sm text-sub">{scopeLabel ? `${tr("stats_updated_from_board", "Diperbarui otomatis dari board")} ${scopeLabel}` : tr("dash_perf_updated_note", "Diperbarui otomatis dari papan tugas")}</span></div>
     </section>
   );
 }
 
 function PersonCard({ p, boardId, className = "" }) {
-  const { userMap } = useApp();
+  const { userMap, t: tr } = useApp();
   const navigate = useNavigate();
   const usr = userMap?.[p.user_id];
   const [emo, lbl, cls] = STATUS[p.status] || STATUS.optimal;
+  const statusLabel = tr(`personnel_status_${p.status}`, lbl);
   const barColor = p.status === "pressure" ? "bg-rose-500" : p.status === "stabil" ? "bg-[#2563EB]" : "bg-emerald-500";
   const reasonTone = p.status === "pressure"
     ? "text-rose-600 dark:text-rose-400"
@@ -267,24 +269,24 @@ function PersonCard({ p, boardId, className = "" }) {
     <div className={`flex min-w-0 w-full flex-col overflow-hidden rounded-2xl sm:rounded-3xl border bg-surface p-4 sm:p-5 transition-shadow hover:shadow-md ${className}`} data-testid={`person-card-${p.user_id}`}>
       <div className="flex items-start gap-2.5 sm:gap-3 min-w-0">
         <Avatar user={usr} size={44} />
-        <div className="min-w-0 flex-1"><p className="truncate font-bold text-sm sm:text-base leading-snug">{usr?.name}</p><p className="truncate text-xs sm:text-sm text-sub leading-snug">{usr?.job_title || "—"}</p><p className="truncate text-xs text-sub opacity-80 leading-snug">{usr?.department || "Tanpa divisi"}</p></div>
-        <span className={`flex shrink-0 items-center gap-1 rounded-full border px-2 sm:px-2.5 py-0.5 sm:py-1 text-[11px] sm:text-xs font-bold whitespace-nowrap ${cls}`} title={p.status_reason || `${p.day_deadlines ?? 0} deadline pada hari terpilih`} data-testid={`person-status-${p.user_id}`}>{emo} {lbl}</span>
+        <div className="min-w-0 flex-1"><p className="truncate font-bold text-sm sm:text-base leading-snug">{usr?.name}</p><p className="truncate text-xs sm:text-sm text-sub leading-snug">{usr?.job_title || "—"}</p><p className="truncate text-xs text-sub opacity-80 leading-snug">{usr?.department || tr("personnel_no_div", "Tanpa divisi")}</p></div>
+        <span className={`flex shrink-0 items-center gap-1 rounded-full border px-2 sm:px-2.5 py-0.5 sm:py-1 text-[11px] sm:text-xs font-bold whitespace-nowrap ${cls}`} title={p.status_reason || `${p.day_deadlines ?? 0} deadline pada hari terpilih`} data-testid={`person-status-${p.user_id}`}>{emo} {statusLabel}</span>
       </div>
-      <div className="mt-3.5 sm:mt-4 flex justify-between gap-2 text-xs sm:text-sm"><span className="font-medium text-sub truncate">Beban Tugas Aktif</span><span className="font-semibold tabular-nums shrink-0" data-testid={`person-load-${p.user_id}`}>{p.active ?? 0} tugas ({p.share ?? 0}%)</span></div>
+      <div className="mt-3.5 sm:mt-4 flex justify-between gap-2 text-xs sm:text-sm"><span className="font-medium text-sub truncate">{tr("personnel_active_load", "Beban Tugas Aktif")}</span><span className="font-semibold tabular-nums shrink-0" data-testid={`person-load-${p.user_id}`}>{p.active ?? 0} {tr("personnel_task_unit", "tugas")} ({p.share ?? 0}%)</span></div>
       <span className="mt-2 block h-2 overflow-hidden rounded-full bg-surface2"><span className={`block h-full rounded-full ${barColor} transition-[width] duration-700`} style={{ width: `${p.share ?? 0}%` }} /></span>
       {p.status_reason && <p className={`mt-2 truncate text-[11px] font-semibold ${reasonTone}`}>{p.status_reason}</p>}
-      <p className="mt-3 text-[11px] font-bold uppercase tracking-[0.12em] text-sub">Tugas sedang berjalan:</p>
-      <div className="mt-1.5 sm:mt-2 flex-1 space-y-1 min-w-0">{tasks.length ? tasks.map((t) => <Link key={t.id} to={`/tasks?task=${t.id}`} className="block truncate text-xs sm:text-sm hover:text-brand">• {t.title}</Link>) : <p className="text-xs sm:text-sm italic text-sub">Tidak ada tugas aktif saat ini.</p>}{(p.more ?? 0) > 0 && <p className="text-xs text-sub">+{p.more} tugas lainnya</p>}</div>
+      <p className="mt-3 text-[11px] font-bold uppercase tracking-[0.12em] text-sub">{tr("personnel_active_tasks_label", "Tugas sedang berjalan:")}</p>
+      <div className="mt-1.5 sm:mt-2 flex-1 space-y-1 min-w-0">{tasks.length ? tasks.map((t) => <Link key={t.id} to={`/tasks?task=${t.id}`} className="block truncate text-xs sm:text-sm hover:text-brand">• {t.title}</Link>) : <p className="text-xs sm:text-sm italic text-sub">{tr("personnel_no_active_tasks", "Tidak ada tugas aktif saat ini.")}</p>}{(p.more ?? 0) > 0 && <p className="text-xs text-sub">+{p.more} {tr("personnel_more_tasks", "tugas lainnya")}</p>}</div>
       <div className="mt-3.5 sm:mt-4 flex flex-wrap items-center justify-between gap-2 border-t pt-3 sm:pt-4">
-        <button onClick={dm} className="flex items-center gap-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap" data-testid={`person-message-${p.user_id}`}><MessageSquare size={15} />Kirim Pesan</button>
-        <Link to={boardLink} className="flex items-center gap-1 text-xs sm:text-sm font-semibold text-[#2563EB] whitespace-nowrap" data-testid={`person-kanban-${p.user_id}`}>Buka Board<ArrowRight size={14} /></Link>
+        <button onClick={dm} className="flex items-center gap-1.5 text-xs sm:text-sm font-semibold whitespace-nowrap" data-testid={`person-message-${p.user_id}`}><MessageSquare size={15} />{tr("personnel_send_msg", "Kirim Pesan")}</button>
+        <Link to={boardLink} className="flex items-center gap-1 text-xs sm:text-sm font-semibold text-[#2563EB] whitespace-nowrap" data-testid={`person-kanban-${p.user_id}`}>{tr("personnel_open_board", "Buka Board")}<ArrowRight size={14} /></Link>
       </div>
     </div>
   );
 }
 
 function Personnel({ data, scopeLabel, availableScopes = [], activeBoardId, canSwitchBoards, isAdmin, onSelectBoard }) {
-  const { userMap, t } = useApp();
+  const { userMap, t: tr } = useApp();
   const [div, setDiv] = useState("");
   const [all, setAll] = useState(false);
   const scopeMode = data?.scope?.mode || "board";
@@ -306,7 +308,7 @@ function Personnel({ data, scopeLabel, availableScopes = [], activeBoardId, canS
   const count = (k) => people.filter((p) => p.status === k).length;
 
   const showDropdown = Boolean(canSwitchBoards && scopeLabel);
-  const baseTitle = t("dash_personnel_title", "Kapasitas & Beban Kerja Personel");
+  const baseTitle = tr("dash_personnel_title", "Kapasitas & Beban Kerja Personel");
   const headingTitle = !showDropdown && scopeLabel && scopeMode !== "all"
     ? `${baseTitle} ${scopeLabel}`
     : baseTitle;
@@ -332,11 +334,11 @@ function Personnel({ data, scopeLabel, availableScopes = [], activeBoardId, canS
             />
           )}
         </div>
-        <div className="flex flex-wrap gap-1.5 sm:gap-2">{Object.entries(STATUS).map(([k, [e, l, c]]) => <span key={k} className={`flex items-center gap-1 rounded-full border px-2.5 sm:px-3.5 py-1 sm:py-1.5 text-xs sm:text-sm font-bold ${c}`} data-testid={`personnel-count-${k}`}>{e} {count(k)} {l}</span>)}</div>
+        <div className="flex flex-wrap gap-1.5 sm:gap-2">{Object.entries(STATUS).map(([k, [e, l, c]]) => <span key={k} className={`flex items-center gap-1 rounded-full border px-2.5 sm:px-3.5 py-1 sm:py-1.5 text-xs sm:text-sm font-bold ${c}`} data-testid={`personnel-count-${k}`}>{e} {count(k)} {tr(`personnel_status_${k}`, l)}</span>)}</div>
       </div>
       {scopeMode === "all" && depts.length > 1 && <div className="mt-3.5 sm:mt-4 flex w-full max-w-full min-w-0 flex-nowrap sm:flex-wrap items-center gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar pb-1 sm:pb-0" data-testid="personnel-division-filter">
-        <span className="flex shrink-0 items-center gap-1 text-xs sm:text-sm text-sub"><Filter size={13} />Divisi:</span>
-        {[["", "Semua Divisi"], ...depts.map((d) => [d, d])].map(([k, l]) => <button key={k || "all"} onClick={() => setDiv(k)} className={`h-9 sm:h-10 shrink-0 whitespace-nowrap rounded-2xl px-3.5 sm:px-4 text-xs sm:text-sm font-semibold transition-colors cursor-pointer ${div === k ? "bg-brand text-white shadow-xs" : "bg-surface2 text-ink hover:bg-surface2/70"}`} data-testid={`personnel-div-${k ? k.replace(/\s/g, "-") : "all"}`}>{l}</button>)}
+        <span className="flex shrink-0 items-center gap-1 text-xs sm:text-sm text-sub"><Filter size={13} />{tr("personnel_div_filter_label", "Divisi:")}</span>
+        {[["", tr("stats_all_divisions", "Semua Divisi")], ...depts.map((d) => [d, d])].map(([k, l]) => <button key={k || "all"} onClick={() => setDiv(k)} className={`h-9 sm:h-10 shrink-0 whitespace-nowrap rounded-2xl px-3.5 sm:px-4 text-xs sm:text-sm font-semibold transition-colors cursor-pointer ${div === k ? "bg-brand text-white shadow-xs" : "bg-surface2 text-ink hover:bg-surface2/70"}`} data-testid={`personnel-div-${k ? k.replace(/\s/g, "-") : "all"}`}>{l}</button>)}
       </div>}
       <div className="mt-4 sm:mt-5 grid grid-cols-1 gap-3.5 sm:gap-4 md:grid-cols-2 xl:grid-cols-3 min-w-0">
         {(all ? people : people.slice(0, 6)).map((p, idx) => (
@@ -349,16 +351,16 @@ function Personnel({ data, scopeLabel, availableScopes = [], activeBoardId, canS
           className={`mt-4 sm:mt-5 w-full rounded-2xl border py-2.5 sm:py-3 text-xs sm:text-sm font-semibold text-sub hover:text-ink transition-colors ${people.length > 6 ? "" : "md:hidden"}`}
           data-testid="personnel-toggle-all"
         >
-          {all ? "Tampilkan lebih sedikit" : `Lihat semua personel (${people.length})`}
+          {all ? tr("personnel_show_less", "Tampilkan lebih sedikit") : `${tr("personnel_show_all_prefix", "Lihat semua personel")} (${people.length})`}
         </button>
       )}
-      {!people.length && <p className="mt-6 text-sm text-sub">Belum ada personel terdaftar di board divisi ini.</p>}
+      {!people.length && <p className="mt-6 text-sm text-sub">{tr("personnel_empty_board", "Belum ada personel terdaftar di board divisi ini.")}</p>}
     </section>
   );
 }
 
 function BottleneckSummary({ tasks = [], projectsMap = {}, scope, scopeLabel, availableScopes = [], activeBoardId, canSwitchBoards, isAdmin, onSelectBoard, onOpenTask }) {
-  const { userMap, labelMap, tasks: ctxTasks, me } = useApp();
+  const { userMap, labelMap, tasks: ctxTasks, me, t: tr } = useApp();
   const navigate = useNavigate();
   const [showAll, setShowAll] = useState(false);
 
@@ -416,9 +418,10 @@ function BottleneckSummary({ tasks = [], projectsMap = {}, scope, scopeLabel, av
 
   const activeMode = scope?.mode || "board";
   const showDropdown = Boolean(canSwitchBoards && scopeLabel);
+  const baseBnTitle = tr("bottleneck_title", "Rekap Bottleneck Proyek");
   const headingTitle = !showDropdown && scopeLabel && activeMode !== "all"
-    ? `Rekap Bottleneck Proyek ${scopeLabel}`
-    : "Rekap Bottleneck Proyek";
+    ? `${baseBnTitle} ${scopeLabel}`
+    : baseBnTitle;
 
   return (
     <section className="card w-full min-w-0 overflow-hidden p-4 sm:p-6 md:col-span-2 xl:col-span-3" data-testid="widget-bottleneck-summary">
@@ -447,7 +450,7 @@ function BottleneckSummary({ tasks = [], projectsMap = {}, scope, scopeLabel, av
           className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-surface2/70 px-3.5 py-1.5 text-xs sm:text-sm font-bold text-brand hover:bg-surface2 transition-colors whitespace-nowrap self-start"
           data-testid="bottleneck-open-timeline"
         >
-          <span>Buka Timeline Flow</span>
+          <span>{tr("bottleneck_open_timeline", "Buka Timeline Flow")}</span>
           <ArrowRight size={14} />
         </Link>
       </div>
@@ -456,17 +459,17 @@ function BottleneckSummary({ tasks = [], projectsMap = {}, scope, scopeLabel, av
         <div className="mt-4 flex items-center gap-3 rounded-2xl border border-emerald-200/80 bg-emerald-50/60 px-4 py-3.5 text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/20 dark:text-emerald-200">
           <CheckCircle2 size={18} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
           <div className="min-w-0">
-            <p className="text-xs sm:text-sm font-bold">Tidak ada bottleneck terdeteksi saat ini</p>
-            <p className="text-[11px] sm:text-xs opacity-80">Semua proyek dan estafet checkpoint berjalan sesuai target deadline.</p>
+            <p className="text-xs sm:text-sm font-bold">{tr("bottleneck_empty_title", "Tidak ada bottleneck terdeteksi saat ini")}</p>
+            <p className="text-[11px] sm:text-xs opacity-80">{tr("bottleneck_empty_desc", "Semua proyek dan estafet checkpoint berjalan sesuai target deadline.")}</p>
           </div>
         </div>
       ) : (
         <>
           <div className="mt-4 overflow-hidden rounded-2xl border border-border/80 bg-surface">
             <div className="hidden md:grid md:grid-cols-12 gap-3 border-b bg-surface2/60 px-4 py-2.5 text-[11px] font-bold uppercase tracking-wider text-sub">
-              <div className="col-span-4">Task</div>
-              <div className="col-span-5">Kendala</div>
-              <div className="col-span-3">PIC</div>
+              <div className="col-span-4">{tr("bottleneck_col_task", "Task")}</div>
+              <div className="col-span-5">{tr("bottleneck_col_issue", "Kendala")}</div>
+              <div className="col-span-3">{tr("bottleneck_col_pic", "PIC")}</div>
             </div>
 
             <div className="divide-y divide-border/70">
@@ -485,9 +488,9 @@ function BottleneckSummary({ tasks = [], projectsMap = {}, scope, scopeLabel, av
                 const stageLabel = bn.isTaskLevel
                   ? ""
                   : stages.length > 0
-                  ? `Tahap ${bn.index + 1}/${stages.length}: ${bn.title}`
+                  ? `${tr("bottleneck_stage_prefix", "Tahap")} ${bn.index + 1}/${stages.length}: ${bn.title}`
                   : bn.title;
-                const mainReason = capitalize(bn.detailSummary) || bn.shortReason || "Melewati target jadwal";
+                const mainReason = capitalize(bn.detailSummary) || bn.shortReason || tr("bottleneck_default_reason", "Melewati target jadwal");
                 const noteText = bn.issueNotes?.[0] || "";
                 const picList = Array.isArray(bn.picUsers) ? bn.picUsers : bn.picUser ? [bn.picUser] : [];
 
@@ -539,7 +542,7 @@ function BottleneckSummary({ tasks = [], projectsMap = {}, scope, scopeLabel, av
                           )}
                           {stages.length > 0 && (
                             <span className="text-[10.5px] font-medium text-sub">
-                              ({doneCount}/{stages.length} selesai)
+                              ({doneCount}/{stages.length} {tr("bottleneck_done_suffix", "selesai")})
                             </span>
                           )}
                         </div>
@@ -564,7 +567,7 @@ function BottleneckSummary({ tasks = [], projectsMap = {}, scope, scopeLabel, av
                       </div>
                       {noteText && (
                         <p className="mt-1 truncate text-[11px] font-medium text-rose-700 dark:text-rose-300">
-                          Kendala: &ldquo;{noteText}&rdquo;
+                          {tr("bottleneck_issue_prefix", "Kendala:")} &ldquo;{noteText}&rdquo;
                         </p>
                       )}
                       {bn.impactText && (
@@ -605,7 +608,7 @@ function BottleneckSummary({ tasks = [], projectsMap = {}, scope, scopeLabel, av
               className="mt-3.5 w-full rounded-2xl border py-2.5 text-xs sm:text-sm font-semibold text-sub hover:text-ink transition-colors cursor-pointer"
               data-testid="bottleneck-toggle-all"
             >
-              {showAll ? "Tampilkan lebih sedikit" : `Lihat semua bottleneck (${rows.length})`}
+              {showAll ? tr("bottleneck_show_less", "Tampilkan lebih sedikit") : `${tr("bottleneck_show_all_prefix", "Lihat semua bottleneck")} (${rows.length})`}
             </button>
           )}
         </>

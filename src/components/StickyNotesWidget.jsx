@@ -17,6 +17,7 @@ import {
 import { toast } from "sonner";
 import { useApp } from "../context/AppContext";
 import { api, errMsg } from "../lib/api";
+import { playSound } from "../lib/sound";
 import { hasCompletedInitialHydrate, rehydrateIfServerRestarted } from "../lib/persistentMirror";
 import {
   Dialog,
@@ -187,6 +188,7 @@ export default function StickyNotesWidget({ densityStyles }) {
   const visibleNotes = viewMode === "archived" ? archivedNotes : activeNotes;
 
   const openCreateDialog = () => {
+    playSound("pop");
     setEditingNote(null);
     setDraftTitle("");
     setDraftColor("amber");
@@ -197,6 +199,7 @@ export default function StickyNotesWidget({ densityStyles }) {
   };
 
   const openEditDialog = (note) => {
+    playSound("pop");
     setEditingNote(note);
     setDraftTitle(note.title || "");
     setDraftColor(NOTE_THEMES[note.color] ? note.color : "amber");
@@ -218,6 +221,7 @@ export default function StickyNotesWidget({ densityStyles }) {
       .map((s) => s.trim())
       .filter(Boolean);
     if (lines.length === 0) return;
+    playSound("pop");
     setDraftItems((prev) => [
       ...prev,
       ...lines.map((line, i) => ({
@@ -251,7 +255,7 @@ export default function StickyNotesWidget({ densityStyles }) {
       .map((it) => ({ ...it, text: String(it.text || "").trim() }))
       .filter((it) => it.text.length > 0);
 
-    const cleanTitle = draftTitle.trim() || "Catatan Checklist";
+    const cleanTitle = draftTitle.trim() || t("notes_default_title", "Catatan Checklist");
     if (cleanItems.length === 0 && !draftTitle.trim()) {
       toast.error("Isi judul atau minimal satu poin checklist.");
       return;
@@ -286,6 +290,7 @@ export default function StickyNotesWidget({ densityStyles }) {
         if (data?.id) {
           commitNotes((prev) => prev.map((n) => (n.id === data.id ? data : n)));
         }
+        playSound("success");
         toast.success("Sticky note diperbarui");
       } else {
         const tempId = `note_opt_${Date.now()}`;
@@ -317,6 +322,7 @@ export default function StickyNotesWidget({ densityStyles }) {
         if (data?.id) {
           commitNotes((prev) => prev.map((n) => (n.id === tempId ? data : n)));
         }
+        playSound("success");
         toast.success("Sticky note berhasil ditambahkan");
       }
     } catch (err) {
@@ -329,6 +335,8 @@ export default function StickyNotesWidget({ densityStyles }) {
 
   const handleToggleChecklistItem = async (note, itemId) => {
     const prevNote = note;
+    const targetItem = (note.items || []).find((it) => it.id === itemId);
+    const becomingDone = targetItem ? !targetItem.done : true;
     const nextItems = (note.items || []).map((it) =>
       it.id === itemId ? { ...it, done: !it.done } : it
     );
@@ -346,7 +354,10 @@ export default function StickyNotesWidget({ densityStyles }) {
 
     commitNotes((prev) => prev.map((n) => (n.id === note.id ? optimistic : n)));
     if (isExecuted && prevNote.progress < 100) {
+      playSound("task_done");
       toast.success(`"${note.title}" selesai 100% — Terlaksana!`);
+    } else {
+      playSound(becomingDone ? "check" : "uncheck");
     }
 
     try {
@@ -363,6 +374,7 @@ export default function StickyNotesWidget({ densityStyles }) {
   const handleToggleArchive = async (note) => {
     const nextArchived = !note.archived;
     const prevNote = note;
+    playSound("archive");
     commitNotes((prev) =>
       prev.map((n) =>
         n.id === note.id
@@ -385,6 +397,7 @@ export default function StickyNotesWidget({ densityStyles }) {
   const handleDeleteNote = async (noteId) => {
     const backup = notes;
     setConfirmDeleteId(null);
+    playSound("trash");
     commitNotes((prev) => prev.filter((n) => n.id !== noteId));
     toast.success("Sticky note dihapus");
     try {
@@ -396,6 +409,7 @@ export default function StickyNotesWidget({ densityStyles }) {
   };
 
   const openSendToGroupModal = async (note) => {
+    playSound("pop");
     setSendNote(note);
     setExtraNoteText("");
     setSelectedGroupId("");
@@ -448,6 +462,7 @@ export default function StickyNotesWidget({ densityStyles }) {
       const targetName = data?.group_name || "Grup";
       const targetId = selectedGroupId;
       setSendNote(null);
+      playSound("message");
       toast.success(`Sticky note dikirim ke grup ${targetName}`, {
         action: {
           label: "Buka Grup",
@@ -482,7 +497,10 @@ export default function StickyNotesWidget({ densityStyles }) {
           <div className="inline-flex shrink-0 items-center rounded-xl border border-slate-200/80 dark:border-slate-700 bg-surface2 p-0.5 text-[11px] font-bold">
             <button
               type="button"
-              onClick={() => setViewMode("active")}
+              onClick={() => {
+                if (viewMode !== "active") playSound("tab");
+                setViewMode("active");
+              }}
               className={`rounded-lg px-2.5 py-1 transition-colors cursor-pointer ${
                 viewMode === "active"
                   ? "bg-white dark:bg-slate-800 text-ink shadow-xs"
@@ -494,7 +512,10 @@ export default function StickyNotesWidget({ densityStyles }) {
             </button>
             <button
               type="button"
-              onClick={() => setViewMode("archived")}
+              onClick={() => {
+                if (viewMode !== "archived") playSound("tab");
+                setViewMode("archived");
+              }}
               className={`rounded-lg px-2.5 py-1 transition-colors cursor-pointer ${
                 viewMode === "archived"
                   ? "bg-white dark:bg-slate-800 text-ink shadow-xs"
@@ -508,7 +529,7 @@ export default function StickyNotesWidget({ densityStyles }) {
         </div>
 
         {/* Sticky Notes Stack */}
-        <div className="max-h-[450px] overflow-y-auto scroll-thin pr-0.5 space-y-3">
+        <div className="space-y-3">
           {visibleNotes.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30 p-6 text-center">
               <StickyNote size={24} className="mx-auto text-amber-500/70 mb-2" />
@@ -550,7 +571,7 @@ export default function StickyNotesWidget({ densityStyles }) {
                         {note.pinned && (
                           <Pin size={12} className="text-amber-600 dark:text-amber-400 shrink-0 fill-current" />
                         )}
-                        <h4 className="text-sm font-extrabold text-ink truncate leading-snug">
+                        <h4 className="text-sm font-extrabold text-ink break-words leading-snug">
                           {note.title}
                         </h4>
                       </div>
@@ -607,7 +628,7 @@ export default function StickyNotesWidget({ densityStyles }) {
                               {it.done && <Check size={11} strokeWidth={3} />}
                             </span>
                             <span
-                              className={`min-w-0 flex-1 text-xs leading-relaxed break-words ${
+                              className={`min-w-0 flex-1 text-xs leading-relaxed break-words [overflow-wrap:anywhere] ${
                                 it.done
                                   ? "line-through text-slate-400 dark:text-slate-500"
                                   : "text-slate-800 dark:text-slate-100 font-medium"
@@ -633,7 +654,7 @@ export default function StickyNotesWidget({ densityStyles }) {
                       }
                       className="mt-1.5 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:underline cursor-pointer"
                     >
-                      +{hiddenCount} poin lainnya
+                      +{hiddenCount} {t("notes_more_points", "poin lainnya")}
                     </button>
                   )}
                   {isExpanded && items.length > 5 && (
@@ -648,14 +669,14 @@ export default function StickyNotesWidget({ densityStyles }) {
                       }
                       className="mt-1.5 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:underline cursor-pointer"
                     >
-                      Tampilkan ringkas
+                      {t("notes_show_compact", "Tampilkan ringkas")}
                     </button>
                   )}
 
                   {/* Sent Groups Meta */}
                   {Array.isArray(note.sent_groups) && note.sent_groups.length > 0 && (
-                    <p className="mt-2 text-[10.5px] font-semibold text-sub truncate">
-                      Terkirim ke #{note.sent_groups[0].group_name} ({note.sent_groups[0].pct}%)
+                    <p className="mt-2 text-[10.5px] font-semibold text-sub break-words">
+                      {t("notes_sent_to_prefix", "Terkirim ke")} #{note.sent_groups[0].group_name} ({note.sent_groups[0].pct}%)
                     </p>
                   )}
 
@@ -699,12 +720,15 @@ export default function StickyNotesWidget({ densityStyles }) {
                           onClick={() => handleDeleteNote(note.id)}
                           className="inline-flex h-7 items-center rounded-lg bg-rose-600 px-2 text-[10.5px] font-bold text-white cursor-pointer"
                         >
-                          Hapus?
+                          {t("notes_delete_confirm", "Hapus?")}
                         </button>
                       ) : (
                         <button
                           type="button"
-                          onClick={() => setConfirmDeleteId(note.id)}
+                          onClick={() => {
+                            playSound("click");
+                            setConfirmDeleteId(note.id);
+                          }}
                           title="Hapus Sticky Note"
                           className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-white/75 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-700 text-sub hover:text-rose-600 transition-colors cursor-pointer"
                           aria-label="Hapus catatan"
@@ -748,11 +772,11 @@ export default function StickyNotesWidget({ densityStyles }) {
 
           <form onSubmit={handleSaveEditor} className="p-5 space-y-4 max-h-[75dvh] overflow-y-auto scroll-thin">
             <div>
-              <label className="mb-1.5 block text-xs font-bold text-ink">Judul Catatan *</label>
+              <label className="mb-1.5 block text-xs font-bold text-ink">{t("notes_field_title_label", "Judul Catatan *")}</label>
               <input
                 value={draftTitle}
                 onChange={(e) => setDraftTitle(e.target.value)}
-                placeholder="Mis. Checklist Persiapan Launch Campaign"
+                placeholder={t("notes_field_title_ph", "Mis. Checklist Persiapan Launch Campaign")}
                 className="h-10 w-full rounded-xl border bg-surface2 px-3 text-sm font-semibold outline-none focus:border-brand"
                 data-testid="note-title-input"
               />
@@ -761,14 +785,17 @@ export default function StickyNotesWidget({ densityStyles }) {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className="text-[11px] font-bold uppercase tracking-wider text-sub mb-1.5">
-                  Warna Sticky Note
+                  {t("notes_field_color_label", "Warna Sticky Note")}
                 </p>
                 <div className="flex items-center gap-2">
                   {Object.entries(NOTE_THEMES).map(([key, cfg]) => (
                     <button
                       key={key}
                       type="button"
-                      onClick={() => setDraftColor(key)}
+                      onClick={() => {
+                        playSound("pop");
+                        setDraftColor(key);
+                      }}
                       title={cfg.label}
                       className={`h-7 w-7 rounded-full border-2 transition-transform cursor-pointer ${
                         draftColor === key ? "scale-110 border-ink" : "border-transparent opacity-80 hover:opacity-100"
@@ -781,7 +808,10 @@ export default function StickyNotesWidget({ densityStyles }) {
 
               <button
                 type="button"
-                onClick={() => setDraftPinned((p) => !p)}
+                onClick={() => {
+                  playSound("pop");
+                  setDraftPinned((p) => !p);
+                }}
                 className={`inline-flex h-9 items-center gap-1.5 rounded-xl border px-3 text-xs font-bold transition-colors cursor-pointer ${
                   draftPinned
                     ? "border-amber-400 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
@@ -789,7 +819,7 @@ export default function StickyNotesWidget({ densityStyles }) {
                 }`}
               >
                 <Pin size={13} className={draftPinned ? "fill-current" : ""} />
-                <span>{draftPinned ? "Disematkan" : "Sematkan"}</span>
+                <span>{draftPinned ? t("notes_pinned_btn", "Disematkan") : t("notes_pin_btn", "Sematkan")}</span>
               </button>
             </div>
 
@@ -797,11 +827,11 @@ export default function StickyNotesWidget({ densityStyles }) {
             <div className="space-y-2.5">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-bold text-ink">
-                  Poin Checklist ({draftItems.length})
+                  {t("notes_points_label", "Poin Checklist")} ({draftItems.length})
                 </label>
                 {draftItems.length > 0 && (
                   <span className="font-mono text-[11px] font-bold text-sub tabular-nums">
-                    {computeProgress(draftItems).progress}% selesai
+                    {computeProgress(draftItems).progress}% {t("notes_done_pct_suffix", "selesai")}
                   </span>
                 )}
               </div>
@@ -866,13 +896,13 @@ export default function StickyNotesWidget({ densityStyles }) {
                       appendPointFromInput();
                     }
                   }}
-                  placeholder="Tulis poin checklist panjang di sini... (Enter untuk tambah, Shift+Enter baris baru)"
+                  placeholder={t("notes_point_ph", "Tulis poin checklist panjang di sini... (Enter untuk tambah, Shift+Enter baris baru)")}
                   className="min-h-[88px] w-full resize-y rounded-2xl border bg-surface2 px-3.5 py-2.5 text-sm leading-relaxed outline-none focus:border-brand"
                   data-testid="note-point-input"
                 />
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-[11px] text-sub">
-                    Tip: Paste beberapa baris sekaligus akan otomatis jadi poin terpisah.
+                    {t("notes_point_tip", "Tip: Paste beberapa baris sekaligus akan otomatis jadi poin terpisah.")}
                   </span>
                   <button
                     type="button"
@@ -880,7 +910,7 @@ export default function StickyNotesWidget({ densityStyles }) {
                     className="inline-flex h-9 items-center gap-1.5 rounded-xl border bg-surface px-3.5 text-xs font-bold text-ink hover:bg-surface2 cursor-pointer shrink-0"
                     data-testid="note-add-point-btn"
                   >
-                    <Plus size={14} /> Tambah Poin
+                    <Plus size={14} /> {t("notes_add_point_btn", "Tambah Poin")}
                   </button>
                 </div>
               </div>
@@ -892,7 +922,7 @@ export default function StickyNotesWidget({ densityStyles }) {
                 onClick={() => setEditorOpen(false)}
                 className="h-10 rounded-xl border bg-surface px-4 text-xs font-bold text-sub hover:text-ink cursor-pointer"
               >
-                Batal
+                {t("common_cancel", "Batal")}
               </button>
               <button
                 type="submit"
@@ -900,7 +930,7 @@ export default function StickyNotesWidget({ densityStyles }) {
                 className="btn-accent h-10 rounded-xl px-5 text-xs font-bold text-white cursor-pointer"
                 data-testid="note-save-btn"
               >
-                {savingNote ? "Menyimpan..." : editingNote ? "Simpan Perubahan" : "Simpan Sticky Note"}
+                {savingNote ? t("notes_saving", "Menyimpan...") : editingNote ? t("notes_save_changes", "Simpan Perubahan") : t("notes_save_new", "Simpan Sticky Note")}
               </button>
             </DialogFooter>
           </form>
@@ -915,7 +945,7 @@ export default function StickyNotesWidget({ densityStyles }) {
               {t("notes_send_modal_title", "Kirim Sticky Note ke Grup")}
             </DialogTitle>
             <DialogDescription className="text-xs text-sub">
-              Bagikan poin checklist dan persentase progres ({sendNote ? computeProgress(sendNote.items, sendNote.completed).progress : 0}%) langsung ke obrolan grup.
+              {t("notes_send_desc_prefix", "Bagikan poin checklist dan persentase progres")} ({sendNote ? computeProgress(sendNote.items, sendNote.completed).progress : 0}%) {t("notes_send_desc_suffix", "langsung ke obrolan grup.")}
             </DialogDescription>
           </DialogHeader>
 
@@ -929,16 +959,16 @@ export default function StickyNotesWidget({ densityStyles }) {
                   </span>
                 </div>
                 <p className="text-[11px] text-sub">
-                  {computeProgress(sendNote.items, sendNote.completed).doneCount} dari{" "}
-                  {computeProgress(sendNote.items, sendNote.completed).total} poin selesai
+                  {computeProgress(sendNote.items, sendNote.completed).doneCount} {t("notes_send_points_from", "dari")}{" "}
+                  {computeProgress(sendNote.items, sendNote.completed).total} {t("notes_send_points_done", "poin selesai")}
                 </p>
               </div>
 
               <div>
-                <label className="mb-1.5 block text-xs font-bold text-ink">Pilih Grup Tujuan *</label>
+                <label className="mb-1.5 block text-xs font-bold text-ink">{t("notes_send_choose_group", "Pilih Grup Tujuan *")}</label>
                 {groupsList.length === 0 ? (
                   <p className="rounded-xl border border-dashed p-3 text-xs text-sub text-center">
-                    Anda belum tergabung di grup mana pun.
+                    {t("notes_send_no_groups", "Anda belum tergabung di grup mana pun.")}
                   </p>
                 ) : (
                   <div className="max-h-44 overflow-y-auto scroll-thin space-y-1.5">
@@ -960,7 +990,7 @@ export default function StickyNotesWidget({ densityStyles }) {
                             <span className="truncate">#{grp.name}</span>
                           </span>
                           <span className="text-[10.5px] font-semibold text-sub shrink-0">
-                            {grp.group_type === "department" ? "Divisi" : "Grup"}
+                            {grp.group_type === "department" ? t("notes_send_group_type_div", "Divisi") : t("notes_send_group_type_grp", "Grup")}
                           </span>
                         </button>
                       );
@@ -971,12 +1001,12 @@ export default function StickyNotesWidget({ densityStyles }) {
 
               <div>
                 <label className="mb-1 block text-xs font-bold text-ink">
-                  Catatan Tambahan (Opsional)
+                  {t("notes_send_extra_label", "Catatan Tambahan (Opsional)")}
                 </label>
                 <input
                   value={extraNoteText}
                   onChange={(e) => setExtraNoteText(e.target.value)}
-                  placeholder="Mis. Mohon dicek progres hari ini ya tim"
+                  placeholder={t("notes_send_extra_ph", "Mis. Mohon dicek progres hari ini ya tim")}
                   className="h-9 w-full rounded-xl border bg-surface2 px-3 text-xs outline-none focus:border-brand"
                 />
               </div>
@@ -987,7 +1017,7 @@ export default function StickyNotesWidget({ densityStyles }) {
                   onClick={() => setSendNote(null)}
                   className="h-9 rounded-xl border bg-surface px-4 text-xs font-bold text-sub cursor-pointer"
                 >
-                  Batal
+                  {t("common_cancel", "Batal")}
                 </button>
                 <button
                   type="submit"
@@ -996,7 +1026,7 @@ export default function StickyNotesWidget({ densityStyles }) {
                   data-testid="confirm-send-note-group-btn"
                 >
                   <Send size={13} />
-                  <span>{sendingGroup ? "Mengirim..." : t("notes_send_group_btn", "Kirim ke Grup")}</span>
+                  <span>{sendingGroup ? t("notes_sending", "Mengirim...") : t("notes_send_group_btn", "Kirim ke Grup")}</span>
                 </button>
               </DialogFooter>
             </form>

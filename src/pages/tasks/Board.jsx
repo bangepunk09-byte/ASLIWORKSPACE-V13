@@ -15,25 +15,31 @@ import {
   DropdownMenuSeparator
 } from "../../components/ui/dropdown-menu";
 
-function formatUpdatedAgo(iso) {
-  if (!iso) return "Baru saja diperbarui";
+function formatUpdatedAgo(iso, tr) {
+  const justNow = tr ? tr("board_updated_just_now", "Baru saja diperbarui") : "Baru saja diperbarui";
+  const prefix = tr ? tr("board_updated_prefix", "Diperbarui") : "Diperbarui";
+  const minAgo = tr ? tr("board_unit_min_ago", "mnt lalu") : "mnt lalu";
+  const hourAgo = tr ? tr("board_unit_hour_ago", "jam lalu") : "jam lalu";
+  const dayAgo = tr ? tr("board_unit_day_ago", "hr lalu") : "hr lalu";
+  if (!iso) return justNow;
   try {
     const d = new Date(iso);
     const now = new Date();
     const diffSec = Math.max(0, Math.floor((now.getTime() - d.getTime()) / 1000));
-    if (diffSec < 60) return "Baru saja diperbarui";
+    if (diffSec < 60) return justNow;
     const diffMin = Math.floor(diffSec / 60);
-    if (diffMin < 60) return `Diperbarui ${diffMin} mnt lalu`;
+    if (diffMin < 60) return `${prefix} ${diffMin} ${minAgo}`;
     const diffHours = Math.floor(diffMin / 60);
-    if (diffHours < 24) return `Diperbarui ${diffHours} jam lalu`;
+    if (diffHours < 24) return `${prefix} ${diffHours} ${hourAgo}`;
     const diffDays = Math.floor(diffHours / 24);
-    return `Diperbarui ${diffDays} hr lalu`;
+    return `${prefix} ${diffDays} ${dayAgo}`;
   } catch {
-    return "Baru saja diperbarui";
+    return justNow;
   }
 }
 
 export function TaskCard({ t, onOpen, done, draggable, onDragStart, onDragEnd, isDragging, reload }) {
+  const { t: tr } = useApp();
   const [refreshing, setRefreshing] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -120,7 +126,7 @@ export function TaskCard({ t, onOpen, done, draggable, onDragStart, onDragEnd, i
       {/* Top Header: Updated X ago + icons */}
       <div className="flex items-center justify-between text-slate-400">
         <span className="text-[13px] font-medium tracking-tight text-[#64748B] dark:text-slate-400">
-          {formatUpdatedAgo(t.updated_at || t.created_at)}
+          {formatUpdatedAgo(t.updated_at || t.created_at, tr)}
         </span>
         <div className="flex items-center gap-1 text-slate-400" onClick={(e) => e.stopPropagation()}>
           {/* Panah melingkar: Refresh button */}
@@ -132,8 +138,8 @@ export function TaskCard({ t, onOpen, done, draggable, onDragStart, onDragEnd, i
                 ? "text-brand bg-brand/10 scale-105"
                 : "text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
             }`}
-            aria-label="Segarkan tugas"
-            title="Segarkan tugas"
+            aria-label={tr("board_refresh_task", "Segarkan tugas")}
+            title={tr("board_refresh_task", "Segarkan tugas")}
             data-testid={`task-refresh-${t.id}`}
           >
             <RotateCw size={13} strokeWidth={2.2} className={refreshing ? "animate-spin text-brand" : ""} />
@@ -150,8 +156,8 @@ export function TaskCard({ t, onOpen, done, draggable, onDragStart, onDragEnd, i
                     ? "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200"
                     : "text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
                 }`}
-                aria-label="Opsi tugas"
-                title="Opsi tugas"
+                aria-label={tr("board_task_options", "Opsi tugas")}
+                title={tr("board_task_options", "Opsi tugas")}
                 data-testid={`task-menu-btn-${t.id}`}
               >
                 <MoreHorizontal size={15} strokeWidth={2.2} />
@@ -164,7 +170,7 @@ export function TaskCard({ t, onOpen, done, draggable, onDragStart, onDragEnd, i
                 data-testid={`task-menu-open-${t.id}`}
               >
                 <ExternalLink size={14} className="text-sub" />
-                <span>Buka Detail</span>
+                <span>{tr("board_menu_open", "Buka Detail")}</span>
               </DropdownMenuItem>
 
               <DropdownMenuItem
@@ -173,7 +179,7 @@ export function TaskCard({ t, onOpen, done, draggable, onDragStart, onDragEnd, i
                 data-testid={`task-menu-copy-${t.id}`}
               >
                 <Copy size={14} className="text-sub" />
-                <span>Salin ID Tugas</span>
+                <span>{tr("board_menu_copy_id", "Salin ID Tugas")}</span>
               </DropdownMenuItem>
 
               <DropdownMenuSeparator className="my-1" />
@@ -184,7 +190,7 @@ export function TaskCard({ t, onOpen, done, draggable, onDragStart, onDragEnd, i
                 data-testid={`task-menu-archive-${t.id}`}
               >
                 <Archive size={14} />
-                <span>Arsipkan Tugas</span>
+                <span>{tr("board_menu_archive", "Arsipkan Tugas")}</span>
               </DropdownMenuItem>
 
               <DropdownMenuItem
@@ -193,7 +199,7 @@ export function TaskCard({ t, onOpen, done, draggable, onDragStart, onDragEnd, i
                 data-testid={`task-menu-delete-${t.id}`}
               >
                 <Trash2 size={14} />
-                <span>Hapus Tugas</span>
+                <span>{tr("board_menu_delete", "Hapus Tugas")}</span>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -213,6 +219,11 @@ export function TaskCard({ t, onOpen, done, draggable, onDragStart, onDragEnd, i
         {(() => {
           const comp = getTaskCompliance(t);
           if (!comp) return null;
+          const compLabel = comp === "On time"
+            ? tr("compliance_on_time", "On time")
+            : comp === "Overdue"
+            ? tr("compliance_late", "Overdue")
+            : tr("compliance_in_progress", "In Progress");
           return (
             <span
               className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${
@@ -228,7 +239,7 @@ export function TaskCard({ t, onOpen, done, draggable, onDragStart, onDragEnd, i
                   comp === "On time" ? "bg-emerald-500" : comp === "Overdue" ? "bg-rose-500" : "bg-amber-500"
                 }`}
               />
-              {comp}
+              {compLabel}
             </span>
           );
         })()}
@@ -244,7 +255,7 @@ export function TaskCard({ t, onOpen, done, draggable, onDragStart, onDragEnd, i
       {/* PROGRESS Section */}
       <div className="mb-4" data-testid={`card-progress-${t.id}`}>
         <p className="mb-2 text-[10px] font-black tracking-widest text-[#64748B] dark:text-slate-400 uppercase">
-          PROGRES
+          {tr("board_progress_label", "PROGRES")}
         </p>
         <div className="flex items-center gap-3">
           <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#E2E8F0] dark:bg-slate-800">
@@ -263,7 +274,7 @@ export function TaskCard({ t, onOpen, done, draggable, onDragStart, onDragEnd, i
       <div className="flex items-center justify-between pt-1">
         <div className="flex items-center gap-3.5 text-[13px] font-medium text-[#64748B] dark:text-slate-400">
           {/* Checkpoint / Checklist Icon & Count */}
-          <span className="flex items-center gap-1.5" title="Checkpoint / Subtugas">
+          <span className="flex items-center gap-1.5" title={tr("board_checkpoints_title", "Checkpoint / Subtugas")}>
             <span className="flex h-4 w-4 items-center justify-center rounded-[4px] border-[1.75px] border-slate-400 dark:border-slate-500">
               <span className="h-1.5 w-1.5 rounded-[1px] bg-slate-400 dark:bg-slate-500" />
             </span>
@@ -273,7 +284,7 @@ export function TaskCard({ t, onOpen, done, draggable, onDragStart, onDragEnd, i
           </span>
 
           {/* User / Team Icon & Count */}
-          <span className="flex items-center gap-1.5" title="Kolaborator & Assignee">
+          <span className="flex items-center gap-1.5" title={tr("board_collaborators_title", "Kolaborator & Assignee")}>
             <Users size={15} strokeWidth={2.2} className="text-slate-400 dark:text-slate-500" />
             <span className="font-semibold text-slate-700 dark:text-slate-300">
               {userCount}
@@ -298,7 +309,7 @@ export function TaskCard({ t, onOpen, done, draggable, onDragStart, onDragEnd, i
 }
 
 export default function Board({ tasks, onOpen, onNew, reload, onMoveTask, board, onInvite }) {
-  const { statuses } = useApp();
+  const { statuses, t: tr } = useApp();
   const [over, setOver] = useState(null);
   const [draggingId, setDraggingId] = useState(null);
   const dark = document.documentElement.classList.contains("dark");
@@ -351,7 +362,7 @@ export default function Board({ tasks, onOpen, onNew, reload, onMoveTask, board,
       if (onMoveTask) {
         onMoveTask(id, { status: prevStatus });
       }
-      toast.error(errMsg(er, "Gagal memindahkan tugas"));
+      toast.error(errMsg(er, tr("board_move_err", "Gagal memindahkan tugas")));
     }
   };
 
@@ -391,16 +402,16 @@ export default function Board({ tasks, onOpen, onNew, reload, onMoveTask, board,
                 </h2>
                 {isBoardCollaborative(board) ? (
                   <span className="rounded-full bg-indigo-100 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300 px-2.5 py-0.5 text-[11px] font-bold">
-                    Kolaborasi Lintas Divisi
+                    {tr("board_cross_division", "Kolaborasi Lintas Divisi")}
                   </span>
                 ) : board.department ? (
                   <span className="rounded-full bg-brand/10 text-brand px-2.5 py-0.5 text-[11px] font-bold">
-                    Divisi {board.department}
+                    {tr("board_division_prefix", "Divisi")} {board.department}
                   </span>
                 ) : null}
                 {board.invited_members_count > 0 && (
                   <span className="rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 px-2 py-0.5 text-[10px] font-bold">
-                    +{board.invited_members_count} diundang
+                    +{board.invited_members_count} {tr("board_invited_suffix", "diundang")}
                   </span>
                 )}
               </div>
@@ -413,11 +424,11 @@ export default function Board({ tasks, onOpen, onNew, reload, onMoveTask, board,
                 type="button"
                 onClick={onInvite}
                 className="inline-flex items-center gap-2 rounded-full border bg-surface2/80 hover:bg-surface2 pl-3.5 pr-2.5 py-2 text-xs font-bold text-ink shadow-2xs transition-all hover:scale-[1.02] cursor-pointer"
-                title="Undang rekan atau atur anggota board"
+                title={tr("board_invite_title", "Undang rekan atau atur anggota board")}
                 data-testid="board-invite-header-btn"
               >
                 <UserPlus size={14} className="text-brand shrink-0" />
-                <span>Undang ke Board</span>
+                <span>{tr("board_invite_btn", "Undang ke Board")}</span>
                 <span className="flex h-5 w-5 items-center justify-center rounded-full bg-brand text-white text-xs font-extrabold leading-none shrink-0">
                   +
                 </span>
@@ -531,7 +542,7 @@ export default function Board({ tasks, onOpen, onNew, reload, onMoveTask, board,
               {/* Drop Target Helper when dragging over empty column */}
               {isColumnOver && draggingId && !col.some((x) => x.id === draggingId) && (
                 <div className="pointer-events-none rounded-2xl border-2 border-dashed border-brand/60 bg-brand/5 p-4 text-center text-xs font-bold text-brand animate-pulse">
-                  Lepas untuk pindahkan ke {s.name}
+                  {tr("board_drop_move_prefix", "Lepas untuk pindahkan ke")} {s.name}
                 </div>
               )}
 
@@ -539,7 +550,7 @@ export default function Board({ tasks, onOpen, onNew, reload, onMoveTask, board,
                 onClick={() => onNew(s.key)}
                 className="mt-1 flex h-11 items-center justify-center gap-1.5 rounded-2xl border-2 border-dashed border-[color:var(--c-border)] text-sm font-semibold text-sub hover:bg-surface hover:text-ink transition-colors"
               >
-                + Tugas Baru
+                {tr("board_add_task_btn", "+ Tugas Baru")}
               </button>
             </div>
           </div>

@@ -7,7 +7,7 @@ import { Avatar, rel } from "./common";
 import { showSystemNotification } from "../lib/systemNotifications";
 
 export function NotificationList({ onNavigate }) {
-  const { me, setUnread, userMap, subscribe, showTopNotif } = useApp();
+  const { me, setUnread, userMap, subscribe, showTopNotif, t } = useApp();
   const cacheKey = me?.user_id ? `circle_notifications_cache_${me.user_id}` : "circle_notifications_cache";
   const [data, setData] = useState(() => {
     try {
@@ -70,28 +70,38 @@ export function NotificationList({ onNavigate }) {
     showSystemNotification(payload, { force: true });
   };
 
-  const CAT_LABELS = { all: "Semua", tasks: "Tugas", chat: "Pesan", beranda: "Beranda", approval: "Persetujuan", system: "Sistem", calendar: "Jadwal", meetings: "Rapat", mentions: "Mention" };
+  const CAT_LABELS = {
+    all: t("notif_cat_all", "Semua"),
+    tasks: t("notif_cat_tasks", "Tugas"),
+    chat: t("notif_cat_chat", "Pesan"),
+    beranda: t("notif_cat_beranda", "Beranda"),
+    approval: t("notif_cat_approval", "Persetujuan"),
+    system: t("notif_cat_system", "Sistem"),
+    calendar: t("notif_cat_calendar", "Jadwal"),
+    meetings: t("notif_cat_meetings", "Rapat"),
+    mentions: t("notif_cat_mentions", "Mention"),
+  };
 
   return (
     <div className="flex h-full flex-col" data-testid="notification-list">
       <div className="flex items-center justify-between gap-2 border-b px-3.5 py-3 flex-nowrap">
         <div className="flex items-baseline gap-1.5 min-w-0 whitespace-nowrap">
-          <p className="font-bold text-sm text-ink whitespace-nowrap">Notifikasi</p>
+          <p className="font-bold text-sm text-ink whitespace-nowrap">{t("notif_title", "Notifikasi")}</p>
           {data && (
             <span className="text-[11px] font-medium text-sub whitespace-nowrap">
-              · {data.unread} belum dibaca
+              · {data.unread} {t("notif_unread_suffix", "belum dibaca")}
             </span>
           )}
         </div>
         <div className="flex items-center gap-1 shrink-0 whitespace-nowrap">
-          <button type="button" onClick={testPopup} className="rounded-full bg-brand/10 text-brand px-2.5 py-1 text-[11px] font-bold hover:bg-brand/20 transition-colors cursor-pointer whitespace-nowrap" data-testid="test-popup-header-btn">Uji Popup</button>
-          <button type="button" onClick={() => api.post("/notifications/read-all").then(load).catch(() => {})} className="btn-ghost flex h-8 items-center gap-1 px-2 text-[11px] font-semibold cursor-pointer whitespace-nowrap" data-testid="mark-all-read-btn"><CheckCheck size={14} /><span className="hidden sm:inline">Tandai </span>Semua</button>
-          <button type="button" onClick={handleClose} className="btn-ghost flex h-8 w-8 items-center justify-center rounded-xl hover:bg-surface2 cursor-pointer shrink-0" aria-label="Tutup" data-testid="close-notifications-btn"><X size={16} /></button>
+          <button type="button" onClick={testPopup} className="rounded-full bg-brand/10 text-brand px-2.5 py-1 text-[11px] font-bold hover:bg-brand/20 transition-colors cursor-pointer whitespace-nowrap" data-testid="test-popup-header-btn">{t("notif_test_popup", "Uji Popup")}</button>
+          <button type="button" onClick={() => api.post("/notifications/read-all").then(load).catch(() => {})} className="btn-ghost flex h-8 items-center gap-1 px-2 text-[11px] font-semibold cursor-pointer whitespace-nowrap" data-testid="mark-all-read-btn"><CheckCheck size={14} /><span className="hidden sm:inline">{t("notif_mark_prefix", "Tandai ")}</span>{t("notif_mark_all", "Semua")}</button>
+          <button type="button" onClick={handleClose} className="btn-ghost flex h-8 w-8 items-center justify-center rounded-xl hover:bg-surface2 cursor-pointer shrink-0" aria-label={t("common_close", "Tutup")} data-testid="close-notifications-btn"><X size={16} /></button>
         </div>
       </div>
       <div className="flex gap-1.5 overflow-x-auto border-b px-3 sm:px-4 py-2 no-scrollbar">{cats.filter(Boolean).map((c) => <button key={`notif-cat-${c}`} onClick={() => setCat(c)} className={`h-7 whitespace-nowrap rounded-full px-3 text-[11px] font-semibold transition-colors cursor-pointer ${cat === c ? "bg-brand text-white shadow-xs" : "bg-surface2 text-sub hover:text-ink"}`} data-testid={`notif-cat-${c}`}>{CAT_LABELS[c] || c}</button>)}</div>
       <div className="flex-1 overflow-y-auto scroll-thin">
-        {data && !items.length && <div className="p-10 text-center text-sm text-sub"><Bell className="mx-auto mb-2" size={22} />Semua sudah terbaca</div>}
+        {data && !items.length && <div className="p-10 text-center text-sm text-sub"><Bell className="mx-auto mb-2" size={22} />{t("notif_empty", "Semua sudah terbaca")}</div>}
         {items.map((n) => (
           <button key={n.id} onClick={() => open(n)} className={`flex w-full items-start gap-3 border-b px-4 py-3 text-left hover:bg-surface2 ${n.read ? "" : "bg-soft-red"}`} data-testid={`notification-${n.id}`}>
             {n.actor_id && userMap[n.actor_id] ? <Avatar user={userMap[n.actor_id]} size={32} showStatus={false} /> : <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface2"><Bell size={14} /></span>}

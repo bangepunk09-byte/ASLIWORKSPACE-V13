@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { CheckSquare, Plus, Search, Download, KanbanSquare, List, GanttChart, CalendarDays, SlidersHorizontal, X, Archive, ChevronDown, Users, Printer, Upload, FileSpreadsheet } from "lucide-react";
 import { toast } from "sonner";
 import { api, errMsg, downloadFrom } from "../lib/api";
+import { playSound } from "../lib/sound";
 import { useApp } from "../context/AppContext";
 import { hasCompletedInitialHydrate } from "../lib/persistentMirror";
 import { PageHeader, AccentButton, GhostButton, PRIORITY, fmtDate } from "../components/common";
@@ -207,7 +208,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
 
   const isSuperAdmin = me?.role === "super_admin";
   const openImportModal = (type) => {
-    if (!isSuperAdmin) return toast.error("Hanya Super Admin yang dapat mengimpor tugas.");
+    if (!isSuperAdmin) return toast.error(t("tasks_import_only_admin", "Hanya Super Admin yang dapat mengimpor tugas."));
     setImportTargetBoardId(boardId || boards.find((b) => b.department?.toLowerCase() === me?.department?.toLowerCase())?.id || allImportBoards[0]?.id || "");
     setOverrideImportBoard(true);
     setImportModal(type);
@@ -220,7 +221,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
       const text = await file.text();
       const parsedItems = parseCSV(text);
       if (!parsedItems.length) {
-        return toast.error("File CSV tidak berisi data tugas yang valid. Pastikan header memiliki kolom Title/Judul.");
+        return toast.error(t("tasks_import_csv_empty", "File CSV tidak berisi data tugas yang valid. Pastikan header memiliki kolom Title/Judul."));
       }
       const targetBoard = allImportBoards.find((b) => b.id === importTargetBoardId) || boards.find((b) => b.id === importTargetBoardId);
       const { data } = await api.post("/tasks/import-csv", {
@@ -239,7 +240,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
       loadBoards();
       load();
     } catch (err) {
-      toast.error(errMsg(err, "Gagal mengimpor file CSV"));
+      toast.error(errMsg(err, t("tasks_import_csv_err", "Gagal mengimpor file CSV")));
     } finally {
       e.target.value = "";
     }
@@ -269,7 +270,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
       loadBoards();
       load();
     } catch (err) {
-      toast.error(errMsg(err, "Gagal mengimpor file JSON"));
+      toast.error(errMsg(err, t("tasks_import_json_err", "Gagal mengimpor file JSON")));
     } finally {
       e.target.value = "";
     }
@@ -520,6 +521,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
   const open = (id) => { params.set("task", id); setParams(params); };
   const close = () => { params.delete("task"); setParams(params); };
   const switchView = (v) => {
+    if (v !== view) playSound("tab");
     setView(v);
     if (v === "archive") {
       setSaved("archived");
@@ -529,12 +531,12 @@ export function TaskWorkspace({ projectId, compactHeader }) {
     savePrefs({ task_view: v }).catch(() => {});
   };
   const exp = async (format, ids) => {
-    if (!isSuperAdmin) return toast.error("Hanya Super Admin yang dapat mengekspor tugas.");
+    if (!isSuperAdmin) return toast.error(t("tasks_export_only_admin", "Hanya Super Admin yang dapat mengekspor tugas."));
     try {
       const res = await downloadFrom("/tasks/export", { ...query(), format, ...(ids ? { ids: ids.join(",") } : {}) }, `circle-tasks.${format}`);
       const count = res.headers["x-record-count"];
       toast.success(count ? `Berhasil mengekspor ${count} tugas` : "Ekspor tugas berhasil");
-    } catch (e) { toast.error(errMsg(e, "Ekspor gagal")); }
+    } catch (e) { toast.error(errMsg(e, t("tasks_export_err", "Ekspor gagal"))); }
   };
   const bulk = async (patch) => { try { const { data } = await api.post("/tasks/bulk", { ids: selected, patch }); toast.success(`${data.updated} tugas diperbarui`); setSelected([]); load(); } catch (e) { toast.error(errMsg(e)); } };
   const depts = [...new Set(users.map((u) => u.department).filter(Boolean))];
@@ -566,12 +568,12 @@ export function TaskWorkspace({ projectId, compactHeader }) {
       <div className="hidden print:block border-b-2 border-slate-800 pb-3 mb-4">
         <div className="flex items-end justify-between">
           <div>
-            <p className="text-[11px] font-bold uppercase tracking-widest text-slate-500">CIRCLE WORKSPACE · LAPORAN TUGAS</p>
-            <h1 className="text-2xl font-extrabold text-slate-900">Laporan Tugas — {activeBoardName}</h1>
+            <p className="text-[11px] font-bold uppercase tracking-widest text-slate-500">{t("tasks_print_report_eyebrow", "CIRCLE WORKSPACE · LAPORAN TUGAS")}</p>
+            <h1 className="text-2xl font-extrabold text-slate-900">{t("tasks_print_report_title", "Laporan Tugas")} — {activeBoardName}</h1>
           </div>
           <div className="text-right text-xs text-slate-600">
-            <p>Tampilan: <b className="capitalize">{view}</b> · Total: <b>{visibleTasks.length} tugas</b></p>
-            <p>Dicetak: {fmtDate(new Date().toISOString(), "d MMM yyyy HH:mm")}</p>
+            <p>{t("tasks_print_view_label", "Tampilan:")} <b className="capitalize">{view}</b> · {t("tasks_print_total_label", "Total:")} <b>{visibleTasks.length} {t("tasks_tasks_unit", "tugas")}</b></p>
+            <p>{t("tasks_print_printed_label", "Dicetak:")} {fmtDate(new Date().toISOString(), "d MMM yyyy HH:mm")}</p>
           </div>
         </div>
       </div>
@@ -605,18 +607,18 @@ export function TaskWorkspace({ projectId, compactHeader }) {
                       </DropdownMenuItem>
                       {selected.length > 0 && (
                         <DropdownMenuItem onClick={() => exp("csv", selected)} data-testid="export-selected-btn">
-                          <Download size={13} className="mr-2" /> Ekspor {selected.length} terpilih
+                          <Download size={13} className="mr-2" /> {t("tasks_export_selected_prefix", "Ekspor")} {selected.length} {t("tasks_selected_suffix", "terpilih")}
                         </DropdownMenuItem>
                       )}
                       <DropdownMenuItem onClick={() => exp("json")} data-testid="export-json-btn">
-                        <Download size={13} className="mr-2" /> Ekspor JSON
+                        <Download size={13} className="mr-2" /> {t("tasks_export_json", "Ekspor JSON")}
                       </DropdownMenuItem>
                       <div className="my-1 border-t opacity-50" />
                       <DropdownMenuItem onClick={() => openImportModal("csv")} data-testid="import-csv-btn">
                         <FileSpreadsheet size={13} className="mr-2 text-emerald-600 dark:text-emerald-400" /> {t("tasks_import_csv", "Impor File CSV")}
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => openImportModal("json")} data-testid="import-json-btn">
-                        <Upload size={13} className="mr-2 text-blue-600 dark:text-blue-400" /> Impor File JSON
+                        <Upload size={13} className="mr-2 text-blue-600 dark:text-blue-400" /> {t("tasks_import_json", "Impor File JSON")}
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
@@ -625,7 +627,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
                 <GhostButton
                   onClick={handlePrint}
                   className="h-10 shrink-0 whitespace-nowrap rounded-full px-4 text-xs sm:text-sm font-semibold border bg-surface text-sub hover:text-ink hover:bg-surface2"
-                  title="Cetak / Simpan PDF langsung tampilan ini"
+                  title={t("tasks_print_title", "Cetak / Simpan PDF langsung tampilan ini")}
                   data-testid="print-tasks-btn"
                 >
                   <Printer size={14} />
@@ -659,10 +661,10 @@ export function TaskWorkspace({ projectId, compactHeader }) {
           {isSuperAdmin && (
             <>
               <GhostButton onClick={() => openImportModal("csv")} className="h-10 shrink-0 whitespace-nowrap rounded-full px-4 text-xs sm:text-sm font-semibold" data-testid="import-csv-compact-btn">
-                <Upload size={14} /> Impor
+                <Upload size={14} /> {t("tasks_import_short", "Impor")}
               </GhostButton>
               <GhostButton onClick={() => exp("csv")} className="h-10 shrink-0 whitespace-nowrap rounded-full px-4 text-xs sm:text-sm font-semibold" data-testid="export-csv-btn">
-                <Download size={14} /> Ekspor
+                <Download size={14} /> {t("tasks_export_short", "Ekspor")}
               </GhostButton>
             </>
           )}
@@ -722,10 +724,10 @@ export function TaskWorkspace({ projectId, compactHeader }) {
                 className="h-10 w-full sm:w-auto sm:max-w-[210px] rounded-full border bg-surface px-3.5 text-xs font-semibold text-ink shadow-xs hover:bg-surface2"
                 data-testid="board-dropdown-select"
               >
-                <option value="">{projectId ? "Semua Board Proyek" : t("tasks_all_boards", "Semua Board")}</option>
+                <option value="">{projectId ? t("tasks_all_project_boards", "Semua Board Proyek") : t("tasks_all_boards", "Semua Board")}</option>
                 {displayedBoards.map((b) => (
                   <option key={b.id} value={b.id}>
-                    {b.name}{isBoardCollaborative(b) ? " · Kolaborasi" : ""} · {b.task_count || 0}
+                    {b.name}{isBoardCollaborative(b) ? ` · ${t("board_collab_tag", "Kolaborasi")}` : ""} · {b.task_count || 0}
                   </option>
                 ))}
               </AppSelect>
@@ -741,8 +743,8 @@ export function TaskWorkspace({ projectId, compactHeader }) {
                   })
                 }
                 className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border bg-surface text-brand shadow-xs hover:bg-brand/5 transition-all cursor-pointer"
-                title="Buat Board"
-                aria-label="Buat Board"
+                title={t("board_create_btn_title", "Buat Board")}
+                aria-label={t("board_create_btn_title", "Buat Board")}
                 data-testid="create-board-btn"
               >
                 <Plus size={16} className="shrink-0" />
@@ -753,13 +755,13 @@ export function TaskWorkspace({ projectId, compactHeader }) {
                   type="button"
                   onClick={() => setManagingMembersBoard(currentBoard)}
                   className="inline-flex h-10 shrink-0 whitespace-nowrap items-center gap-1.5 rounded-full border bg-surface px-3 sm:px-3.5 text-xs font-semibold text-ink shadow-xs hover:bg-surface2 transition-all cursor-pointer"
-                  title="Anggota & Undang Orang ke Board"
+                  title={t("board_members_btn_title", "Anggota & Undang Orang ke Board")}
                   data-testid="board-manage-members-btn"
                 >
                   <Users size={14} className="text-brand shrink-0" />
-                  <span className="hidden sm:inline">Anggota</span>
+                  <span className="hidden sm:inline">{t("board_members_btn", "Anggota")}</span>
                   <span className="rounded-full bg-brand/10 text-brand px-1.5 py-0.5 text-[10px] font-bold leading-none">
-                    + Undang
+                    {t("board_invite_short", "+ Undang")}
                   </span>
                 </button>
               )}
@@ -771,7 +773,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
                   className="inline-flex h-10 shrink-0 whitespace-nowrap items-center gap-1 rounded-full border bg-surface px-3 text-xs font-semibold text-sub hover:text-ink hover:bg-surface2 transition-all cursor-pointer"
                   data-testid="edit-board-btn"
                 >
-                  Atur Board
+                  {t("board_manage_btn", "Atur Board")}
                 </button>
               )}
             </div>
@@ -789,7 +791,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
               data-testid="task-search-input"
             />
             {f.q && (
-              <button onClick={() => setF({ ...f, q: "" })} className="text-sub hover:text-ink p-1 rounded-full shrink-0" aria-label="Hapus pencarian">
+              <button onClick={() => setF({ ...f, q: "" })} className="text-sub hover:text-ink p-1 rounded-full shrink-0" aria-label={t("tasks_clear_search_label", "Hapus pencarian")}>
                 <X size={13} />
               </button>
             )}
@@ -797,7 +799,10 @@ export function TaskWorkspace({ projectId, compactHeader }) {
 
           <button
             type="button"
-            onClick={() => setShowFilters(!showFilters)}
+            onClick={() => {
+              playSound("click");
+              setShowFilters(!showFilters);
+            }}
             className={`inline-flex h-10 shrink-0 whitespace-nowrap items-center gap-1.5 rounded-full border px-3 text-xs font-semibold transition-all shadow-xs cursor-pointer ${
               showFilters || active > 0
                 ? "bg-brand text-white border-transparent"
@@ -880,18 +885,18 @@ export function TaskWorkspace({ projectId, compactHeader }) {
           className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 rounded-2xl border bg-surface p-2.5 shadow-2xs animate-subpage-enter print:hidden"
           data-testid="filter-strip"
         >
-          <span className="col-span-2 sm:col-span-1 text-[11px] font-bold uppercase tracking-wider text-sub px-1">Filter:</span>
+          <span className="col-span-2 sm:col-span-1 text-[11px] font-bold uppercase tracking-wider text-sub px-1">{t("tasks_filter_prefix", "Filter:")}</span>
           <AppSelect
             value={saved}
             onChange={(e) => { setSaved(e.target.value); setSelected([]); }}
             className="h-9 rounded-xl border bg-surface2 px-3 text-xs font-semibold text-ink hover:bg-surface"
             data-testid="filter-saved-view"
           >
-            <optgroup label="Tampilan Utama">
-              {PRIMARY_SAVED_VIEWS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            <optgroup label={t("tasks_saved_primary_group", "Tampilan Utama")}>
+              {PRIMARY_SAVED_VIEWS.map(([k, l]) => <option key={k} value={k}>{t(`tasks_view_${k}`, l)}</option>)}
             </optgroup>
-            <optgroup label="Tampilan Lainnya">
-              {MORE_SAVED_VIEWS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            <optgroup label={t("tasks_saved_more_group", "Tampilan Lainnya")}>
+              {MORE_SAVED_VIEWS.map(([k, l]) => <option key={k} value={k}>{t(`tasks_view_${k}`, l)}</option>)}
             </optgroup>
           </AppSelect>
           <AppSelect
@@ -900,7 +905,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
             className="h-9 rounded-xl border bg-surface2 px-3 text-xs font-semibold text-ink hover:bg-surface"
             data-testid="filter-label"
           >
-            <option value="">Semua Brand</option>
+            <option value="">{t("tasks_all_brands", "Semua Brand")}</option>
             {labels.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
           </AppSelect>
           <AppSelect
@@ -909,7 +914,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
             className="h-9 rounded-xl border bg-surface2 px-3 text-xs font-semibold text-ink hover:bg-surface"
             data-testid="filter-assignee"
           >
-            <option value="">Semua Assignee</option>
+            <option value="">{t("tasks_all_assignees", "Semua Assignee")}</option>
             {users.filter((u) => !u.is_bot && u.role !== "assistant" && u.user_id !== "user_circle_assistant").map((u) => <option key={u.user_id} value={u.user_id}>{u.name}</option>)}
           </AppSelect>
           <AppSelect
@@ -918,7 +923,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
             className="h-9 rounded-xl border bg-surface2 px-3 text-xs font-semibold text-ink hover:bg-surface"
             data-testid="filter-priority"
           >
-            <option value="">Semua Prioritas</option>
+            <option value="">{t("tasks_all_priorities", "Semua Prioritas")}</option>
             {Object.entries(PRIORITY).map(([k, p]) => <option key={k} value={k}>{p.name}</option>)}
           </AppSelect>
           <AppSelect
@@ -927,7 +932,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
             className="h-9 rounded-xl border bg-surface2 px-3 text-xs font-semibold text-ink hover:bg-surface"
             data-testid="filter-task-department"
           >
-            <option value="">Semua Divisi</option>
+            <option value="">{t("tasks_all_divisions", "Semua Divisi")}</option>
             {depts.map((d) => <option key={d} value={d}>{d}</option>)}
           </AppSelect>
           <AppSelect
@@ -936,7 +941,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
             className="h-9 rounded-xl border bg-surface2 px-3 text-xs font-semibold text-ink hover:bg-surface"
             data-testid="filter-task-item-type"
           >
-            <option value="">Semua Jenis Item</option>
+            <option value="">{t("tasks_all_item_types", "Semua Jenis Item")}</option>
             {(Array.isArray(ws?.item_types) && ws.item_types.length > 0 ? ws.item_types : DEFAULT_ITEM_TYPES).map((it) => (
               <option key={it.name} value={it.name}>{it.name}</option>
             ))}
@@ -948,12 +953,12 @@ export function TaskWorkspace({ projectId, compactHeader }) {
               className="h-9 rounded-xl border bg-surface2 px-3 text-xs font-semibold text-ink hover:bg-surface"
               data-testid="group-by-select"
             >
-              <option value="status">Grup: Status</option>
-              <option value="assignee">Grup: Assignee</option>
-              <option value="department">Grup: Divisi</option>
-              <option value="label">Grup: IP / Brand</option>
-              <option value="item_type">Grup: Jenis Item</option>
-              <option value="none">Tanpa Pengelompokan</option>
+              <option value="status">{t("tasks_group_status", "Grup: Status")}</option>
+              <option value="assignee">{t("tasks_group_assignee", "Grup: Assignee")}</option>
+              <option value="department">{t("tasks_group_department", "Grup: Divisi")}</option>
+              <option value="label">{t("tasks_group_brand", "Grup: IP / Brand")}</option>
+              <option value="item_type">{t("tasks_group_item_type", "Grup: Jenis Item")}</option>
+              <option value="none">{t("tasks_group_none", "Tanpa Pengelompokan")}</option>
             </AppSelect>
           )}
           {active > 0 && (
@@ -969,7 +974,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
               className="flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-semibold text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors ml-auto"
               data-testid="clear-filters-btn"
             >
-              <X size={13} /> Reset Filter
+              <X size={13} /> {t("tasks_reset_filter", "Reset Filter")}
             </button>
           )}
         </div>
@@ -979,7 +984,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
           <div className="flex items-center gap-2 font-semibold text-ink">
             <Users size={14} className="text-brand shrink-0" />
             <span>
-              Menampilkan khusus tugas milik: <b className="text-brand">{filteredAssigneeUser?.name || f.assignee_id}</b> · {visibleTasks.length} tugas
+              {t("tasks_assignee_banner_prefix", "Menampilkan khusus tugas milik:")} <b className="text-brand">{filteredAssigneeUser?.name || f.assignee_id}</b> · {visibleTasks.length} {t("tasks_tasks_unit", "tugas")}
             </span>
           </div>
           <button
@@ -988,17 +993,17 @@ export function TaskWorkspace({ projectId, compactHeader }) {
             className="inline-flex items-center gap-1 rounded-full bg-surface px-2.5 py-1 text-[11px] font-bold text-sub hover:text-ink border cursor-pointer"
             data-testid="clear-assignee-filter-btn"
           >
-            <X size={12} /> Tampilkan Semua
+            <X size={12} /> {t("tasks_show_all_btn", "Tampilkan Semua")}
           </button>
         </div>
       )}
       {selected.length > 0 && (
         <div className="sticky top-14 md:top-2 z-30 mb-4 flex flex-wrap items-center gap-2 rounded-2xl border bg-surface p-2.5 shadow-lg print:hidden" data-testid="bulk-actions-bar">
-          <span className="px-2 text-sm font-semibold">{selected.length} dipilih</span>
-          <AppSelect onChange={(e) => e.target.value && bulk({ status: e.target.value })} value="" className="h-10 rounded-full border bg-surface2 px-4 text-sm font-medium" data-testid="bulk-status"><option value="">Atur status…</option>{statuses.map((s) => <option key={s.key} value={s.key}>{s.name}</option>)}</AppSelect>
-          <AppSelect onChange={(e) => e.target.value && bulk({ priority: e.target.value })} value="" className="h-10 rounded-full border bg-surface2 px-4 text-sm font-medium" data-testid="bulk-priority"><option value="">Atur prioritas…</option>{Object.entries(PRIORITY).map(([k, p]) => <option key={k} value={k}>{p.name}</option>)}</AppSelect>
+          <span className="px-2 text-sm font-semibold">{selected.length} {t("tasks_bulk_selected_suffix", "dipilih")}</span>
+          <AppSelect onChange={(e) => e.target.value && bulk({ status: e.target.value })} value="" className="h-10 rounded-full border bg-surface2 px-4 text-sm font-medium" data-testid="bulk-status"><option value="">{t("tasks_bulk_set_status", "Atur status…")}</option>{statuses.map((s) => <option key={s.key} value={s.key}>{s.name}</option>)}</AppSelect>
+          <AppSelect onChange={(e) => e.target.value && bulk({ priority: e.target.value })} value="" className="h-10 rounded-full border bg-surface2 px-4 text-sm font-medium" data-testid="bulk-priority"><option value="">{t("tasks_bulk_set_priority", "Atur prioritas…")}</option>{Object.entries(PRIORITY).map(([k, p]) => <option key={k} value={k}>{p.name}</option>)}</AppSelect>
           <AppSelect onChange={(e) => e.target.value && bulk({ assignee_id: e.target.value, assignee_ids: [e.target.value] })} value="" className="h-10 rounded-full border bg-surface2 px-4 text-sm font-medium" data-testid={`bulk-assignee`}>
-            <option value="">Tugaskan ke…</option>
+            <option value="">{t("tasks_bulk_assign_to", "Tugaskan ke…")}</option>
             {(() => {
               const scope = getBoardAssigneeScope({ boards, boardId, projectId, users });
               return users
@@ -1006,9 +1011,9 @@ export function TaskWorkspace({ projectId, compactHeader }) {
                 .map((u) => <option key={u.user_id} value={u.user_id}>{u.name}</option>);
             })()}
           </AppSelect>
-          <button onClick={() => bulk({ archived: saved !== "archived" })} className="inline-flex h-10 items-center rounded-full border px-4 text-sm font-semibold hover:bg-surface2 transition-colors" data-testid="bulk-archive">{saved === "archived" ? "Pulihkan" : "Arsipkan"}</button>
+          <button onClick={() => bulk({ archived: saved !== "archived" })} className="inline-flex h-10 items-center rounded-full border px-4 text-sm font-semibold hover:bg-surface2 transition-colors" data-testid="bulk-archive">{saved === "archived" ? t("tasks_bulk_restore", "Pulihkan") : t("tasks_bulk_archive", "Arsipkan")}</button>
           {isSuperAdmin && (
-            <button onClick={() => exp("csv", selected)} className="inline-flex h-10 items-center rounded-full border px-4 text-sm font-semibold hover:bg-surface2 transition-colors" data-testid="bulk-export">Ekspor</button>
+            <button onClick={() => exp("csv", selected)} className="inline-flex h-10 items-center rounded-full border px-4 text-sm font-semibold hover:bg-surface2 transition-colors" data-testid="bulk-export">{t("tasks_bulk_export", "Ekspor")}</button>
           )}
           <button onClick={() => setSelected([])} className="ml-auto text-sub" aria-label="Hapus pilihan"><X size={16} /></button>
         </div>
@@ -1040,13 +1045,13 @@ export function TaskWorkspace({ projectId, compactHeader }) {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-lg font-bold">
               {importModal === "json" ? <Upload size={18} className="text-blue-600" /> : <FileSpreadsheet size={18} className="text-emerald-600" />}
-              Impor Tugas {importModal === "json" ? "JSON" : "CSV"}
+              {t("tasks_import_modal_title", "Impor Tugas")} {importModal === "json" ? "JSON" : "CSV"}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-1">
             <div>
               <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-sub">
-                Divisi / Board Tujuan
+                {t("tasks_import_target_label", "Divisi / Board Tujuan")}
               </label>
               <AppSelect
                 value={importTargetBoardId}
@@ -1054,7 +1059,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
                 className="h-10 w-full rounded-xl border bg-surface2 px-3 text-sm font-medium text-ink"
                 data-testid="import-target-board-select"
               >
-                <option value="">Otomatis sesuai kolom di file</option>
+                <option value="">{t("tasks_import_auto_option", "Otomatis sesuai kolom di file")}</option>
                 {allImportBoards.map((b) => (
                   <option key={b.id} value={b.id}>
                     {b.name} {b.department && b.department !== b.name ? `· ${b.department}` : ""}
@@ -1072,22 +1077,22 @@ export function TaskWorkspace({ projectId, compactHeader }) {
                   data-testid="import-override-board-checkbox"
                 />
                 <span className="text-ink">
-                  <b>Masukkan semua data impor ke board ini</b>
+                  <b>{t("tasks_import_override_title", "Masukkan semua data impor ke board ini")}</b>
                   <span className="block text-sub mt-0.5">
-                    Centang agar semua baris masuk ke divisi terpilih meski file tidak memiliki kolom Board/Department atau nilainya berbeda.
+                    {t("tasks_import_override_desc", "Centang agar semua baris masuk ke divisi terpilih meski file tidak memiliki kolom Board/Department atau nilainya berbeda.")}
                   </span>
                 </span>
               </label>
             )}
             <div className="rounded-xl bg-surface2 p-3 text-xs text-sub space-y-1">
-              <p className="font-semibold text-ink">Kolom yang didukung:</p>
+              <p className="font-semibold text-ink">{t("tasks_import_supported_cols", "Kolom yang didukung:")}</p>
               <p>Title, Requestor, Assignee, Brand, Item, Priority, Link, Deadline, Status, Department/Board</p>
-              <p className="opacity-80">Mendukung pemisah koma dan titik koma dari Excel.</p>
+              <p className="opacity-80">{t("tasks_import_supported_desc", "Mendukung pemisah koma dan titik koma dari Excel.")}</p>
             </div>
           </div>
           <DialogFooter className="gap-2">
             <GhostButton type="button" onClick={() => setImportModal(null)} className="h-10 rounded-full px-4 text-sm">
-              Batal
+              {t("tasks_cancel_btn", "Batal")}
             </GhostButton>
             <AccentButton
               type="button"
@@ -1098,7 +1103,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
               className="h-10 rounded-full px-5 text-sm font-semibold"
               data-testid="confirm-pick-import-file-btn"
             >
-              Pilih File &amp; Impor
+              {t("tasks_import_pick_btn", "Pilih File & Impor")}
             </AccentButton>
           </DialogFooter>
         </DialogContent>

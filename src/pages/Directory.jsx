@@ -93,6 +93,7 @@ export function DriveShortcutDialog({
   onSave,
   onOpenDriveBrowser
 }) {
+  const { t: tr } = useApp();
   const isEdit = !!initialData?.id;
   const [name, setName] = useState("");
   const [driveInput, setDriveInput] = useState("");
@@ -227,7 +228,9 @@ export function DriveShortcutDialog({
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto rounded-2xl sm:rounded-3xl bg-surface p-5 sm:p-6">
         <DialogHeader>
           <DialogTitle className="text-lg font-bold text-ink">
-            {isEdit ? "Atur Shortcut Folder Google Drive" : "Tambah Shortcut Folder Google Drive"}
+            {isEdit
+              ? tr("directory_dlg_edit_title", "Atur Shortcut Folder Google Drive")
+              : tr("directory_dlg_add_title", "Tambah Shortcut Folder Google Drive")}
           </DialogTitle>
         </DialogHeader>
 
@@ -235,13 +238,13 @@ export function DriveShortcutDialog({
           {/* Live Card Preview */}
           <div className="rounded-2xl border bg-surface2/50 p-4">
             <div className="mb-2 flex items-center justify-between">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-sub">Live Preview Kartu Shortcut</span>
+              <span className="text-[11px] font-bold uppercase tracking-wider text-sub">{tr("directory_preview_label", "Live Preview Kartu Shortcut")}</span>
               <span className="text-[11px] font-medium text-sub">
                 {accessType === "all"
-                  ? "Akses: Semua Anggota"
+                  ? `${tr("directory_access_prefix", "Akses:")} ${tr("directory_access_all", "Semua Anggota")}`
                   : accessType === "department"
-                  ? `Akses: Divisi (${allowedDepartments.join(", ") || "Pilih Divisi"})`
-                  : `Akses: ${allowedUserIds.length} Anggota Terpilih`}
+                  ? `${tr("directory_access_prefix", "Akses:")} ${tr("directory_access_dept_prefix", "Divisi")} (${allowedDepartments.join(", ") || tr("directory_access_pick_dept", "Pilih Divisi")})`
+                  : `${tr("directory_access_prefix", "Akses:")} ${allowedUserIds.length} ${tr("directory_access_selected_suffix", "Anggota Terpilih")}`}
               </span>
             </div>
             <div
@@ -262,7 +265,7 @@ export function DriveShortcutDialog({
                   </div>
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-1.5">
-                      <h4 className="truncate text-base font-bold text-ink leading-snug py-0.5">{name || "Nama Folder Google Drive"}</h4>
+                      <h4 className="truncate text-base font-bold text-ink leading-snug py-0.5">{name || tr("directory_preview_name_ph", "Nama Folder Google Drive")}</h4>
                       {badge && (
                         <span
                           className="rounded-full px-2 py-0.5 text-[10px] font-bold"
@@ -273,12 +276,12 @@ export function DriveShortcutDialog({
                       )}
                     </div>
                     <p className="mt-0.5 truncate text-xs text-sub">
-                      {description || "Deskripsi singkat isi folder Google Drive..."}
+                      {description || tr("directory_preview_desc_ph", "Deskripsi singkat isi folder Google Drive...")}
                     </p>
                   </div>
                 </div>
                 <span className="rounded-full border bg-surface2 px-2.5 py-1 text-[11px] font-semibold text-sub shrink-0">
-                  {category === "__custom__" ? customCategory || "Kustom" : category}
+                  {category === "__custom__" ? customCategory || tr("directory_preview_custom_cat", "Kustom") : category}
                 </span>
               </div>
             </div>
@@ -288,7 +291,7 @@ export function DriveShortcutDialog({
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="sm:col-span-2 min-w-0">
               <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
-                <label className="text-xs font-bold text-ink">Link / URL Folder Google Drive atau Folder ID *</label>
+                <label className="text-xs font-bold text-ink">{tr("directory_drive_link_label", "Link / URL Folder Google Drive atau Folder ID *")}</label>
                 {onOpenDriveBrowser && (
                   <button
                     type="button"
@@ -298,28 +301,28 @@ export function DriveShortcutDialog({
                     }}
                     className="inline-flex items-center gap-1 text-xs font-bold text-brand hover:underline"
                   >
-                    <HardDrive size={13} /> Pilih / Buat Langsung dari Google Drive
+                    <HardDrive size={13} /> {tr("directory_drive_pick_btn", "Pilih / Buat Langsung dari Google Drive")}
                   </button>
                 )}
               </div>
               <input
                 value={driveInput}
                 onChange={(e) => setDriveInput(e.target.value)}
-                placeholder="https://drive.google.com/drive/folders/1A2B3C... atau tempel Folder ID"
+                placeholder={tr("directory_drive_link_ph", "https://drive.google.com/drive/folders/1A2B3C... atau tempel Folder ID")}
                 className="h-10 w-full rounded-xl border bg-surface px-3.5 text-sm outline-none focus:border-brand"
                 data-testid="shortcut-drive-url-input"
               />
               <p className="mt-1 text-[11px] text-sub">
-                Mendukung URL folder Google Drive langsung, Shared Drive link, atau ID folder Google Drive.
+                {tr("directory_drive_link_hint", "Mendukung URL folder Google Drive langsung, Shared Drive link, atau ID folder Google Drive.")}
               </p>
             </div>
 
             <div>
-              <label className="mb-1.5 block text-xs font-bold text-ink">Nama Shortcut Folder *</label>
+              <label className="mb-1.5 block text-xs font-bold text-ink">{tr("directory_name_label", "Nama Shortcut Folder *")}</label>
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="Contoh: Engineering Architecture &PRD"
+                placeholder={tr("directory_name_ph", "Contoh: Engineering Architecture &PRD")}
                 className="h-10 w-full rounded-xl border bg-surface px-3.5 text-sm outline-none focus:border-brand"
                 required
                 data-testid="shortcut-name-input"
@@ -327,18 +330,18 @@ export function DriveShortcutDialog({
             </div>
 
             <div>
-              <label className="mb-1.5 block text-xs font-bold text-ink">Label Badge Kustom</label>
+              <label className="mb-1.5 block text-xs font-bold text-ink">{tr("directory_badge_label", "Label Badge Kustom")}</label>
               <input
                 value={badge}
                 onChange={(e) => setBadge(e.target.value)}
-                placeholder="Contoh: Official, Tech Docs, Confidential"
+                placeholder={tr("directory_badge_ph", "Contoh: Official, Tech Docs, Confidential")}
                 className="h-10 w-full rounded-xl border bg-surface px-3.5 text-sm outline-none focus:border-brand"
                 data-testid="shortcut-badge-input"
               />
             </div>
 
             <div>
-              <label className="mb-1.5 block text-xs font-bold text-ink">Kategori / Divisi</label>
+              <label className="mb-1.5 block text-xs font-bold text-ink">{tr("directory_cat_label", "Kategori / Divisi")}</label>
               <AppSelect
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
@@ -350,42 +353,42 @@ export function DriveShortcutDialog({
                     {c}
                   </option>
                 ))}
-                <option value="__custom__">+ Kategori Kustom Baru...</option>
+                <option value="__custom__">{tr("directory_cat_custom_opt", "+ Kategori Kustom Baru...")}</option>
               </AppSelect>
             </div>
 
             {category === "__custom__" ? (
               <div>
-                <label className="mb-1.5 block text-xs font-bold text-ink">Nama Kategori Kustom</label>
+                <label className="mb-1.5 block text-xs font-bold text-ink">{tr("directory_cat_custom_label", "Nama Kategori Kustom")}</label>
                 <input
                   value={customCategory}
                   onChange={(e) => setCustomCategory(e.target.value)}
-                  placeholder="Ketik kategori baru..."
+                  placeholder={tr("directory_cat_custom_ph", "Ketik kategori baru...")}
                   className="h-10 w-full rounded-xl border bg-surface px-3.5 text-sm outline-none focus:border-brand"
                 />
               </div>
             ) : (
               <div>
-                <label className="mb-1.5 block text-xs font-bold text-ink">Gaya Tampilan Kartu</label>
+                <label className="mb-1.5 block text-xs font-bold text-ink">{tr("directory_style_label", "Gaya Tampilan Kartu")}</label>
                 <AppSelect
                   value={cardStyle}
                   onChange={(e) => setCardStyle(e.target.value)}
                   className="h-10 w-full rounded-xl border bg-surface px-3 text-sm font-medium"
                 >
-                  <option value="accent_top">Garis Aksen Atas</option>
-                  <option value="soft_tint">Latar Berwarna Lembut</option>
-                  <option value="minimal">Minimalis Bersih</option>
+                  <option value="accent_top">{tr("directory_style_accent_top", "Garis Aksen Atas")}</option>
+                  <option value="soft_tint">{tr("directory_style_soft_tint", "Latar Berwarna Lembut")}</option>
+                  <option value="minimal">{tr("directory_style_minimal", "Minimalis Bersih")}</option>
                 </AppSelect>
               </div>
             )}
 
             <div className="sm:col-span-2">
-              <label className="mb-1.5 block text-xs font-bold text-ink">Deskripsi Folder</label>
+              <label className="mb-1.5 block text-xs font-bold text-ink">{tr("directory_desc_label", "Deskripsi Folder")}</label>
               <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 rows={2}
-                placeholder="Jelaskan isi dokumen atau panduan penggunaan folder ini..."
+                placeholder={tr("directory_desc_ph", "Jelaskan isi dokumen atau panduan penggunaan folder ini...")}
                 className="w-full rounded-xl border bg-surface p-3 text-sm outline-none focus:border-brand"
                 data-testid="shortcut-desc-input"
               />
@@ -395,7 +398,7 @@ export function DriveShortcutDialog({
           {/* Color & Icon Full Customization */}
           <div className="grid gap-4 sm:grid-cols-2 rounded-2xl border bg-surface2/40 p-4">
             <div>
-              <label className="mb-2 block text-xs font-bold text-ink">Warna Tema Folder</label>
+              <label className="mb-2 block text-xs font-bold text-ink">{tr("directory_color_label", "Warna Tema Folder")}</label>
               <div className="flex flex-wrap items-center gap-2">
                 {DRIVE_COLOR_PRESETS.map((c) => (
                   <button
@@ -416,13 +419,13 @@ export function DriveShortcutDialog({
                     onChange={(e) => setColor(e.target.value)}
                     className="h-4 w-4 cursor-pointer border-0 bg-transparent p-0"
                   />
-                  <span>Kustom</span>
+                  <span>{tr("directory_color_custom", "Kustom")}</span>
                 </label>
               </div>
             </div>
 
             <div>
-              <label className="mb-2 block text-xs font-bold text-ink">Pilih Ikon Folder</label>
+              <label className="mb-2 block text-xs font-bold text-ink">{tr("directory_icon_label", "Pilih Ikon Folder")}</label>
               <div className="flex flex-wrap gap-1.5">
                 {Object.keys(DRIVE_ICON_MAP).map((iconKey) => {
                   const active = icon === iconKey;
@@ -450,8 +453,8 @@ export function DriveShortcutDialog({
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border bg-surface p-3.5 hover:bg-surface2/50">
               <div className="min-w-0">
-                <p className="text-xs font-bold text-ink">Tampilkan di Dashboard</p>
-                <p className="text-[11px] text-sub">Muncul di Dashboard hanya bagi member yang punya akses</p>
+                <p className="text-xs font-bold text-ink">{tr("directory_show_dash_title", "Tampilkan di Dashboard")}</p>
+                <p className="text-[11px] text-sub">{tr("directory_show_dash_desc", "Muncul di Dashboard hanya bagi member yang punya akses")}</p>
               </div>
               <input
                 type="checkbox"
@@ -463,8 +466,8 @@ export function DriveShortcutDialog({
 
             <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border bg-surface p-3.5 hover:bg-surface2/50">
               <div className="min-w-0">
-                <p className="text-xs font-bold text-ink">Sematkan di Urutan Teratas</p>
-                <p className="text-[11px] text-sub">Prioritaskan shortcut folder ini di atas</p>
+                <p className="text-xs font-bold text-ink">{tr("directory_pin_title", "Sematkan di Urutan Teratas")}</p>
+                <p className="text-[11px] text-sub">{tr("directory_pin_desc", "Prioritaskan shortcut folder ini di atas")}</p>
               </div>
               <input
                 type="checkbox"
@@ -480,10 +483,10 @@ export function DriveShortcutDialog({
             <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h4 className="text-sm font-bold text-ink flex items-center gap-1.5">
-                  <ShieldCheck size={16} className="text-brand" /> Pengaturan Akses Member
+                  <ShieldCheck size={16} className="text-brand" /> {tr("directory_member_access_title", "Pengaturan Akses Member")}
                 </h4>
                 <p className="text-xs text-sub">
-                  Hanya member yang diberikan akses di bawah ini yang dapat melihat folder ini di Dashboard mereka.
+                  {tr("directory_member_access_desc", "Hanya member yang diberikan akses di bawah ini yang dapat melihat folder ini di Dashboard mereka.")}
                 </p>
               </div>
             </div>
@@ -493,20 +496,20 @@ export function DriveShortcutDialog({
               {[
                 {
                   id: "custom",
-                  label: "Anggota Terpilih",
-                  desc: "Pilih siapa saja yang punya akses",
+                  label: tr("directory_mode_custom", "Anggota Terpilih"),
+                  desc: tr("directory_mode_custom_desc", "Pilih siapa saja yang punya akses"),
                   icon: Lock
                 },
                 {
                   id: "department",
-                  label: "Per Divisi & Anggota",
-                  desc: "Akses otomatis sesuai divisi",
+                  label: tr("directory_mode_dept", "Per Divisi & Anggota"),
+                  desc: tr("directory_mode_dept_desc", "Akses otomatis sesuai divisi"),
                   icon: Building2
                 },
                 {
                   id: "all",
-                  label: "Semua Anggota",
-                  desc: "Seluruh anggota workspace",
+                  label: tr("directory_access_all", "Semua Anggota"),
+                  desc: tr("directory_mode_all_desc", "Seluruh anggota workspace"),
                   icon: Globe
                 }
               ].map((m) => {
@@ -536,7 +539,7 @@ export function DriveShortcutDialog({
 
             {accessType === "department" && (
               <div className="space-y-2 pt-1">
-                <label className="block text-xs font-bold text-ink">Pilih Divisi yang Memiliki Akses:</label>
+                <label className="block text-xs font-bold text-ink">{tr("directory_pick_dept_label", "Pilih Divisi yang Memiliki Akses:")}</label>
                 <div className="flex flex-wrap gap-2">
                   {allCategories
                     .filter((d) => d !== "General")
@@ -563,7 +566,7 @@ export function DriveShortcutDialog({
               <div className="space-y-2.5 pt-1">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <label className="text-xs font-bold text-ink">
-                    Pilih Member yang Memiliki Akses ({allowedUserIds.length} dipilih):
+                    {tr("directory_pick_member_label", "Pilih Member yang Memiliki Akses")} ({allowedUserIds.length} {tr("directory_selected_suffix", "dipilih")}):
                   </label>
                   <div className="flex items-center gap-2">
                     <button
@@ -571,7 +574,7 @@ export function DriveShortcutDialog({
                       onClick={() => setAllowedUserIds(humanUsers.map((u) => u.user_id))}
                       className="text-xs font-semibold text-brand hover:underline"
                     >
-                      Pilih Semua
+                      {tr("directory_select_all", "Pilih Semua")}
                     </button>
                     <span className="text-sub">·</span>
                     <button
@@ -579,7 +582,7 @@ export function DriveShortcutDialog({
                       onClick={() => setAllowedUserIds(me?.user_id ? [me.user_id] : [])}
                       className="text-xs font-semibold text-sub hover:text-ink"
                     >
-                      Hanya Saya
+                      {tr("directory_only_me", "Hanya Saya")}
                     </button>
                   </div>
                 </div>
@@ -589,7 +592,7 @@ export function DriveShortcutDialog({
                   <input
                     value={memberSearch}
                     onChange={(e) => setMemberSearch(e.target.value)}
-                    placeholder="Cari nama atau divisi member..."
+                    placeholder={tr("directory_member_search_ph", "Cari nama atau divisi member...")}
                     className="flex-1 bg-transparent text-xs outline-none"
                   />
                 </div>
@@ -607,7 +610,7 @@ export function DriveShortcutDialog({
                           <div className="min-w-0">
                             <p className="truncate text-xs font-bold text-ink">{u.name}</p>
                             <p className="truncate text-[11px] text-sub">
-                              {u.job_title || "Anggota"} · {u.department || "General"}
+                              {u.job_title || tr("directory_member_default_role", "Anggota")} · {u.department || "General"}
                             </p>
                           </div>
                         </div>
@@ -627,10 +630,10 @@ export function DriveShortcutDialog({
 
           <div className="flex items-center justify-end gap-2 pt-2">
             <GhostButton type="button" onClick={() => onOpenChange(false)}>
-              Batal
+              {tr("common_cancel", "Batal")}
             </GhostButton>
             <AccentButton type="submit" data-testid="save-shortcut-btn">
-              <Check size={15} /> {isEdit ? "Simpan Perubahan" : "Tambahkan ke Direktori"}
+              <Check size={15} /> {isEdit ? tr("directory_save_edit", "Simpan Perubahan") : tr("directory_save_add", "Tambahkan ke Direktori")}
             </AccentButton>
           </div>
         </form>
@@ -640,6 +643,7 @@ export function DriveShortcutDialog({
 }
 
 export function DriveAccessDialog({ open, onOpenChange, shortcut, users = [], divisions = [], me, onSaveAccess }) {
+  const { t: tr } = useApp();
   const [accessType, setAccessType] = useState("custom");
   const [allowedDepartments, setAllowedDepartments] = useState([]);
   const [allowedUserIds, setAllowedUserIds] = useState([]);
@@ -697,20 +701,20 @@ export function DriveAccessDialog({ open, onOpenChange, shortcut, users = [], di
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-lg font-bold text-ink">
             <ShieldCheck size={19} className="text-brand" />
-            <span>Atur Akses Member — {shortcut.name}</span>
+            <span>{tr("directory_access_dlg_title", "Atur Akses Member")} — {shortcut.name}</span>
           </DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4 mt-2">
           <p className="text-xs text-sub">
-            Tentukan siapa saja member yang memiliki akses ke folder Google Drive ini. Hanya member yang memiliki akses yang akan melihat shortcut ini di Dashboard.
+            {tr("directory_access_dlg_desc", "Tentukan siapa saja member yang memiliki akses ke folder Google Drive ini. Hanya member yang memiliki akses yang akan melihat shortcut ini di Dashboard.")}
           </p>
 
           <div className="grid grid-cols-3 gap-2">
             {[
-              { id: "custom", label: "Anggota Terpilih", icon: Lock },
-              { id: "department", label: "Per Divisi", icon: Building2 },
-              { id: "all", label: "Semua Anggota", icon: Globe }
+              { id: "custom", label: tr("directory_mode_custom", "Anggota Terpilih"), icon: Lock },
+              { id: "department", label: tr("directory_mode_dept_short", "Per Divisi"), icon: Building2 },
+              { id: "all", label: tr("directory_access_all", "Semua Anggota"), icon: Globe }
             ].map((item) => {
               const Icon = item.icon;
               const active = accessType === item.id;
@@ -732,7 +736,7 @@ export function DriveAccessDialog({ open, onOpenChange, shortcut, users = [], di
 
           {accessType === "department" && (
             <div className="space-y-2">
-              <label className="block text-xs font-bold text-ink">Divisi yang Diizinkan:</label>
+              <label className="block text-xs font-bold text-ink">{tr("directory_dept_allowed_label", "Divisi yang Diizinkan:")}</label>
               <div className="flex flex-wrap gap-1.5">
                 {allDepts.map((d) => {
                   const on = allowedDepartments.includes(d);
@@ -757,7 +761,7 @@ export function DriveAccessDialog({ open, onOpenChange, shortcut, users = [], di
             <div className="space-y-2.5">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-ink">
-                  Daftar Member ({allowedUserIds.length} memiliki akses)
+                  {tr("directory_member_list_label", "Daftar Member")} ({allowedUserIds.length} {tr("directory_has_access_suffix", "memiliki akses")})
                 </span>
                 <div className="flex items-center gap-2">
                   <button
@@ -765,7 +769,7 @@ export function DriveAccessDialog({ open, onOpenChange, shortcut, users = [], di
                     onClick={() => setAllowedUserIds(humanUsers.map((u) => u.user_id))}
                     className="text-xs font-semibold text-brand hover:underline"
                   >
-                    Pilih Semua
+                    {tr("directory_select_all", "Pilih Semua")}
                   </button>
                   <span className="text-sub">·</span>
                   <button
@@ -773,7 +777,7 @@ export function DriveAccessDialog({ open, onOpenChange, shortcut, users = [], di
                     onClick={() => setAllowedUserIds(me?.user_id ? [me.user_id] : [])}
                     className="text-xs font-semibold text-sub hover:text-ink"
                   >
-                    Reset
+                    {tr("directory_reset_btn", "Reset")}
                   </button>
                 </div>
               </div>
@@ -783,7 +787,7 @@ export function DriveAccessDialog({ open, onOpenChange, shortcut, users = [], di
                 <input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Cari member..."
+                  placeholder={tr("directory_member_search_short_ph", "Cari member...")}
                   className="flex-1 bg-transparent text-xs outline-none"
                 />
               </div>
@@ -801,7 +805,7 @@ export function DriveAccessDialog({ open, onOpenChange, shortcut, users = [], di
                         <div className="min-w-0">
                           <p className="truncate text-xs font-bold text-ink">{u.name}</p>
                           <p className="truncate text-[11px] text-sub">
-                            {u.job_title || "Anggota"} · {u.department || "General"}
+                            {u.job_title || tr("directory_member_default_role", "Anggota")} · {u.department || "General"}
                           </p>
                         </div>
                       </div>
@@ -820,10 +824,10 @@ export function DriveAccessDialog({ open, onOpenChange, shortcut, users = [], di
 
           <div className="flex items-center justify-end gap-2 pt-2">
             <GhostButton type="button" onClick={() => onOpenChange(false)}>
-              Batal
+              {tr("common_cancel", "Batal")}
             </GhostButton>
             <AccentButton type="button" onClick={handleSave} data-testid="save-member-access-btn">
-              <Check size={15} /> Simpan Akses Member
+              <Check size={15} /> {tr("directory_save_access_btn", "Simpan Akses Member")}
             </AccentButton>
           </div>
         </div>
@@ -833,6 +837,7 @@ export function DriveAccessDialog({ open, onOpenChange, shortcut, users = [], di
 }
 
 export function GoogleDriveBrowserDialog({ open, onOpenChange, onSelectDriveFolder }) {
+  const { t: tr } = useApp();
   const [driveToken, setDriveToken] = useState(() => getStoredDriveToken());
   const [folders, setFolders] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
@@ -898,7 +903,7 @@ export function GoogleDriveBrowserDialog({ open, onOpenChange, onSelectDriveFold
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-lg font-bold text-ink">
             <HardDrive size={19} className="text-brand" />
-            <span>Koneksi Langsung Google Drive</span>
+            <span>{tr("directory_browser_title", "Koneksi Langsung Google Drive")}</span>
           </DialogTitle>
         </DialogHeader>
 
@@ -908,10 +913,12 @@ export function GoogleDriveBrowserDialog({ open, onOpenChange, onSelectDriveFold
               <div className={`h-2.5 w-2.5 rounded-full ${driveToken ? "bg-emerald-500" : "bg-amber-500"}`} />
               <div>
                 <p className="text-xs font-bold text-ink">
-                  {driveToken ? "Terhubung ke Akun Google Drive Anda" : "Hubungkan Akun Google Drive"}
+                  {driveToken
+                    ? tr("directory_browser_connected", "Terhubung ke Akun Google Drive Anda")
+                    : tr("directory_browser_disconnected", "Hubungkan Akun Google Drive")}
                 </p>
                 <p className="text-[11px] text-sub">
-                  Pilih folder dari Google Drive atau buat folder baru langsung dari workspace.
+                  {tr("directory_browser_desc", "Pilih folder dari Google Drive atau buat folder baru langsung dari workspace.")}
                 </p>
               </div>
             </div>
@@ -920,20 +927,22 @@ export function GoogleDriveBrowserDialog({ open, onOpenChange, onSelectDriveFold
               onClick={handleConnectDrive}
               className="h-9 rounded-full bg-brand px-4 text-xs font-bold text-white shadow-xs hover:opacity-95"
             >
-              {driveToken ? "Sinkronkan Ulang" : "Hubungkan Google Drive"}
+              {driveToken
+                ? tr("directory_browser_resync", "Sinkronkan Ulang")
+                : tr("directory_connect_btn", "Hubungkan Google Drive")}
             </button>
           </div>
 
           {/* Buat Folder Baru di Google Drive */}
           <form onSubmit={handleCreateFolderOnDrive} className="rounded-2xl border bg-surface p-3.5 space-y-2">
             <label className="block text-xs font-bold text-ink">
-              Buat Folder Baru Langsung di Google Drive & Jadikan Shortcut:
+              {tr("directory_browser_create_label", "Buat Folder Baru Langsung di Google Drive & Jadikan Shortcut:")}
             </label>
             <div className="flex gap-2">
               <input
                 value={newFolderName}
                 onChange={(e) => setNewFolderName(e.target.value)}
-                placeholder="Ketik nama folder baru di Google Drive..."
+                placeholder={tr("directory_browser_create_ph", "Ketik nama folder baru di Google Drive...")}
                 className="h-9 flex-1 rounded-xl border bg-surface2/50 px-3 text-xs outline-none focus:border-brand"
               />
               <button
@@ -941,7 +950,7 @@ export function GoogleDriveBrowserDialog({ open, onOpenChange, onSelectDriveFold
                 disabled={busy || !newFolderName.trim()}
                 className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-brand px-3.5 text-xs font-bold text-white disabled:opacity-50"
               >
-                <FolderPlus size={14} /> Buat & Tambah
+                <FolderPlus size={14} /> {tr("directory_browser_create_btn", "Buat & Tambah")}
               </button>
             </div>
           </form>
@@ -949,13 +958,13 @@ export function GoogleDriveBrowserDialog({ open, onOpenChange, onSelectDriveFold
           {/* Daftar Folder Google Drive */}
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-bold text-ink">Pilih Folder dari Google Drive:</span>
+              <span className="text-xs font-bold text-ink">{tr("directory_browser_pick_label", "Pilih Folder dari Google Drive:")}</span>
               <div className="flex items-center gap-1.5">
                 <input
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && driveToken && fetchFolders(driveToken, searchQuery)}
-                  placeholder="Cari nama folder..."
+                  placeholder={tr("directory_browser_search_ph", "Cari nama folder...")}
                   className="h-8 rounded-xl border bg-surface px-3 text-xs outline-none"
                 />
                 {driveToken && (
@@ -975,19 +984,19 @@ export function GoogleDriveBrowserDialog({ open, onOpenChange, onSelectDriveFold
               {!driveToken ? (
                 <div className="p-6 text-center">
                   <HardDrive size={24} className="mx-auto text-sub mb-2 opacity-60" />
-                  <p className="text-xs font-bold text-ink">Belum terhubung ke Google Drive</p>
+                  <p className="text-xs font-bold text-ink">{tr("directory_browser_not_connected_title", "Belum terhubung ke Google Drive")}</p>
                   <p className="text-[11px] text-sub mt-0.5">
-                    Klik tombol &ldquo;Hubungkan Google Drive&rdquo; di atas atau langsung tempel URL folder pada form tambah shortcut.
+                    {tr("directory_browser_not_connected_desc", "Klik tombol \"Hubungkan Google Drive\" di atas atau langsung tempel URL folder pada form tambah shortcut.")}
                   </p>
                 </div>
               ) : folders.length === 0 ? (
                 <div className="p-6 text-center">
                   <Folder size={24} className="mx-auto text-sub mb-2 opacity-60" />
                   <p className="text-xs font-bold text-ink">
-                    {busy ? "Memuat daftar folder..." : "Belum ada folder yang terdeteksi"}
+                    {busy ? tr("directory_browser_loading", "Memuat daftar folder...") : tr("directory_browser_empty", "Belum ada folder yang terdeteksi")}
                   </p>
                   <p className="text-[11px] text-sub mt-0.5">
-                    Buat folder baru di atas atau tempel URL folder Google Drive Anda secara langsung.
+                    {tr("directory_browser_empty_desc", "Buat folder baru di atas atau tempel URL folder Google Drive Anda secara langsung.")}
                   </p>
                 </div>
               ) : (
@@ -1015,7 +1024,7 @@ export function GoogleDriveBrowserDialog({ open, onOpenChange, onSelectDriveFold
                       }}
                       className="h-8 rounded-full bg-brand px-3.5 text-xs font-bold text-white shrink-0"
                     >
-                      Pilih Folder
+                      {tr("directory_browser_pick_folder", "Pilih Folder")}
                     </button>
                   </div>
                 ))
@@ -1189,7 +1198,7 @@ export default function Directory() {
       <PageHeader
         icon={HardDrive}
         title={t("directory_title", "Direktori Drive")}
-        subtitle={`${accessibleShortcutsCount} shortcut folder Google Drive · ${t("directory_subtitle", "Terhubung langsung ke Google Drive & otomatis tampil di Dashboard sesuai hak akses member.")}`}
+        subtitle={`${accessibleShortcutsCount} ${t("directory_shortcuts_unit", "shortcut folder Google Drive")} · ${t("directory_subtitle", "Terhubung langsung ke Google Drive & otomatis tampil di Dashboard sesuai hak akses member.")}`}
       />
 
       {/* 1 Line Toolbar on Desktop, Structured 2-Row Grid on Mobile:
@@ -1237,9 +1246,9 @@ export default function Directory() {
           >
             <SlidersHorizontal size={15} />
             <span className="truncate">
-              Filter
+              {t("directory_filter_btn", "Filter")}
               {selectedCategory !== "ALL" ? `: ${selectedCategory}` : ""}
-              {accessFilter === "all" ? " · Semua Folder" : ""}
+              {accessFilter === "all" ? ` · ${t("directory_filter_all_folders_chip", "Semua Folder")}` : ""}
             </span>
           </button>
 
@@ -1255,7 +1264,7 @@ export default function Directory() {
               >
                 <div className="flex items-center justify-between border-b pb-2.5">
                   <span className="text-xs font-bold uppercase tracking-wider text-ink">
-                    Filter Shortcut Folder
+                    {t("directory_filter_popover_title", "Filter Shortcut Folder")}
                   </span>
                   {(selectedCategory !== "ALL" || accessFilter !== "accessible") && (
                     <button
@@ -1266,14 +1275,14 @@ export default function Directory() {
                       }}
                       className="text-xs font-bold text-brand hover:underline"
                     >
-                      Reset Filter
+                      {t("directory_filter_reset", "Reset Filter")}
                     </button>
                   )}
                 </div>
 
                 {/* Kategori / Divisi */}
                 <div className="space-y-2">
-                  <label className="block text-xs font-bold text-sub">Kategori / Divisi</label>
+                  <label className="block text-xs font-bold text-sub">{t("directory_cat_label", "Kategori / Divisi")}</label>
                   <div className="flex flex-wrap gap-1.5" data-testid="drive-directory-filters">
                     {shortcutCategories.map((cat) => {
                       const active = selectedCategory === cat;
@@ -1289,7 +1298,7 @@ export default function Directory() {
                           }`}
                           data-testid={`drive-cat-${cat}`}
                         >
-                          {cat === "ALL" ? "Semua Kategori" : cat}
+                          {cat === "ALL" ? t("directory_filter_all_cats", "Semua Kategori") : cat}
                         </button>
                       );
                     })}
@@ -1298,7 +1307,7 @@ export default function Directory() {
 
                 {/* Hak Akses Folder */}
                 <div className="space-y-2 pt-1 border-t">
-                  <label className="block text-xs font-bold text-sub">Tampilan Hak Akses</label>
+                  <label className="block text-xs font-bold text-sub">{t("directory_filter_access_view", "Tampilan Hak Akses")}</label>
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
@@ -1310,7 +1319,7 @@ export default function Directory() {
                       }`}
                       data-testid="filter-my-access"
                     >
-                      Akses Saya ({accessibleShortcutsCount})
+                      {t("directory_filter_my_access", "Akses Saya")} ({accessibleShortcutsCount})
                     </button>
                     <button
                       type="button"
@@ -1322,7 +1331,7 @@ export default function Directory() {
                       }`}
                       data-testid="filter-all-shortcuts"
                     >
-                      Semua Folder ({shortcuts.length})
+                      {t("directory_filter_all_folders_chip", "Semua Folder")} ({shortcuts.length})
                     </button>
                   </div>
                 </div>
@@ -1333,7 +1342,7 @@ export default function Directory() {
                     onClick={() => setFilterMenuOpen(false)}
                     className="btn-accent h-8 rounded-full px-4 text-xs font-bold text-white"
                   >
-                    Terapkan
+                    {t("directory_filter_apply", "Terapkan")}
                   </button>
                 </div>
               </div>
@@ -1347,7 +1356,7 @@ export default function Directory() {
           <input
             value={driveSearch}
             onChange={(e) => setDriveSearch(e.target.value)}
-            placeholder="Cari folder Google Drive…"
+            placeholder={t("directory_search_ph", "Cari folder Google Drive…")}
             className="w-full min-w-0 bg-transparent text-sm outline-none"
             data-testid="drive-shortcut-search"
           />
@@ -1369,8 +1378,8 @@ export default function Directory() {
       {!filteredShortcuts.length ? (
         <Empty
           icon={HardDrive}
-          title="Belum ada shortcut folder pada filter ini"
-          text="Tambahkan shortcut folder Google Drive baru atau sesuaikan hak akses member."
+          title={t("directory_empty_title", "Belum ada shortcut folder pada filter ini")}
+          text={t("directory_empty_desc", "Tambahkan shortcut folder Google Drive baru atau sesuaikan hak akses member.")}
           action={
             <AccentButton
               onClick={() => {
@@ -1378,7 +1387,7 @@ export default function Directory() {
                 setShortcutModalOpen(true);
               }}
             >
-              <Plus size={15} /> Tambah Shortcut Google Drive
+              <Plus size={15} /> {t("directory_empty_cta", "Tambah Shortcut Google Drive")}
             </AccentButton>
           }
         />
@@ -1460,7 +1469,7 @@ export default function Directory() {
 
                   {/* Description */}
                   <p className="mt-3.5 line-clamp-2 text-sm text-sub leading-relaxed">
-                    {s.description || "Folder Google Drive terhubung langsung untuk kolaborasi dokumen tim."}
+                    {s.description || t("directory_card_default_desc", "Folder Google Drive terhubung langsung untuk kolaborasi dokumen tim.")}
                   </p>
 
                   {/* Access & Dashboard Status Info Box */}
@@ -1469,16 +1478,16 @@ export default function Directory() {
                       <span className="inline-flex items-center gap-1.5 font-bold text-ink">
                         {s.access_type === "all" ? (
                           <>
-                            <Globe size={13} className="text-emerald-600" /> Semua Anggota
+                            <Globe size={13} className="text-emerald-600" /> {t("directory_access_all", "Semua Anggota")}
                           </>
                         ) : s.access_type === "department" ? (
                           <>
-                            <Building2 size={13} className="text-brand" /> Divisi:{" "}
-                            {(s.allowed_departments || []).join(", ") || "Kustom"}
+                            <Building2 size={13} className="text-brand" /> {t("directory_access_dept_prefix", "Divisi")}:{" "}
+                            {(s.allowed_departments || []).join(", ") || t("directory_preview_custom_cat", "Kustom")}
                           </>
                         ) : (
                           <>
-                            <Lock size={13} className="text-brand" /> {memberIds.length} Anggota Punya Akses
+                            <Lock size={13} className="text-brand" /> {memberIds.length} {t("directory_card_access_count_suffix", "Anggota Punya Akses")}
                           </>
                         )}
                       </span>
@@ -1503,10 +1512,10 @@ export default function Directory() {
                       >
                         <LayoutDashboard size={11} />
                         {userHasAccess && s.show_on_dashboard !== false
-                          ? "Tampil di Dashboard"
+                          ? t("directory_card_dash_on", "Tampil di Dashboard")
                           : !userHasAccess
-                          ? "Tidak Ada Akses"
-                          : "Nonaktif di Dashboard"}
+                          ? t("directory_card_no_access", "Tidak Ada Akses")
+                          : t("directory_card_dash_off", "Nonaktif di Dashboard")}
                       </button>
                     </div>
 
@@ -1515,7 +1524,7 @@ export default function Directory() {
                         <AvatarStack ids={memberIds} max={4} size={24} />
                         {s.access_type !== "custom" && (
                           <span className="truncate text-[11px] font-medium text-sub">
-                            {memberIds.length} member
+                            {memberIds.length} {t("directory_card_member_unit", "member")}
                           </span>
                         )}
                       </div>
@@ -1525,7 +1534,7 @@ export default function Directory() {
                         className="inline-flex items-center gap-1 rounded-xl border bg-surface px-2.5 py-1 text-xs font-bold text-brand hover:bg-brand hover:text-white transition-colors shrink-0"
                         data-testid={`manage-access-${s.id}`}
                       >
-                        <ShieldCheck size={13} /> Atur Akses
+                        <ShieldCheck size={13} /> {t("directory_card_manage_access", "Atur Akses")}
                       </button>
                     </div>
                   </div>
@@ -1541,7 +1550,7 @@ export default function Directory() {
                       className="btn-accent flex h-10 flex-1 items-center justify-center gap-1.5 text-sm font-semibold"
                       data-testid={`open-drive-shortcut-${s.id}`}
                     >
-                      <ExternalLink size={14} /> Buka Google Drive
+                      <ExternalLink size={14} /> {t("directory_card_open_drive", "Buka Google Drive")}
                     </a>
                   ) : (
                     <button
@@ -1549,7 +1558,7 @@ export default function Directory() {
                       onClick={() => setAccessModalShortcut(s)}
                       className="btn-ghost flex h-10 flex-1 items-center justify-center gap-1.5 border text-sm font-semibold text-sub"
                     >
-                      <Lock size={14} /> Minta / Atur Akses
+                      <Lock size={14} /> {t("directory_card_request_access", "Minta / Atur Akses")}
                     </button>
                   )}
                   <button
@@ -1620,18 +1629,18 @@ export default function Directory() {
       <Dialog open={!!deleteConfirmShortcut} onOpenChange={(v) => !v && setDeleteConfirmShortcut(null)}>
         <DialogContent className="max-w-md p-6">
           <DialogHeader>
-            <DialogTitle className="text-base font-bold text-ink">Hapus Shortcut Folder Google Drive?</DialogTitle>
+            <DialogTitle className="text-base font-bold text-ink">{t("directory_del_title", "Hapus Shortcut Folder Google Drive?")}</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-sub mt-1">
-            Apakah Anda yakin ingin menghapus shortcut{" "}
-            <span className="font-bold text-ink">&ldquo;{deleteConfirmShortcut?.name}&rdquo;</span> dari Direktori? Folder asli di Google Drive Anda tetap aman dan tidak terhapus.
+            {t("directory_del_desc_1", "Apakah Anda yakin ingin menghapus shortcut")}{" "}
+            <span className="font-bold text-ink">&ldquo;{deleteConfirmShortcut?.name}&rdquo;</span> {t("directory_del_desc_2", "dari Direktori? Folder asli di Google Drive Anda tetap aman dan tidak terhapus.")}
           </p>
           <div className="mt-5 flex justify-end gap-2">
             <GhostButton type="button" onClick={() => setDeleteConfirmShortcut(null)}>
-              Batal
+              {t("common_cancel", "Batal")}
             </GhostButton>
             <AccentButton type="button" onClick={handleConfirmDelete} data-testid="confirm-delete-shortcut-btn">
-              <Trash2 size={14} /> Hapus Shortcut
+              <Trash2 size={14} /> {t("directory_del_confirm", "Hapus Shortcut")}
             </AccentButton>
           </div>
         </DialogContent>

@@ -1,6 +1,7 @@
 import { ShieldCheck } from "lucide-react";
+import { useApp } from "../context/AppContext";
 
-export function evaluatePasswordStrength(password = "") {
+export function evaluatePasswordStrength(password = "", tr = (_k, fb) => fb || _k) {
   const pw = String(password || "");
   const hasMinLen = pw.length >= 6;
   const hasGoodLen = pw.length >= 10;
@@ -12,7 +13,7 @@ export function evaluatePasswordStrength(password = "") {
   if (!pw) {
     return {
       score: 0,
-      label: "Belum diisi",
+      label: tr("pw_strength_empty", "Belum diisi"),
       barColor: "bg-slate-200 dark:bg-slate-700",
       textColor: "text-sub",
       checks: { hasMinLen, hasUpper, hasLower, hasDigit, hasSymbol }
@@ -29,7 +30,7 @@ export function evaluatePasswordStrength(password = "") {
   if (!hasMinLen || points <= 1) {
     return {
       score: 1,
-      label: hasMinLen ? "Lemah" : "Min. 6 Karakter",
+      label: hasMinLen ? tr("pw_strength_weak", "Lemah") : tr("pw_strength_min6", "Min. 6 Karakter"),
       barColor: "bg-rose-500",
       textColor: "text-rose-600 dark:text-rose-400",
       checks: { hasMinLen, hasUpper, hasLower, hasDigit, hasSymbol }
@@ -38,7 +39,7 @@ export function evaluatePasswordStrength(password = "") {
   if (points === 2) {
     return {
       score: 2,
-      label: "Cukup",
+      label: tr("pw_strength_fair", "Cukup"),
       barColor: "bg-amber-500",
       textColor: "text-amber-600 dark:text-amber-400",
       checks: { hasMinLen, hasUpper, hasLower, hasDigit, hasSymbol }
@@ -47,7 +48,7 @@ export function evaluatePasswordStrength(password = "") {
   if (points === 3 || points === 4) {
     return {
       score: 3,
-      label: "Kuat",
+      label: tr("pw_strength_strong", "Kuat"),
       barColor: "bg-sky-500",
       textColor: "text-sky-600 dark:text-sky-400",
       checks: { hasMinLen, hasUpper, hasLower, hasDigit, hasSymbol }
@@ -55,7 +56,7 @@ export function evaluatePasswordStrength(password = "") {
   }
   return {
     score: 4,
-    label: "Sangat Kuat",
+    label: tr("pw_strength_very_strong", "Sangat Kuat"),
     barColor: "bg-emerald-500",
     textColor: "text-emerald-600 dark:text-emerald-400",
     checks: { hasMinLen, hasUpper, hasLower, hasDigit, hasSymbol }
@@ -63,15 +64,17 @@ export function evaluatePasswordStrength(password = "") {
 }
 
 export function PasswordStrengthMeter({ password }) {
+  const { t } = useApp() || {};
+  const tr = t || ((_k, fb) => fb || _k);
   if (!password) return null;
-  const info = evaluatePasswordStrength(password);
+  const info = evaluatePasswordStrength(password, tr);
 
   return (
     <div className="mt-1.5 space-y-1.5" data-testid="password-strength-meter">
       <div className="flex items-center justify-between text-[11px]">
         <span className="flex items-center gap-1 text-sub font-medium">
           <ShieldCheck size={12} className="text-emerald-600 dark:text-emerald-400" />
-          Kekuatan Password:
+          {tr("pw_strength_label", "Kekuatan Password:")}
         </span>
         <span className={`font-bold ${info.textColor}`}>{info.label}</span>
       </div>
@@ -87,16 +90,16 @@ export function PasswordStrengthMeter({ password }) {
       </div>
       <div className="flex flex-wrap gap-x-2.5 gap-y-0.5 text-[10px] text-sub">
         <span className={info.checks.hasMinLen ? "text-emerald-600 dark:text-emerald-400 font-semibold" : ""}>
-          {info.checks.hasMinLen ? "✓" : "•"} Min. 6 karakter
+          {info.checks.hasMinLen ? "✓" : "•"} {tr("pw_rule_min6", "Min. 6 karakter")}
         </span>
         <span className={info.checks.hasUpper && info.checks.hasLower ? "text-emerald-600 dark:text-emerald-400 font-semibold" : ""}>
-          {info.checks.hasUpper && info.checks.hasLower ? "✓" : "•"} Huruf besar & kecil
+          {info.checks.hasUpper && info.checks.hasLower ? "✓" : "•"} {tr("pw_rule_case", "Huruf besar & kecil")}
         </span>
         <span className={info.checks.hasDigit ? "text-emerald-600 dark:text-emerald-400 font-semibold" : ""}>
-          {info.checks.hasDigit ? "✓" : "•"} Angka
+          {info.checks.hasDigit ? "✓" : "•"} {tr("pw_rule_digit", "Angka")}
         </span>
         <span className={info.checks.hasSymbol ? "text-emerald-600 dark:text-emerald-400 font-semibold" : ""}>
-          {info.checks.hasSymbol ? "✓" : "•"} Simbol
+          {info.checks.hasSymbol ? "✓" : "•"} {tr("pw_rule_symbol", "Simbol")}
         </span>
       </div>
     </div>

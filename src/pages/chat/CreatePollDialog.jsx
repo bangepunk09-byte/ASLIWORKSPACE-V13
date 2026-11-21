@@ -9,7 +9,7 @@ import { Switch } from "../../components/ui/switch";
 import { seedPollCache } from "./PollCard";
 
 export default function CreatePollDialog({ open, onOpenChange, conversationId, onCreated, onSubmitPoll }) {
-  const { me } = useApp();
+  const { me, t: tr } = useApp();
   const [q, setQ] = useState("");
   const [opts, setOpts] = useState(["", ""]);
   const [flags, setFlags] = useState({ multiple: false, anonymous: false, allow_change: true });
@@ -108,31 +108,31 @@ export default function CreatePollDialog({ open, onOpenChange, conversationId, o
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="bg-surface rounded-3xl max-w-md max-h-[90dvh] overflow-y-auto">
-        <DialogHeader><DialogTitle>Buat Polling</DialogTitle></DialogHeader>
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Tulis pertanyaan polling…" className="h-11 rounded-xl border bg-surface2 px-3 text-sm outline-none" data-testid="poll-question-input" />
+        <DialogHeader><DialogTitle>{tr("poll_create_title", "Buat Polling")}</DialogTitle></DialogHeader>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={tr("poll_question_ph", "Tulis pertanyaan polling…")} className="h-11 rounded-xl border bg-surface2 px-3 text-sm outline-none" data-testid="poll-question-input" />
         <div className="space-y-2">
           {opts.map((o, i) => (
             <div key={i} className="flex gap-2">
-              <input value={o} onChange={(e) => setOpts(opts.map((x, j) => (j === i ? e.target.value : x)))} placeholder={`Pilihan ${i + 1}`} className="h-10 flex-1 rounded-xl border bg-surface px-3 text-sm outline-none" data-testid={`poll-option-input-${i}`} />
-              {opts.length > 2 && <button type="button" onClick={() => setOpts(opts.filter((_, j) => j !== i))} className="text-sub hover:text-rose-500" aria-label="Hapus pilihan"><X size={16} /></button>}
+              <input value={o} onChange={(e) => setOpts(opts.map((x, j) => (j === i ? e.target.value : x)))} placeholder={`${tr("poll_option_prefix", "Pilihan")} ${i + 1}`} className="h-10 flex-1 rounded-xl border bg-surface px-3 text-sm outline-none" data-testid={`poll-option-input-${i}`} />
+              {opts.length > 2 && <button type="button" onClick={() => setOpts(opts.filter((_, j) => j !== i))} className="text-sub hover:text-rose-500" aria-label={tr("common_delete", "Hapus")}><X size={16} /></button>}
             </div>
           ))}
-          {opts.length < 12 && <button type="button" onClick={() => setOpts([...opts, ""])} className="flex items-center gap-1 text-sm font-semibold text-brand" data-testid="poll-add-option-btn"><Plus size={14} />Tambah pilihan</button>}
+          {opts.length < 12 && <button type="button" onClick={() => setOpts([...opts, ""])} className="flex items-center gap-1 text-sm font-semibold text-brand" data-testid="poll-add-option-btn"><Plus size={14} />{tr("poll_add_option", "Tambah pilihan")}</button>}
         </div>
-        {[["multiple", "Izinkan pilih lebih dari satu"], ["anonymous", "Voting anonim"], ["allow_change", "Izinkan ubah pilihan"]].map(([k, l]) => (
+        {[["multiple", tr("poll_opt_multiple", "Izinkan pilih lebih dari satu")], ["anonymous", tr("poll_opt_anonymous", "Voting anonim")], ["allow_change", tr("poll_opt_allow_change", "Izinkan ubah pilihan")]].map(([k, l]) => (
           <label key={k} className="flex items-center justify-between text-sm">{l}<Switch checked={flags[k]} onCheckedChange={(v) => setFlags({ ...flags, [k]: v })} data-testid={`poll-flag-${k}`} /></label>
         ))}
         <div className="text-sm">
-          <span className="mb-1 block">Batas waktu</span>
+          <span className="mb-1 block">{tr("poll_expiry_label", "Batas waktu")}</span>
           <DateTimePicker
             value={exp}
             onChange={setExp}
-            placeholder="Pilih batas waktu & jam"
+            placeholder={tr("poll_expiry_ph", "Pilih batas waktu & jam")}
             className="h-10 w-full rounded-xl border bg-surface px-3 text-sm"
             data-testid="poll-expiry-input"
           />
         </div>
-        <button type="button" onClick={submit} disabled={busy} className="btn-accent h-11 font-semibold disabled:opacity-50" data-testid="poll-submit-btn">{busy ? "Membuat..." : "Posting Polling"}</button>
+        <button type="button" onClick={submit} disabled={busy} className="btn-accent h-11 font-semibold disabled:opacity-50" data-testid="poll-submit-btn">{busy ? tr("poll_submitting", "Membuat...") : tr("poll_submit_btn", "Posting Polling")}</button>
       </DialogContent>
     </Dialog>
   );

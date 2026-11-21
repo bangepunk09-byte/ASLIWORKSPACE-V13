@@ -26,7 +26,8 @@ export default function TopNotificationPopup({ notif, onClose }) {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(100);
   const [paused, setPaused] = useState(false);
-  const { me } = useApp() || {};
+  const { me, t } = useApp() || {};
+  const tr = t || ((_k, fb) => fb || _k);
   const navigate = useNavigate();
 
   const DURATION = 10000; // 10 seconds auto-dismiss
@@ -223,8 +224,8 @@ export default function TopNotificationPopup({ notif, onClose }) {
             </div>
           )}
           <div className="min-w-0 flex-1">
-            <h4 className="text-sm font-bold text-ink truncate leading-normal">{title || "Notifikasi Baru"}</h4>
-            <p className="text-xs text-sub line-clamp-2 whitespace-normal break-words mt-0.5">{body || "Ada pembaruan di CIRCLE Workspace."}</p>
+            <h4 className="text-sm font-bold text-ink truncate leading-normal">{title || tr("notif_popup_default_title", "Notifikasi Baru")}</h4>
+            <p className="text-xs text-sub line-clamp-2 whitespace-normal break-words mt-0.5">{body || tr("notif_popup_default_body", "Ada pembaruan di CIRCLE Workspace.")}</p>
           </div>
         </div>
 
@@ -248,7 +249,7 @@ export default function TopNotificationPopup({ notif, onClose }) {
         {isAccessReq && (
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-[11px] text-sub font-medium flex items-center gap-1">
-              <Clock size={12} /> {isPasswordReset ? "Permintaan Reset Password" : isDeleteUser ? "Permohonan Hapus Akun" : "Permintaan Akses Masuk"}
+              <Clock size={12} /> {isPasswordReset ? tr("notif_popup_req_reset", "Permintaan Reset Password") : isDeleteUser ? tr("notif_popup_req_delete", "Permohonan Hapus Akun") : tr("notif_popup_req_access", "Permintaan Akses Masuk")}
             </span>
             <div className="flex items-center gap-2 ml-auto">
               <button
@@ -257,7 +258,7 @@ export default function TopNotificationPopup({ notif, onClose }) {
                 className="h-8 rounded-xl border border-rose-200 bg-rose-50 dark:bg-rose-950/30 px-3 text-xs font-bold text-rose-600 hover:bg-rose-100 transition-colors disabled:opacity-50 cursor-pointer"
                 data-testid="notif-quick-reject-btn"
               >
-                Tolak
+                {tr("notif_popup_reject", "Tolak")}
               </button>
               <button
                 disabled={busy}
@@ -265,7 +266,7 @@ export default function TopNotificationPopup({ notif, onClose }) {
                 className="h-8 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3 text-xs font-bold text-white shadow-xs transition-colors disabled:opacity-50 cursor-pointer"
                 data-testid="notif-quick-approve-btn"
               >
-                {isPasswordReset ? "Setujui Reset" : isDeleteUser ? "Setujui Hapus" : "Setujui Akses"}
+                {isPasswordReset ? tr("notif_popup_approve_reset", "Setujui Reset") : isDeleteUser ? tr("notif_popup_approve_delete", "Setujui Hapus") : tr("notif_popup_approve_access", "Setujui Akses")}
               </button>
             </div>
           </div>
@@ -275,7 +276,7 @@ export default function TopNotificationPopup({ notif, onClose }) {
         {isGroupJoinReq && !isAccessReq && (
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-[11px] text-sub font-medium flex items-center gap-1">
-              <Clock size={12} /> Izin Gabung Grup Privat
+              <Clock size={12} /> {tr("notif_popup_group_join", "Izin Gabung Grup Privat")}
             </span>
             <div className="flex items-center gap-2 ml-auto">
               <button
@@ -284,7 +285,7 @@ export default function TopNotificationPopup({ notif, onClose }) {
                 className="h-8 rounded-xl border border-rose-200 bg-rose-50 dark:bg-rose-950/30 px-3 text-xs font-bold text-rose-600 hover:bg-rose-100 transition-colors disabled:opacity-50 cursor-pointer"
                 data-testid="notif-group-reject-btn"
               >
-                Tolak
+                {tr("notif_popup_reject", "Tolak")}
               </button>
               <button
                 disabled={busy}
@@ -292,7 +293,7 @@ export default function TopNotificationPopup({ notif, onClose }) {
                 className="h-8 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3 text-xs font-bold text-white shadow-xs transition-colors disabled:opacity-50 cursor-pointer"
                 data-testid="notif-group-approve-btn"
               >
-                Setujui
+                {tr("notif_popup_approve", "Setujui")}
               </button>
             </div>
           </div>
@@ -302,7 +303,7 @@ export default function TopNotificationPopup({ notif, onClose }) {
         {isGroupInvite && !isAccessReq && !isGroupJoinReq && (
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-[11px] text-sub font-medium flex items-center gap-1">
-              <Clock size={12} /> Undangan Masuk Grup
+              <Clock size={12} /> {tr("notif_popup_group_invite", "Undangan Masuk Grup")}
             </span>
             <div className="flex items-center gap-2 ml-auto">
               <button
@@ -311,7 +312,7 @@ export default function TopNotificationPopup({ notif, onClose }) {
                 className="h-8 rounded-xl border border-rose-200 bg-rose-50 dark:bg-rose-950/30 px-3 text-xs font-bold text-rose-600 hover:bg-rose-100 transition-colors disabled:opacity-50 cursor-pointer"
                 data-testid="notif-group-invite-decline-btn"
               >
-                Tolak
+                {tr("notif_popup_reject", "Tolak")}
               </button>
               <button
                 disabled={busy}
@@ -319,7 +320,7 @@ export default function TopNotificationPopup({ notif, onClose }) {
                 className="h-8 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3 text-xs font-bold text-white shadow-xs transition-colors disabled:opacity-50 cursor-pointer"
                 data-testid="notif-group-invite-accept-btn"
               >
-                Terima Undangan
+                {tr("notif_popup_accept_invite", "Terima Undangan")}
               </button>
             </div>
           </div>
@@ -329,7 +330,7 @@ export default function TopNotificationPopup({ notif, onClose }) {
         {isArchiveDeleteReq && !isAccessReq && !isGroupJoinReq && !isGroupInvite && (
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-[11px] text-sub font-medium flex items-center gap-1">
-              <Clock size={12} /> Persetujuan Hapus Arsip 1 Bulan (Min. 2 Orang)
+              <Clock size={12} /> {tr("notif_popup_archive_del", "Persetujuan Hapus Arsip 1 Bulan (Min. 2 Orang)")}
             </span>
             <div className="flex items-center gap-2 ml-auto">
               <button
@@ -338,7 +339,7 @@ export default function TopNotificationPopup({ notif, onClose }) {
                 className="h-8 rounded-xl border border-rose-200 bg-rose-50 dark:bg-rose-950/30 px-3 text-xs font-bold text-rose-600 hover:bg-rose-100 transition-colors disabled:opacity-50 cursor-pointer"
                 data-testid="notif-archive-reject-btn"
               >
-                Tolak
+                {tr("notif_popup_reject", "Tolak")}
               </button>
               <button
                 disabled={busy}
@@ -346,7 +347,7 @@ export default function TopNotificationPopup({ notif, onClose }) {
                 className="h-8 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3 text-xs font-bold text-white shadow-xs transition-colors disabled:opacity-50 cursor-pointer"
                 data-testid="notif-archive-approve-btn"
               >
-                Setujui Hapus
+                {tr("notif_popup_approve_delete", "Setujui Hapus")}
               </button>
             </div>
           </div>
@@ -365,7 +366,7 @@ export default function TopNotificationPopup({ notif, onClose }) {
                   className="flex h-8 items-center gap-1.5 rounded-xl bg-surface2 px-3 text-xs font-semibold text-brand hover:bg-brand/10 transition-colors cursor-pointer"
                   data-testid="notif-quick-reply-toggle"
                 >
-                  <MessageSquare size={13} /> Balas Chat Cepat
+                  <MessageSquare size={13} /> {tr("notif_popup_quick_reply", "Balas Chat Cepat")}
                 </button>
                 <button
                   onClick={() => {
@@ -376,7 +377,7 @@ export default function TopNotificationPopup({ notif, onClose }) {
                   className="flex h-8 items-center gap-1 text-xs font-bold text-ink hover:text-brand transition-colors cursor-pointer"
                   data-testid="notif-open-chat-btn"
                 >
-                  Buka Chat <ArrowRight size={13} />
+                  {tr("notif_popup_open_chat", "Buka Chat")} <ArrowRight size={13} />
                 </button>
               </div>
             ) : (
@@ -385,7 +386,7 @@ export default function TopNotificationPopup({ notif, onClose }) {
                   autoFocus
                   value={replyText}
                   onChange={(e) => setReplyText(e.target.value)}
-                  placeholder="Ketik balasan pesan..."
+                  placeholder={tr("notif_popup_reply_ph", "Ketik balasan pesan...")}
                   className="h-9 flex-1 rounded-xl border bg-surface2 px-3 text-xs text-ink outline-none focus:border-brand"
                   data-testid="notif-reply-input"
                 />
@@ -413,7 +414,7 @@ export default function TopNotificationPopup({ notif, onClose }) {
               className="h-8 rounded-xl bg-brand text-white px-3 text-xs font-bold shadow-xs hover:bg-brand/90 transition-colors cursor-pointer"
               data-testid="notif-open-task-btn"
             >
-              Lihat Tugas
+              {tr("notif_popup_view_task", "Lihat Tugas")}
             </button>
           </div>
         )}
@@ -422,7 +423,7 @@ export default function TopNotificationPopup({ notif, onClose }) {
         {isProfileVerify && !isAccessReq && !isMessage && !task_id && (
           <div className="flex items-center justify-between gap-2">
             <span className="text-[11px] font-medium text-sky-600 dark:text-sky-400 flex items-center gap-1">
-              <BadgeCheck size={13} /> {type === "profile_verified" ? "Akun Terverifikasi" : "Lengkapi 100% untuk Verified"}
+              <BadgeCheck size={13} /> {type === "profile_verified" ? tr("notif_popup_verified", "Akun Terverifikasi") : tr("notif_popup_verify_cta", "Lengkapi 100% untuk Verified")}
             </span>
             <button
               type="button"
@@ -433,7 +434,7 @@ export default function TopNotificationPopup({ notif, onClose }) {
               className="inline-flex h-8 items-center gap-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 px-3 text-xs font-bold text-white shadow-xs transition-colors cursor-pointer"
               data-testid="notif-complete-profile-btn"
             >
-              {type === "profile_verified" ? "Lihat Profil" : "Lengkapi Profil"}
+              {type === "profile_verified" ? tr("notif_popup_view_profile", "Lihat Profil") : tr("notif_popup_complete_profile", "Lengkapi Profil")}
               <ArrowRight size={13} />
             </button>
           </div>

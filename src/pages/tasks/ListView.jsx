@@ -94,6 +94,7 @@ function getCheckpointComplianceDetail(cp, taskItem) {
 }
 
 function LinkCell({ t, patch }) {
+  const { t: tr } = useApp();
   const [edit, setEdit] = useState(false);
   const v = t.link_url || "";
   if (edit || !v) {
@@ -101,7 +102,7 @@ function LinkCell({ t, patch }) {
       <input
         autoFocus={edit}
         defaultValue={v}
-        placeholder={edit ? "Tempel link…" : ""}
+        placeholder={edit ? tr("table_paste_link", "Tempel link…") : ""}
         onBlur={(e) => {
           setEdit(false);
           const n = e.target.value.trim();
@@ -120,7 +121,7 @@ function LinkCell({ t, patch }) {
       <a href={href} target="_blank" rel="noreferrer" className="min-w-0 flex-1 truncate text-xs text-blue-600 underline dark:text-blue-400" data-testid={`sheet-link-${t.id}`}>
         {v.replace(/^https?:\/\//i, "")}
       </a>
-      <button onClick={() => setEdit(true)} className="shrink-0 text-sub opacity-0 group-hover:opacity-100 print:hidden" aria-label="Edit link" data-testid={`sheet-link-edit-${t.id}`}>
+      <button onClick={() => setEdit(true)} className="shrink-0 text-sub opacity-0 group-hover:opacity-100 print:hidden" aria-label={tr("table_edit_link", "Edit link")} data-testid={`sheet-link-edit-${t.id}`}>
         <Pencil size={11} />
       </button>
     </div>
@@ -128,6 +129,7 @@ function LinkCell({ t, patch }) {
 }
 
 function TitleCell({ row, patch, onOpen }) {
+  const { t } = useApp();
   const [editing, setEditing] = useState(false);
   const taskItem = row.task;
   const cp = row.cp;
@@ -171,7 +173,7 @@ function TitleCell({ row, patch, onOpen }) {
           type="button"
           onClick={() => onOpen(taskItem.id)}
           className="inline-flex shrink-0 max-w-[54%] items-center gap-1 rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-semibold text-brand hover:bg-brand/15 truncate cursor-pointer"
-          title={`Tahap ${row.cpIndex + 1}/${row.cpTotal}: ${cp.title}${cp.deadline ? ` (Deadline: ${cp.deadline})` : ""}`}
+          title={`${t("table_stage_prefix", "Tahap")} ${row.cpIndex + 1}/${row.cpTotal}: ${cp.title}${cp.deadline ? ` (Deadline: ${cp.deadline})` : ""}`}
         >
           <span className="truncate">{row.cpIndex + 1}/{row.cpTotal} · {cp.title}</span>
           {cp.deadline && <span className="shrink-0 opacity-75">· {fmtDate(cp.deadline, "d MMM")}</span>}
@@ -180,7 +182,7 @@ function TitleCell({ row, patch, onOpen }) {
       <button
         onClick={() => onOpen(taskItem.id)}
         className="ml-auto shrink-0 rounded-md p-1 text-sub opacity-0 hover:bg-surface2 group-hover:opacity-100 print:hidden"
-        aria-label="Buka detail"
+        aria-label={t("table_open_detail", "Buka detail")}
         data-testid={`open-task-${taskItem.id}`}
       >
         <Maximize2 size={12} />
@@ -293,7 +295,7 @@ function Cell({ k, row, projects, boards = [], patch, onOpen }) {
             </PopoverTrigger>
             <PopoverContent className="w-64 bg-surface p-2 shadow-xl rounded-2xl border outline-none focus:outline-none" align="start">
               <p className="px-2 py-1 text-[11px] font-bold text-sub uppercase tracking-wider truncate">
-                PIC Tahap {row.cpIndex + 1}: {cp.title}
+                {t("table_pic_stage_prefix", "PIC Tahap")} {row.cpIndex + 1}: {cp.title}
               </p>
               <p className="px-2 pb-1 text-[10px] text-sub truncate">{assigneeScope.scopeLabel}</p>
               <div className="max-h-56 overflow-y-auto space-y-0.5">
@@ -509,7 +511,7 @@ function Cell({ k, row, projects, boards = [], patch, onOpen }) {
             >
               <div className="flex items-center gap-1.5 min-w-0">
                 {pObj?.color ? <span className="h-2 w-2 rounded-full shrink-0" style={{ background: pObj.color }} /> : null}
-                <span className="truncate" style={pObj?.color ? { color: pObj.color } : {}}>{pObj?.name || taskItem.priority || "Tidak Ada"}</span>
+                <span className="truncate" style={pObj?.color ? { color: pObj.color } : {}}>{pObj?.name || taskItem.priority || t("table_priority_none", "Tidak Ada")}</span>
               </div>
               <ChevronDown size={11} className="shrink-0 opacity-40 print:hidden" />
             </button>
@@ -583,7 +585,7 @@ function Cell({ k, row, projects, boards = [], patch, onOpen }) {
           <PopoverContent className="w-64 bg-surface p-3 shadow-xl rounded-2xl border outline-none focus:outline-none text-xs" align="start">
             <div className="flex items-center justify-between pb-2 mb-2 border-b">
               <span className="text-[10px] font-bold text-sub uppercase tracking-wider">
-                {cp ? `Tahap ${row.cpIndex + 1}/${row.cpTotal}` : t("table_choose_status", "Status Otomatis")}
+                {cp ? `${t("table_stage_prefix", "Tahap")} ${row.cpIndex + 1}/${row.cpTotal}` : t("table_choose_status", "Status Otomatis")}
               </span>
               <span
                 className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${
@@ -605,19 +607,19 @@ function Cell({ k, row, projects, boards = [], patch, onOpen }) {
             <p className="text-sub text-[11px] mb-2.5 leading-relaxed">{detail}</p>
             <div className="space-y-1.5 pt-1.5 text-[11px] border-t">
               <div className="flex justify-between">
-                <span className="text-sub">Tenggat:</span>
+                <span className="text-sub">{t("table_due_label", "Tenggat:")}</span>
                 <span className="font-semibold text-ink">
-                  {effectiveDeadline ? fmtDate(effectiveDeadline, cp?.deadline ? "d MMM yyyy" : "d MMM yyyy HH:mm") : "Tanpa Deadline"}
+                  {effectiveDeadline ? fmtDate(effectiveDeadline, cp?.deadline ? "d MMM yyyy" : "d MMM yyyy HH:mm") : t("table_no_deadline", "Tanpa Deadline")}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-sub">Selesai pada:</span>
+                <span className="text-sub">{t("table_completed_at_label", "Selesai pada:")}</span>
                 <span className="font-semibold text-ink">
-                  {doneTimestamp ? fmtDate(doneTimestamp, "d MMM yyyy HH:mm") : "Belum selesai"}
+                  {doneTimestamp ? fmtDate(doneTimestamp, "d MMM yyyy HH:mm") : t("table_not_done_yet", "Belum selesai")}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-sub">Status Board:</span>
+                <span className="text-sub">{t("table_board_status_label", "Status Board:")}</span>
                 <span className="font-semibold text-ink">{statuses.find((s) => s.key === taskItem.status)?.name || taskItem.status}</span>
               </div>
             </div>
@@ -657,15 +659,15 @@ function Cell({ k, row, projects, boards = [], patch, onOpen }) {
                 }`}
               >
                 {cp
-                  ? (isDone ? "Buka Kembali Tahap Ini" : "Tandai Tahap Selesai")
-                  : (isDone ? "Buka Kembali" : "Tandai Selesai")}
+                  ? (isDone ? t("table_reopen_stage", "Buka Kembali Tahap Ini") : t("table_mark_stage_done", "Tandai Tahap Selesai"))
+                  : (isDone ? t("table_reopen_task", "Buka Kembali") : t("table_mark_task_done", "Tandai Selesai"))}
               </button>
             </div>
           </PopoverContent>
         </Popover>
       );
     }
-    case "number": return <button onClick={() => onOpen(taskItem.id)} className="px-1.5 text-xs font-semibold text-sub hover:text-brand hover:underline cursor-pointer text-left" title="Buka detail tugas">{taskItem.number_str}</button>;
+    case "number": return <button onClick={() => onOpen(taskItem.id)} className="px-1.5 text-xs font-semibold text-sub hover:text-brand hover:underline cursor-pointer text-left" title={t("table_open_task_detail", "Buka detail tugas")}>{taskItem.number_str}</button>;
     case "project_id": return <span className="block truncate px-1.5 text-xs">{projects[taskItem.project_id]?.name || "-"}</span>;
     case "completed_at": return <span className="block truncate px-1.5 text-xs text-emerald-600">{taskItem.completed_at ? fmtDate(taskItem.completed_at, "d MMM") : "-"}</span>;
     case "updated_at": return <span className="block truncate px-1.5 text-xs text-sub">{fmtDate(taskItem.updated_at, "d MMM HH:mm")}</span>;
@@ -700,7 +702,7 @@ export function ColumnMenu({ cols, cfg, save }) {
   const [name, setName] = useState("");
   const move = (k, dir) => { const o = cols.map((c) => c[0]); const i = o.indexOf(k); const j = i + dir; if (j < 0 || j >= o.length) return; [o[i], o[j]] = [o[j], o[i]]; save({ ...cfg, order: o }); };
   const toggle = (k) => save({ ...cfg, hidden: (cfg.hidden || []).includes(k) ? cfg.hidden.filter((x) => x !== k) : [...(cfg.hidden || []), k] });
-  const add = async () => { try { await api.put("/settings/task-config", { task_fields: [...(ws.task_fields || []), { name }] }); setName(""); reloadWs(); toast.success("Kolom berhasil ditambahkan"); } catch (e) { toast.error(errMsg(e)); } };
+  const add = async () => { try { await api.put("/settings/task-config", { task_fields: [...(ws.task_fields || []), { name }] }); setName(""); reloadWs(); toast.success(t("table_custom_col_added", "Kolom berhasil ditambahkan")); } catch (e) { toast.error(errMsg(e)); } };
   return (
     <Popover><PopoverTrigger asChild><button className="btn-ghost flex h-10 shrink-0 whitespace-nowrap items-center gap-1.5 rounded-full border bg-surface px-3 text-xs font-semibold transition-all shadow-xs text-sub hover:text-ink hover:bg-surface2 outline-none focus:outline-none focus:ring-0" data-testid="list-columns-btn"><Columns3 size={14} /><span>{t("table_columns_btn", "Kolom")}</span></button></PopoverTrigger>
       <PopoverContent className="w-72 bg-surface p-2 shadow-xl rounded-2xl border outline-none focus:outline-none" align="end">
@@ -709,7 +711,7 @@ export function ColumnMenu({ cols, cfg, save }) {
             <button onClick={() => move(k, -1)} disabled={!i} className="text-sub disabled:opacity-30 p-1 hover:text-ink" aria-label="Geser ke atas"><ArrowUp size={13} /></button>
             <button onClick={() => move(k, 1)} className="text-sub p-1 hover:text-ink" aria-label="Geser ke bawah"><ArrowDown size={13} /></button>
             <button onClick={() => toggle(k)} className="text-sub p-1 hover:text-ink" aria-label="Tampilkan atau sembunyikan kolom" data-testid={`toggle-col-${k}`}>{(cfg.hidden || []).includes(k) ? <EyeOff size={13} /> : <Eye size={13} />}</button></div>))}</div>
-        {isManager && <div className="mt-2 flex gap-1 border-t pt-2"><input value={name} onChange={(e) => setName(e.target.value)} placeholder="Kolom kustom baru" className="h-8 flex-1 rounded-lg border bg-surface2 px-3 text-xs" data-testid="custom-column-input" /><button onClick={add} disabled={!name.trim()} className="btn-accent flex h-8 w-8 items-center justify-center disabled:opacity-40" aria-label="Tambah kolom" data-testid="custom-column-add"><Plus size={14} /></button></div>}
+        {isManager && <div className="mt-2 flex gap-1 border-t pt-2"><input value={name} onChange={(e) => setName(e.target.value)} placeholder={t("table_custom_col_ph", "Kolom kustom baru")} className="h-8 flex-1 rounded-lg border bg-surface2 px-3 text-xs" data-testid="custom-column-input" /><button onClick={add} disabled={!name.trim()} className="btn-accent flex h-8 w-8 items-center justify-center disabled:opacity-40" aria-label="Tambah kolom" data-testid="custom-column-add"><Plus size={14} /></button></div>}
         <button onClick={() => save({ hidden: DEFAULT_HIDDEN, order: undefined })} className="mt-2 w-full text-xs font-semibold text-brand hover:underline p-1">{t("table_reset_columns", "Reset Kolom")}</button>
       </PopoverContent></Popover>
   );
@@ -844,7 +846,7 @@ export default function ListView({ tasks, projects, boards = [], projectId, onOp
       ];
       return ids.map((id) => [
         id || "none",
-        userMap[id]?.name || "Belum Ditugaskan",
+        userMap[id]?.name || t("table_unassigned", "Belum Ditugaskan"),
         "var(--s-blue)",
         sortedRows.filter((r) => {
           const uids = r.cp ? getEffectiveCheckpointAssignees(r.cp, r.task) : getAssigneeIds(r.task);
@@ -854,11 +856,11 @@ export default function ListView({ tasks, projects, boards = [], projectId, onOp
     }
     if (groupBy === "department") {
       const ds = [...new Set(sortedRows.map((r) => r.task.department || ""))];
-      return ds.map((d) => [d || "none", d || "Tanpa Divisi", "var(--s-green)", sortedRows.filter((r) => (r.task.department || "") === d)]);
+      return ds.map((d) => [d || "none", d || t("table_no_division", "Tanpa Divisi"), "var(--s-green)", sortedRows.filter((r) => (r.task.department || "") === d)]);
     }
     if (groupBy === "label") {
       const ls = [...new Set(sortedRows.flatMap((r) => (r.task.label_ids?.length ? r.task.label_ids : [""])))];
-      return ls.map((l) => [l || "none", labelMap[l]?.name || "Tanpa Brand", labelMap[l] ? `${labelMap[l].color}33` : "var(--s-yellow)", sortedRows.filter((r) => (l ? r.task.label_ids?.includes(l) : !r.task.label_ids?.length))]);
+      return ls.map((l) => [l || "none", labelMap[l]?.name || t("table_no_brand", "Tanpa Brand"), labelMap[l] ? `${labelMap[l].color}33` : "var(--s-yellow)", sortedRows.filter((r) => (l ? r.task.label_ids?.includes(l) : !r.task.label_ids?.length))]);
     }
     if (groupBy === "item_type") {
       const types = [...new Set(sortedRows.map((r) => r.task.item_type || ""))];
@@ -866,14 +868,14 @@ export default function ListView({ tasks, projects, boards = [], projectId, onOp
         const meta = it ? getItemMeta(it, ws?.item_types) : null;
         return [
           it || "none",
-          meta?.name || it || "Tanpa Jenis Item",
+          meta?.name || it || t("table_no_item_type", "Tanpa Jenis Item"),
           meta?.color || "var(--s-blue)",
           sortedRows.filter((r) => (r.task.item_type || "") === it)
         ];
       });
     }
     return [["all", null, null, sortedRows]];
-  }, [groupBy, sortedRows, statuses, userMap, labelMap, ws?.item_types]);
+  }, [groupBy, sortedRows, statuses, userMap, labelMap, ws?.item_types, t]);
 
   const toggleSel = (id) => setSelected(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
   const addRow = async (key, title) => {
@@ -911,7 +913,7 @@ export default function ListView({ tasks, projects, boards = [], projectId, onOp
             data-testid="report-mode-checkpoint"
           >
             <Layers size={14} />
-            <span className="sm:hidden">Per Tahap PIC</span>
+            <span className="sm:hidden">{t("tasks_report_checkpoint_short", "Per Tahap PIC")}</span>
             <span className="hidden sm:inline">{t("tasks_report_checkpoint", "Per Tahap PIC")}</span>
           </button>
           <button
@@ -923,16 +925,16 @@ export default function ListView({ tasks, projects, boards = [], projectId, onOp
             data-testid="report-mode-card"
           >
             <LayoutList size={14} />
-            <span className="sm:hidden">Per Card</span>
+            <span className="sm:hidden">{t("tasks_report_card_short", "Per Card")}</span>
             <span className="hidden sm:inline">{t("tasks_report_card", "Per Card Tugas")}</span>
           </button>
         </div>
         <p className="text-xs font-medium text-sub">
-          Menampilkan <b className="text-ink">{expandedRows.length} baris</b> · {tasks.length} card{checkpointTasksCount > 0 ? ` · ${checkpointTasksCount} dengan checkpoint` : ""}
+          {t("table_showing_prefix", "Menampilkan")} <b className="text-ink">{expandedRows.length} {t("table_rows_unit", "baris")}</b> · {tasks.length} {t("table_card_unit", "card")}{checkpointTasksCount > 0 ? ` · ${checkpointTasksCount} ${t("table_with_checkpoint_suffix", "dengan checkpoint")}` : ""}
         </p>
       </div>
 
-      {!tasks.length && <p className="mb-3 rounded-2xl border border-dashed p-6 text-center text-sm text-sub" data-testid="task-list-empty">Belum ada tugas yang sesuai filter.</p>}
+      {!tasks.length && <p className="mb-3 rounded-2xl border border-dashed p-6 text-center text-sm text-sub" data-testid="task-list-empty">{t("table_empty_filtered", "Belum ada tugas yang sesuai filter.")}</p>}
       <div className="space-y-5">
         {groups.map(([key, name, color, rows]) => {
           const lim = limit[key] || 200;
@@ -1020,7 +1022,7 @@ export default function ListView({ tasks, projects, boards = [], projectId, onOp
                               return (
                                 <div className="mb-1 flex items-center gap-1.5 text-[11px] font-bold text-brand">
                                   <span className="rounded-md bg-brand/10 px-2 py-0.5">
-                                    Tahap {row.cpIndex + 1}/{row.cpTotal}: {row.cp.title}
+                                    {t("table_stage_prefix", "Tahap")} {row.cpIndex + 1}/{row.cpTotal}: {row.cp.title}
                                   </span>
                                   {effPic && <span className="text-sub">PIC: {userMap[effPic]?.name}</span>}
                                 </div>
@@ -1033,7 +1035,7 @@ export default function ListView({ tasks, projects, boards = [], projectId, onOp
                       );
                     })}
                   </div>
-                  {rows.length > lim && <button onClick={() => setLimit({ ...limit, [key]: lim + 200 })} className="mt-2 text-sm font-semibold text-brand print:hidden">Tampilkan {rows.length - lim} lainnya</button>}
+                  {rows.length > lim && <button onClick={() => setLimit({ ...limit, [key]: lim + 200 })} className="mt-2 text-sm font-semibold text-brand print:hidden">{t("table_show_more_prefix", "Tampilkan")} {rows.length - lim} {t("table_more_suffix", "lainnya")}</button>}
                 </>
               )}
             </section>

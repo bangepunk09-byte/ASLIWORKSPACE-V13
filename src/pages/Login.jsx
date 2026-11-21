@@ -675,7 +675,7 @@ export default function Login() {
                   ? t("auth_status_inactive", STATUS_MSG.inactive)
                   : status === "not_allowed"
                   ? t("auth_status_not_allowed", STATUS_MSG.not_allowed)
-                  : (STATUS_MSG[status] || STATUS_MSG.error)}
+                  : t("auth_status_error", STATUS_MSG.error)}
               </span>
             </div>
           )}
@@ -746,7 +746,7 @@ export default function Login() {
                 className="btn-accent h-11 w-full rounded-2xl text-xs font-bold shadow-md transition-all hover:shadow-lg disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer mt-2"
                 data-testid="login-submit-btn"
               >
-                {busyLogin ? "Memproses..." : t("auth_submit_login", "Masuk ke Workspace")}
+                {busyLogin ? t("auth_submitting_login", "Memproses...") : t("auth_submit_login", "Masuk ke Workspace")}
                 <ArrowRight size={15} />
               </button>
             </form>
@@ -761,7 +761,7 @@ export default function Login() {
                   <span className="text-xs font-semibold text-sub">{t("auth_signup_photo_label", "Foto Profil")}</span>
                   <label className="inline-flex items-center gap-1.5 rounded-xl border bg-surface px-2.5 py-1 text-[11px] font-semibold text-ink hover:border-brand hover:text-brand transition-colors cursor-pointer shadow-2xs" data-testid="signup-upload-photo-btn">
                     <Upload size={12} />
-                    <span>{uploadingPhoto ? "Mengunggah..." : t("auth_signup_upload_btn", "Unggah Foto")}</span>
+                    <span>{uploadingPhoto ? t("auth_uploading_photo", "Mengunggah...") : t("auth_signup_upload_btn", "Unggah Foto")}</span>
                     <input
                       type="file"
                       accept="image/*"
@@ -931,7 +931,7 @@ export default function Login() {
                 className="btn-accent h-11 w-full rounded-2xl text-xs font-bold shadow-md transition-all hover:shadow-lg disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer mt-2"
                 data-testid="signup-submit-btn"
               >
-                {busySignup ? "Mengirim Pendaftaran..." : t("auth_submit_signup", "Daftar & Minta Approval Super Admin")}
+                {busySignup ? t("auth_submitting_signup", "Mengirim Pendaftaran...") : t("auth_submit_signup", "Daftar & Minta Approval Super Admin")}
               </button>
             </form>
           )}
@@ -978,7 +978,7 @@ export default function Login() {
               <svg width="24" height="24" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>
             </div>
             <DialogTitle className="text-center text-lg font-bold text-ink">
-              {mode === "signup" ? "Daftar dengan Akun Google" : "Masuk dengan Akun Google"}
+              {mode === "signup" ? t("auth_google_signup", "Daftar dengan Akun Google") : t("auth_google_login", "Masuk dengan Akun Google")}
             </DialogTitle>
           </DialogHeader>
 
@@ -1019,31 +1019,31 @@ export default function Login() {
             )}
             <p className="text-center text-xs text-sub leading-relaxed">
               {mode === "login"
-                ? "Masukkan email Google Anda untuk langsung masuk ke workspace CIRCLE."
-                : "Masukkan email Google dan divisi Anda untuk mendaftarkan akun baru."}
+                ? t("auth_google_modal_login_desc", "Masukkan email Google Anda untuk langsung masuk ke workspace CIRCLE.")
+                : t("auth_google_modal_signup_desc", "Masukkan email Google dan divisi Anda untuk mendaftarkan akun baru.")}
             </p>
 
             <div>
-              <label className="mb-1 block text-xs font-semibold text-sub">Email Google *</label>
+              <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_google_email_label", "Email Google *")}</label>
               <input
                 type="email"
                 required
                 autoFocus
                 value={googleForm.email}
                 onChange={(e) => setGoogleForm({ ...googleForm, email: e.target.value })}
-                placeholder="nama@gmail.com atau email Google Workspace"
+                placeholder={t("auth_google_email_ph", "nama@gmail.com atau email Google Workspace")}
                 className="h-10 w-full rounded-xl border bg-surface2 px-3 text-xs text-ink outline-none focus:border-brand"
                 data-testid="google-modal-email"
               />
             </div>
 
             <div>
-              <label className="mb-1 block text-xs font-semibold text-sub">Nama Lengkap</label>
+              <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_name_label", "Nama Lengkap *").replace(/\s*\*$/, "")}</label>
               <input
                 type="text"
                 value={googleForm.name}
                 onChange={(e) => setGoogleForm({ ...googleForm, name: e.target.value })}
-                placeholder="Nama sesuai akun Google Anda"
+                placeholder={t("auth_google_name_ph", "Nama sesuai akun Google Anda")}
                 className="h-10 w-full rounded-xl border bg-surface2 px-3 text-xs text-ink outline-none focus:border-brand"
                 data-testid="google-modal-name"
               />
@@ -1051,7 +1051,7 @@ export default function Login() {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               <div>
-                <label className="mb-1 block text-xs font-semibold text-sub">Divisi</label>
+                <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_division_label", "Divisi")}</label>
                 <AppSelect
                   value={googleForm.department}
                   onChange={(e) => setGoogleForm({ ...googleForm, department: e.target.value })}
@@ -1063,12 +1063,12 @@ export default function Login() {
                 </AppSelect>
               </div>
               <div>
-                <label className="mb-1 block text-xs font-semibold text-sub">Jabatan / Posisi</label>
+                <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_job_label", "Jabatan / Posisi")}</label>
                 <input
                   type="text"
                   value={googleForm.job_title}
                   onChange={(e) => setGoogleForm({ ...googleForm, job_title: e.target.value })}
-                  placeholder="Mis. Specialist"
+                  placeholder={t("auth_job_placeholder", "Mis. Specialist")}
                   className="h-10 w-full rounded-xl border bg-surface2 px-3 text-xs text-ink outline-none"
                 />
               </div>
@@ -1080,7 +1080,7 @@ export default function Login() {
               className="btn-accent h-11 w-full rounded-2xl text-xs font-bold shadow-md cursor-pointer disabled:opacity-50 mt-2"
               data-testid="google-modal-submit"
             >
-              {busyGoogle ? "Memproses Akun Google..." : mode === "login" ? "Masuk Sekarang" : "Daftar dengan Akun Google"}
+              {busyGoogle ? t("auth_google_modal_busy", "Memproses Akun Google...") : mode === "login" ? t("auth_google_modal_login_btn", "Masuk Sekarang") : t("auth_google_signup", "Daftar dengan Akun Google")}
             </button>
           </form>
         </DialogContent>
@@ -1125,7 +1125,7 @@ export default function Login() {
               className="btn-accent h-10 w-full rounded-full text-xs font-semibold cursor-pointer"
               data-testid="signup-done-btn"
             >
-              Kembali ke Halaman Masuk
+              {t("auth_back_to_login", "Kembali ke Halaman Masuk")}
             </button>
           </div>
         </DialogContent>
@@ -1157,7 +1157,7 @@ export default function Login() {
                 }`}
                 data-testid="forgot-tab-email"
               >
-                Verifikasi Email
+                {t("auth_forgot_tab_email", "Verifikasi Email")}
               </button>
               <button
                 type="button"
@@ -1167,7 +1167,7 @@ export default function Login() {
                 }`}
                 data-testid="forgot-tab-approval"
               >
-                Approval Admin
+                {t("auth_forgot_tab_approval", "Approval Admin")}
               </button>
               <button
                 type="button"
@@ -1177,7 +1177,7 @@ export default function Login() {
                 }`}
                 data-testid="forgot-tab-recovery"
               >
-                Kode Pemulihan
+                {t("auth_forgot_tab_recovery", "Kode Pemulihan")}
               </button>
             </div>
           )}
@@ -1227,7 +1227,7 @@ export default function Login() {
                     data-testid="forgot-check-status-btn"
                   >
                     <RefreshCw size={14} className={checkingForgot ? "animate-spin" : ""} />
-                    {checkingForgot ? "Memeriksa..." : "Cek Status Approval Sekarang"}
+                    {checkingForgot ? "Memeriksa..." : t("auth_forgot_check_status_btn", "Cek Status Approval Sekarang")}
                   </button>
                 )}
 
@@ -1243,7 +1243,7 @@ export default function Login() {
                     className="btn-accent h-11 w-full rounded-2xl text-xs font-bold cursor-pointer"
                     data-testid="forgot-go-login-btn"
                   >
-                    Masuk dengan Password Baru
+                    {t("auth_forgot_go_login_btn", "Masuk dengan Password Baru")}
                   </button>
                 ) : (
                   <button
@@ -1259,7 +1259,7 @@ export default function Login() {
           ) : forgotTab === "email" ? (
             <form onSubmit={handleEmailVerifiedResetSubmit} className="space-y-3 pt-1" data-testid="forgot-email-verify-form">
               <div>
-                <label className="mb-1 block text-xs font-semibold text-sub">Email Akun Anda *</label>
+                <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_forgot_email_label", "Email Akun Anda *")}</label>
                 <div className="flex gap-2">
                   <input
                     type="email"
@@ -1283,7 +1283,7 @@ export default function Login() {
                     className="h-10 shrink-0 rounded-xl border border-slate-300 dark:border-slate-700 bg-surface hover:bg-surface2 px-3 text-[11px] font-bold text-ink disabled:opacity-50 cursor-pointer"
                     data-testid="forgot-send-otp-btn"
                   >
-                    {sendingOtp ? "Mengirim..." : otpSent ? "Kirim Ulang OTP" : "Kirim OTP Email"}
+                    {sendingOtp ? t("auth_forgot_sending_otp", "Mengirim...") : otpSent ? t("auth_forgot_resend_otp", "Kirim Ulang OTP") : t("auth_forgot_send_otp", "Kirim OTP Email")}
                   </button>
                 </div>
               </div>
@@ -1292,11 +1292,11 @@ export default function Login() {
               <div className="rounded-2xl border border-slate-200/80 dark:border-slate-800 bg-surface2/60 p-3 space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-[11px] font-bold text-ink">
-                    1. Verifikasi Instan Kepemilikan Email
+                    {t("auth_forgot_verify_step1", "1. Verifikasi Instan Kepemilikan Email")}
                   </span>
                   {verifiedEmailToken && verifiedGoogleEmail === forgotForm.email.trim().toLowerCase() && (
                     <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 dark:bg-emerald-950/60 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">
-                      <Check size={11} /> Terverifikasi
+                      <Check size={11} /> {t("auth_forgot_verified_badge", "Terverifikasi")}
                     </span>
                   )}
                 </div>
@@ -1317,7 +1317,7 @@ export default function Login() {
                       ? "Memverifikasi Email..."
                       : verifiedEmailToken && verifiedGoogleEmail === forgotForm.email.trim().toLowerCase()
                       ? `Terverifikasi: ${verifiedGoogleEmail}`
-                      : "Verifikasi Kepemilikan Email (Google)"}
+                      : t("auth_forgot_verify_google_btn", "Verifikasi Kepemilikan Email (Google)")}
                   </span>
                 </button>
               </div>
@@ -1326,7 +1326,7 @@ export default function Login() {
               {(otpSent || !verifiedEmailToken) && (
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-sub">
-                    2. Atau Masukkan Kode OTP 6 Digit dari Email
+                    {t("auth_forgot_otp_label", "2. Atau Masukkan Kode OTP 6 Digit dari Email")}
                   </label>
                   <input
                     type="text"
@@ -1346,14 +1346,14 @@ export default function Login() {
 
               <div className="grid grid-cols-2 gap-2.5">
                 <div>
-                  <label className="mb-1 block text-xs font-semibold text-sub">Password Baru *</label>
+                  <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_forgot_new_pw_label", "Password Baru *")}</label>
                   <div className="relative flex items-center">
                     <input
                       type={showForgotPw ? "text" : "password"}
                       required
                       value={forgotForm.newPassword}
                       onChange={(e) => setForgotForm({ ...forgotForm, newPassword: e.target.value })}
-                      placeholder="Min. 6 karakter"
+                      placeholder={t("auth_signup_password_placeholder", "Min. 6 karakter")}
                       className="h-10 w-full rounded-xl border bg-surface2 pl-3 pr-8 text-xs text-ink outline-none focus:border-brand"
                       data-testid="forgot-email-newpw-input"
                     />
@@ -1367,13 +1367,13 @@ export default function Login() {
                   </div>
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs font-semibold text-sub">Konfirmasi *</label>
+                  <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_forgot_confirm_pw_label", "Konfirmasi *")}</label>
                   <input
                     type={showForgotPw ? "text" : "password"}
                     required
                     value={forgotForm.confirmPassword}
                     onChange={(e) => setForgotForm({ ...forgotForm, confirmPassword: e.target.value })}
-                    placeholder="Ulangi password"
+                    placeholder={t("auth_forgot_confirm_pw_ph", "Ulangi password")}
                     className="h-10 w-full rounded-xl border bg-surface2 px-3 text-xs text-ink outline-none focus:border-brand"
                     data-testid="forgot-email-confirmpw-input"
                   />
@@ -1387,13 +1387,13 @@ export default function Login() {
                 className="btn-accent h-11 w-full rounded-2xl text-xs font-bold shadow-md disabled:opacity-50 cursor-pointer"
                 data-testid="forgot-email-reset-submit-btn"
               >
-                {busyForgot ? "Memverifikasi & Mereset..." : "Verifikasi & Reset Password Sekarang"}
+                {busyForgot ? "Memverifikasi & Mereset..." : t("auth_forgot_submit_email", "Verifikasi & Reset Password Sekarang")}
               </button>
             </form>
           ) : forgotTab === "approval" ? (
             <form onSubmit={handleForgotApprovalSubmit} className="space-y-3 pt-1" data-testid="forgot-approval-form">
               <div>
-                <label className="mb-1 block text-xs font-semibold text-sub">Email Akun Anda *</label>
+                <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_forgot_email_label", "Email Akun Anda *")}</label>
                 <input
                   type="email"
                   required
@@ -1407,14 +1407,14 @@ export default function Login() {
 
               <div className="grid grid-cols-2 gap-2.5">
                 <div>
-                  <label className="mb-1 block text-xs font-semibold text-sub">Password Baru *</label>
+                  <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_forgot_new_pw_label", "Password Baru *")}</label>
                   <div className="relative flex items-center">
                     <input
                       type={showForgotPw ? "text" : "password"}
                       required
                       value={forgotForm.newPassword}
                       onChange={(e) => setForgotForm({ ...forgotForm, newPassword: e.target.value })}
-                      placeholder="Min. 6 karakter"
+                      placeholder={t("auth_signup_password_placeholder", "Min. 6 karakter")}
                       className="h-10 w-full rounded-xl border bg-surface2 pl-3 pr-8 text-xs text-ink outline-none focus:border-brand"
                       data-testid="forgot-newpw-input"
                     />
@@ -1428,13 +1428,13 @@ export default function Login() {
                   </div>
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs font-semibold text-sub">Konfirmasi *</label>
+                  <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_forgot_confirm_pw_label", "Konfirmasi *")}</label>
                   <input
                     type={showForgotPw ? "text" : "password"}
                     required
                     value={forgotForm.confirmPassword}
                     onChange={(e) => setForgotForm({ ...forgotForm, confirmPassword: e.target.value })}
-                    placeholder="Ulangi password"
+                    placeholder={t("auth_forgot_confirm_pw_ph", "Ulangi password")}
                     className="h-10 w-full rounded-xl border bg-surface2 px-3 text-xs text-ink outline-none focus:border-brand"
                     data-testid="forgot-confirmpw-input"
                   />
@@ -1443,12 +1443,12 @@ export default function Login() {
               <PasswordStrengthMeter password={forgotForm.newPassword} />
 
               <div>
-                <label className="mb-1 block text-xs font-semibold text-sub">Catatan untuk Admin</label>
+                <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_forgot_admin_note_label", "Catatan untuk Admin")}</label>
                 <input
                   type="text"
                   value={forgotForm.note}
                   onChange={(e) => setForgotForm({ ...forgotForm, note: e.target.value })}
-                  placeholder="Mis. Lupa password setelah ganti perangkat"
+                  placeholder={t("auth_forgot_admin_note_ph", "Mis. Lupa password setelah ganti perangkat")}
                   className="h-10 w-full rounded-xl border bg-surface2 px-3 text-xs text-ink outline-none focus:border-brand"
                 />
               </div>
@@ -1463,13 +1463,13 @@ export default function Login() {
                 className="btn-accent h-11 w-full rounded-2xl text-xs font-bold shadow-md disabled:opacity-50 cursor-pointer"
                 data-testid="forgot-submit-btn"
               >
-                {busyForgot ? "Mengirim Permintaan..." : "Ajukan Reset Password"}
+                {busyForgot ? "Mengirim Permintaan..." : t("auth_forgot_submit_approval", "Ajukan Reset Password")}
               </button>
             </form>
           ) : (
             <form onSubmit={handleRecoveryKeySubmit} className="space-y-3 pt-1" data-testid="forgot-recovery-form">
               <div>
-                <label className="mb-1 block text-xs font-semibold text-sub">Email Akun Anda *</label>
+                <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_forgot_email_label", "Email Akun Anda *")}</label>
                 <input
                   type="email"
                   required
@@ -1482,7 +1482,7 @@ export default function Login() {
               </div>
 
               <div>
-                <label className="mb-1 block text-xs font-semibold text-sub">Kode Pemulihan Workspace *</label>
+                <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_forgot_recovery_key_label", "Kode Pemulihan Workspace *")}</label>
                 <input
                   type="text"
                   required
@@ -1496,14 +1496,14 @@ export default function Login() {
 
               <div className="grid grid-cols-2 gap-2.5">
                 <div>
-                  <label className="mb-1 block text-xs font-semibold text-sub">Password Baru *</label>
+                  <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_forgot_new_pw_label", "Password Baru *")}</label>
                   <div className="relative flex items-center">
                     <input
                       type={showForgotPw ? "text" : "password"}
                       required
                       value={forgotForm.newPassword}
                       onChange={(e) => setForgotForm({ ...forgotForm, newPassword: e.target.value })}
-                      placeholder="Min. 6 karakter"
+                      placeholder={t("auth_signup_password_placeholder", "Min. 6 karakter")}
                       className="h-10 w-full rounded-xl border bg-surface2 pl-3 pr-8 text-xs text-ink outline-none focus:border-brand"
                       data-testid="recovery-newpw-input"
                     />
@@ -1517,13 +1517,13 @@ export default function Login() {
                   </div>
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs font-semibold text-sub">Konfirmasi *</label>
+                  <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_forgot_confirm_pw_label", "Konfirmasi *")}</label>
                   <input
                     type={showForgotPw ? "text" : "password"}
                     required
                     value={forgotForm.confirmPassword}
                     onChange={(e) => setForgotForm({ ...forgotForm, confirmPassword: e.target.value })}
-                    placeholder="Ulangi password"
+                    placeholder={t("auth_forgot_confirm_pw_ph", "Ulangi password")}
                     className="h-10 w-full rounded-xl border bg-surface2 px-3 text-xs text-ink outline-none focus:border-brand"
                     data-testid="recovery-confirmpw-input"
                   />
@@ -1532,7 +1532,7 @@ export default function Login() {
               <PasswordStrengthMeter password={forgotForm.newPassword} />
 
               <div className="rounded-xl border border-indigo-200 dark:border-indigo-800/50 bg-indigo-50/70 dark:bg-indigo-950/30 p-2.5 text-[11px] text-indigo-900 dark:text-indigo-200 leading-relaxed">
-                Kode Pemulihan Workspace tersedia di <b>Pengaturan → Tim, Divisi & Akses</b> milik Super Admin. Cocok untuk reset darurat tanpa menunggu approval.
+                {t("auth_forgot_recovery_notice", "Kode Pemulihan Workspace tersedia di Pengaturan → Tim, Divisi & Akses milik Super Admin. Cocok untuk reset darurat tanpa menunggu approval.")}
               </div>
 
               <button
@@ -1541,7 +1541,7 @@ export default function Login() {
                 className="btn-accent h-11 w-full rounded-2xl text-xs font-bold shadow-md disabled:opacity-50 cursor-pointer"
                 data-testid="recovery-submit-btn"
               >
-                {busyForgot ? "Mereset Password..." : "Reset Password Sekarang"}
+                {busyForgot ? "Mereset Password..." : t("auth_forgot_submit_recovery", "Reset Password Sekarang")}
               </button>
             </form>
           )}

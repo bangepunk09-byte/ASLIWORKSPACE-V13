@@ -165,7 +165,7 @@ export default function Employees() {
                         }`}
                       >
                         <span className={`h-1.5 w-1.5 rounded-full ${isOnline ? "bg-emerald-500" : "bg-slate-400"}`} />
-                        {isOnline ? "Online" : "Offline"}
+                        {isOnline ? t("employee_status_online", "Online") : t("employee_status_offline", "Offline")}
                       </span>
                     );
                   })()}
@@ -179,14 +179,14 @@ export default function Employees() {
                   data-testid={`message-employee-${u.user_id}`}
                 >
                   <MessageCircle size={14} />
-                  Pesan
+                  {t("employee_msg_btn", "Pesan")}
                 </button>
                 <button
                   onClick={() => navigate(`/people/${u.user_id}`)}
                   className="btn-accent h-10 text-sm font-semibold"
                   data-testid={`view-profile-${u.user_id}`}
                 >
-                  Profil
+                  {t("employee_profile_btn", "Profil")}
                 </button>
               </div>
             </div>

@@ -56,7 +56,7 @@ function CustomInput({ f, value, onChange }) {
 }
 
 function EditProfile({ open, onOpenChange, p, onSaved }) {
-  const { ws, isAdmin, users } = useApp();
+  const { ws, isAdmin, users, t: tr } = useApp();
   const [f, setF] = useState(p);
   const wasOpenRef = useRef(false);
   useEffect(() => {
@@ -125,7 +125,7 @@ function EditProfile({ open, onOpenChange, p, onSaved }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="bg-surface rounded-2xl sm:rounded-3xl max-w-2xl max-h-[90dvh] overflow-y-auto p-4 sm:p-6">
-        <DialogHeader><DialogTitle>Ubah Profil</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>{tr("profile_edit_modal_title", "Ubah Profil")}</DialogTitle></DialogHeader>
         <div
           className={`rounded-2xl border p-3.5 transition-colors ${
             liveCompletion.isVerified
@@ -139,12 +139,12 @@ function EditProfile({ open, onOpenChange, p, onSaved }) {
               {liveCompletion.isVerified ? (
                 <>
                   <VerifiedBadge user={{ is_verified: true }} size={16} />
-                  <span>Profil 100% Lengkap — Siap Terverifikasi!</span>
+                  <span>{tr("profile_verified_ready", "Profil 100% Lengkap — Siap Terverifikasi!")}</span>
                 </>
               ) : (
                 <>
                   <BadgeCheck size={16} className="text-sky-500 shrink-0" />
-                  <span>Kelengkapan Profil untuk Centang Verified</span>
+                  <span>{tr("profile_verified_progress", "Kelengkapan Profil untuk Centang Verified")}</span>
                 </>
               )}
             </span>
@@ -162,41 +162,42 @@ function EditProfile({ open, onOpenChange, p, onSaved }) {
           </div>
           {!liveCompletion.isVerified && liveCompletion.missingFields.length > 0 && (
             <p className="mt-2 text-[11px] text-sub leading-relaxed">
-              Belum terisi:{" "}
+              {tr("profile_missing_prefix", "Belum terisi:")}{" "}
               <span className="font-medium text-ink">{liveCompletion.missingFields.join(", ")}</span>
             </p>
           )}
         </div>
-        <div className="flex items-center gap-3"><Avatar user={f} size={56} showStatus={false} /><label className="cursor-pointer text-sm font-semibold text-brand">Ganti Foto<input type="file" accept="image/*" hidden onChange={photo} data-testid="profile-photo-input" /></label></div>
+        <div className="flex items-center gap-3"><Avatar user={f} size={56} showStatus={false} /><label className="cursor-pointer text-sm font-semibold text-brand">{tr("profile_change_photo", "Ganti Foto")}<input type="file" accept="image/*" hidden onChange={photo} data-testid="profile-photo-input" /></label></div>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Nama Lengkap"><input value={f.name || ""} onChange={set("name")} className={inp} data-testid="profile-name-input" /></Field>
-          <Field label="No. Telepon"><input value={f.phone || ""} onChange={set("phone")} className={inp} data-testid="profile-phone-input" /></Field>
-          <Field label="ID Employee"><input value={f.employee_id || ""} onChange={set("employee_id")} placeholder="mis. EMP-001" className={inp} data-testid="profile-employee-id-input" /></Field>
-          <Field label="Status Kepegawaian"><AppSelect value={f.employment_status || ""} onChange={set("employment_status")} placeholder="Pilih status" className={inp} data-testid="profile-employment-status-select">{EMPLOYMENT_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</AppSelect></Field>
-          <Field label="Tanggal Bergabung"><DatePicker showQuickPresets={false} value={f.join_date || ""} onChange={(val) => setF({ ...f, join_date: val })} placeholder="Pilih tanggal bergabung" className={inp} data-testid="profile-join-date-input" /></Field>
+          <Field label={tr("profile_field_name", "Nama Lengkap")}><input value={f.name || ""} onChange={set("name")} className={inp} data-testid="profile-name-input" /></Field>
+          <Field label={tr("profile_field_phone", "No. Telepon")}><input value={f.phone || ""} onChange={set("phone")} className={inp} data-testid="profile-phone-input" /></Field>
+          <Field label={tr("profile_field_empid", "ID Employee")}><input value={f.employee_id || ""} onChange={set("employee_id")} placeholder="mis. EMP-001" className={inp} data-testid="profile-employee-id-input" /></Field>
+          <Field label={tr("profile_field_employment", "Status Kepegawaian")}><AppSelect value={f.employment_status || ""} onChange={set("employment_status")} placeholder="Pilih status" className={inp} data-testid="profile-employment-status-select">{EMPLOYMENT_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</AppSelect></Field>
+          <Field label={tr("profile_field_join", "Tanggal Bergabung")}><DatePicker showQuickPresets={false} value={f.join_date || ""} onChange={(val) => setF({ ...f, join_date: val })} placeholder="Pilih tanggal bergabung" className={inp} data-testid="profile-join-date-input" /></Field>
           {isAdmin && <>
-            <Field label="Jabatan"><input value={f.job_title || ""} onChange={set("job_title")} className={inp} data-testid="profile-title-input" /></Field>
-            <Field label="Divisi"><input value={f.department || ""} onChange={set("department")} className={inp} /></Field>
-            <Field label="Tim"><input value={f.team || ""} onChange={set("team")} className={inp} /></Field>
-            <Field label="Atasan Langsung"><AppSelect value={f.manager_id || ""} onChange={set("manager_id")} placeholder="Tidak ada" className={inp}><option value="">Tidak ada</option>{users.filter((u) => u.user_id !== p.user_id).map((u) => <option key={u.user_id} value={u.user_id}>{u.name}</option>)}</AppSelect></Field>
+            <Field label={tr("profile_field_job", "Jabatan")}><input value={f.job_title || ""} onChange={set("job_title")} className={inp} data-testid="profile-title-input" /></Field>
+            <Field label={tr("profile_field_division", "Divisi")}><input value={f.department || ""} onChange={set("department")} className={inp} /></Field>
+            <Field label={tr("profile_field_team", "Tim")}><input value={f.team || ""} onChange={set("team")} className={inp} /></Field>
+            <Field label={tr("profile_field_manager", "Atasan Langsung")}><AppSelect value={f.manager_id || ""} onChange={set("manager_id")} placeholder={tr("profile_field_no_manager", "Tidak ada")} className={inp}><option value="">{tr("profile_field_no_manager", "Tidak ada")}</option>{users.filter((u) => u.user_id !== p.user_id).map((u) => <option key={u.user_id} value={u.user_id}>{u.name}</option>)}</AppSelect></Field>
           </>}
-          <Field label="Mode Kerja"><AppSelect value={f.work_mode || ""} onChange={set("work_mode")} placeholder="Pilih mode kerja" className={inp} data-testid="profile-workmode-select">{MODES.map((m) => <option key={m}>{m}</option>)}</AppSelect></Field>
-          <Field label="Kota"><input value={f.city || ""} onChange={set("city")} className={inp} data-testid="profile-city-input" /></Field>
-          <Field label="Kantor"><input value={f.office || ""} onChange={set("office")} className={inp} /></Field>
-          {(f.work_mode === "Custom" || f.work_mode === "Kustom") && <Field label="Lokasi Kustom"><input value={f.custom_location || ""} onChange={set("custom_location")} className={inp} /></Field>}
-          <Field label="Status Lokasi"><input value={f.location_status || ""} onChange={set("location_status")} placeholder="mis. Di lokasi klien hari ini" className={inp} /></Field>
+          <Field label={tr("profile_field_workmode", "Mode Kerja")}><AppSelect value={f.work_mode || ""} onChange={set("work_mode")} placeholder={tr("profile_field_workmode_ph", "Pilih mode kerja")} className={inp} data-testid="profile-workmode-select">{MODES.map((m) => <option key={m}>{m}</option>)}</AppSelect></Field>
+          <Field label={tr("profile_field_city", "Kota")}><input value={f.city || ""} onChange={set("city")} className={inp} data-testid="profile-city-input" /></Field>
+          <Field label={tr("profile_field_office", "Kantor")}><input value={f.office || ""} onChange={set("office")} className={inp} /></Field>
+          {(f.work_mode === "Custom" || f.work_mode === "Kustom") && <Field label={tr("profile_field_custom_loc", "Lokasi Kustom")}><input value={f.custom_location || ""} onChange={set("custom_location")} className={inp} /></Field>}
+          <Field label={tr("profile_field_loc_status", "Status Lokasi")}><input value={f.location_status || ""} onChange={set("location_status")} placeholder={tr("profile_field_loc_status_ph", "mis. Di lokasi klien hari ini")} className={inp} /></Field>
         </div>
-        <label className="flex items-center justify-between rounded-xl bg-surface2 p-3 text-sm">Bagikan lokasi kerja saya dengan rekan tim<Switch checked={f.share_location !== false} onCheckedChange={set("share_location")} data-testid="profile-share-location" /></label>
-        <Field label="Keahlian"><input value={f.skillsText || ""} onChange={set("skillsText")} placeholder="Pisahkan dengan koma" className={inp} data-testid="profile-skills-input" /></Field>
-        <Field label="Biodata"><textarea value={f.bio || ""} onChange={set("bio")} className={`${inp} h-20 py-2`} data-testid="profile-bio-input" /></Field>
+        <label className="flex items-center justify-between rounded-xl bg-surface2 p-3 text-sm">{tr("profile_share_location", "Bagikan lokasi kerja saya dengan rekan tim")}<Switch checked={f.share_location !== false} onCheckedChange={set("share_location")} data-testid="profile-share-location" /></label>
+        <Field label={tr("profile_field_skills", "Keahlian")}><input value={f.skillsText || ""} onChange={set("skillsText")} placeholder={tr("profile_field_skills_ph", "Pisahkan dengan koma")} className={inp} data-testid="profile-skills-input" /></Field>
+        <Field label={tr("profile_field_bio", "Biodata")}><textarea value={f.bio || ""} onChange={set("bio")} className={`${inp} h-20 py-2`} data-testid="profile-bio-input" /></Field>
         {(ws.profile_fields || []).length > 0 && <div className="grid gap-3 sm:grid-cols-2">{ws.profile_fields.map((cf) => <Field key={cf.key} label={cf.name}><CustomInput f={cf} value={f.custom?.[cf.key]} onChange={(v) => setF({ ...f, custom: { ...(f.custom || {}), [cf.key]: v } })} /></Field>)}</div>}
-        <AccentButton onClick={save} disabled={saving} data-testid="profile-save-btn">{saving ? "Menyimpan…" : "Simpan Profil"}</AccentButton>
+        <AccentButton onClick={save} disabled={saving} data-testid="profile-save-btn">{saving ? "Menyimpan…" : tr("profile_save_btn", "Simpan Profil")}</AccentButton>
       </DialogContent>
     </Dialog>
   );
 }
 
 function CustomizeCoverDialog({ open, onOpenChange, p, onSaved }) {
+  const { t: tr } = useApp();
   const [coverBg, setCoverBg] = useState(p?.cover_bg || DEFAULT_COVER_BG);
   const [coverImage, setCoverImage] = useState(p?.cover_image || "");
   const [coverPosition, setCoverPosition] = useState(p?.cover_position || "center");
@@ -271,7 +272,7 @@ function CustomizeCoverDialog({ open, onOpenChange, p, onSaved }) {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Palette size={18} className="text-brand" />
-            <span>Kustomisasi Background Cover</span>
+            <span>{tr("profile_cover_modal_title", "Kustomisasi Background Cover")}</span>
           </DialogTitle>
         </DialogHeader>
 
@@ -304,7 +305,7 @@ function CustomizeCoverDialog({ open, onOpenChange, p, onSaved }) {
         {/* Upload Gambar Cover */}
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-xs font-semibold text-sub">Gambar Cover Kustom</span>
+            <span className="text-xs font-semibold text-sub">{tr("profile_cover_custom_img", "Gambar Cover Kustom")}</span>
             {coverImage && (
               <button
                 type="button"
@@ -313,7 +314,7 @@ function CustomizeCoverDialog({ open, onOpenChange, p, onSaved }) {
                 data-testid="cover-remove-image-btn"
               >
                 <Trash2 size={12} />
-                Hapus Gambar
+                {tr("profile_cover_remove_img", "Hapus Gambar")}
               </button>
             )}
           </div>
@@ -324,7 +325,7 @@ function CustomizeCoverDialog({ open, onOpenChange, p, onSaved }) {
               }`}
             >
               <ImagePlus size={14} className="text-brand" />
-              <span>{uploading ? "Mengunggah..." : coverImage ? "Ganti Gambar Cover" : "Unggah Foto / Banner"}</span>
+              <span>{uploading ? "Mengunggah..." : coverImage ? tr("profile_cover_change_img", "Ganti Gambar Cover") : tr("profile_cover_upload_img", "Unggah Foto / Banner")}</span>
               <input
                 type="file"
                 accept="image/*"
@@ -356,7 +357,7 @@ function CustomizeCoverDialog({ open, onOpenChange, p, onSaved }) {
 
         {/* Preset Gradien */}
         <div className="space-y-2">
-          <span className="block text-xs font-semibold text-sub">Pilih Tema Gradien</span>
+          <span className="block text-xs font-semibold text-sub">{tr("profile_cover_presets", "Pilih Tema Gradien")}</span>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {COVER_PRESETS.map((preset) => {
               const active = !coverImage && coverBg === preset.value;
@@ -393,7 +394,7 @@ function CustomizeCoverDialog({ open, onOpenChange, p, onSaved }) {
 
         {/* Warna Solid Kustom */}
         <div className="space-y-2">
-          <span className="block text-xs font-semibold text-sub">Warna Solid Kustom</span>
+          <span className="block text-xs font-semibold text-sub">{tr("profile_cover_solid", "Warna Solid Kustom")}</span>
           <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200/80 dark:border-slate-800 bg-surface2/50 px-3 py-2">
             <div className="flex items-center gap-2.5">
               <input
@@ -410,7 +411,7 @@ function CustomizeCoverDialog({ open, onOpenChange, p, onSaved }) {
                 className="h-8 w-10 cursor-pointer rounded-lg border-0 bg-transparent p-0"
               />
               <div>
-                <p className="text-xs font-semibold text-ink">Pilih Warna Bebas</p>
+                <p className="text-xs font-semibold text-ink">{tr("profile_cover_pick_free", "Pilih Warna Bebas")}</p>
                 <p className="text-[11px] font-mono text-sub uppercase">{!coverImage && /^#/.test(coverBg) ? coverBg : customColor}</p>
               </div>
             </div>
@@ -422,7 +423,7 @@ function CustomizeCoverDialog({ open, onOpenChange, p, onSaved }) {
               }}
               className="rounded-lg border border-slate-200 dark:border-slate-700 bg-surface px-2.5 py-1 text-xs font-semibold text-ink hover:bg-surface2 transition-colors cursor-pointer"
             >
-              Terapkan Warna
+              {tr("profile_cover_apply_color", "Terapkan Warna")}
             </button>
           </div>
         </div>
@@ -430,10 +431,10 @@ function CustomizeCoverDialog({ open, onOpenChange, p, onSaved }) {
         <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200/70 dark:border-slate-800/80">
           <GhostButton type="button" onClick={handleReset} data-testid="cover-reset-btn">
             <RotateCcw size={14} />
-            Reset Default
+            {tr("profile_cover_reset", "Reset Default")}
           </GhostButton>
           <AccentButton type="button" onClick={handleSave} disabled={saving || uploading} data-testid="cover-save-btn">
-            {saving ? "Menyimpan..." : "Simpan Cover"}
+            {saving ? "Menyimpan..." : tr("profile_cover_save", "Simpan Cover")}
           </AccentButton>
         </div>
       </DialogContent>
@@ -498,7 +499,7 @@ function readCachedUserFeedHistory(uid, userMap) {
 export default function Profile() {
   const { uid } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { me, userMap, ws, online, reloadUsers, setSession, hasDeadlineToday, subscribe } = useApp();
+  const { me, userMap, ws, online, reloadUsers, setSession, hasDeadlineToday, subscribe, t: tr } = useApp();
   const [rawP, setP] = useState(() => userMap?.[uid] || (uid === me?.user_id ? me : null));
   const [edit, setEdit] = useState(false);
   const [coverOpen, setCoverOpen] = useState(false);
@@ -631,13 +632,13 @@ export default function Profile() {
   };
   const fv = ws?.field_visibility || {};
   const info = [
-    [Mail, "Email", p.email, "email"],
-    [Phone, "Telepon", p.phone, "phone"],
-    [IdCard, "ID Employee", p.employee_id, "employee_id"],
-    [Briefcase, "Kepegawaian", EMPLOYMENT_LABELS[p.employment_status] || p.employment_status, "employment_status"],
-    [Calendar, "Bergabung", p.join_date, "join_date"],
-    [MapPin, "Lokasi", [p.office, p.city, (p.work_mode === "Custom" || p.work_mode === "Kustom") ? p.custom_location : p.work_mode].filter(Boolean).join(" · ")],
-    [Users2, "Divisi / Tim", [p.division, p.team].filter(Boolean).join(" / ")],
+    [Mail, tr("profile_info_email", "Email"), p.email, "email"],
+    [Phone, tr("profile_info_phone", "Telepon"), p.phone, "phone"],
+    [IdCard, tr("profile_info_empid", "ID Employee"), p.employee_id, "employee_id"],
+    [Briefcase, tr("profile_info_employment", "Kepegawaian"), EMPLOYMENT_LABELS[p.employment_status] || p.employment_status, "employment_status"],
+    [Calendar, tr("profile_info_join", "Bergabung"), p.join_date, "join_date"],
+    [MapPin, tr("profile_info_location", "Lokasi"), [p.office, p.city, (p.work_mode === "Custom" || p.work_mode === "Kustom") ? p.custom_location : p.work_mode].filter(Boolean).join(" · ")],
+    [Users2, tr("profile_info_division", "Divisi / Tim"), [p.division, p.team].filter(Boolean).join(" / ")],
   ].filter((x) => x[2] && canSeeField(x[3] ? fv[x[3]] : "everyone"));
   return (
     <div className="mx-auto w-full min-w-0 max-w-6xl overflow-x-clip px-3.5 py-4 sm:px-6 sm:py-6 lg:px-10 lg:py-10 animate-subpage-enter" data-testid="profile-page">
@@ -670,7 +671,7 @@ export default function Profile() {
               className="absolute top-3 right-3 z-10 inline-flex items-center gap-1.5 rounded-xl bg-slate-900/55 hover:bg-slate-900/75 px-3 py-1.5 text-xs font-semibold text-white backdrop-blur-md border border-white/15 shadow-sm transition-all cursor-pointer"
             >
               <Palette size={14} />
-              <span>Ubah Cover</span>
+              <span>{tr("profile_edit_cover_btn", "Ubah Cover")}</span>
             </button>
           )}
         </div>
@@ -685,7 +686,7 @@ export default function Profile() {
                   <span>{p.name}</span>
                   <VerifiedBadge user={p} size={22} />
                 </h1>
-                <p className="text-sub" data-testid="profile-job-title">{p.job_title || "Belum ada jabatan"}{p.department && ` · ${p.department}`}</p>
+                <p className="text-sub" data-testid="profile-job-title">{p.job_title || tr("profile_no_job_title", "Belum ada jabatan")}{p.department && ` · ${p.department}`}</p>
                 <p className="mt-1.5 flex flex-wrap items-center gap-2 text-xs">
                   {(() => {
                     const statusMeta = getAvailabilityStatusMeta(p.availability_status);
@@ -700,18 +701,18 @@ export default function Profile() {
                     }
                     return (
                       <span className={isOn ? "text-emerald-600 font-semibold" : "text-sub"}>
-                        {isOn ? "● Online" : "○ Offline"}
+                        {isOn ? tr("profile_status_online", "● Online") : tr("profile_status_offline", "○ Offline")}
                       </span>
                     );
                   })()}
                   {p.location_status && <span className="text-sub"> · {p.location_status}</span>}
                   {isDeadlineToday ? (
                     <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/60 px-2.5 py-0.5 text-[11px] font-bold text-rose-600 dark:text-rose-400 whitespace-nowrap animate-pulse">
-                      <span className="h-2 w-2 rounded-full bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.9)]" /> Ada Deadline Hari Ini
+                      <span className="h-2 w-2 rounded-full bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.9)]" /> {tr("profile_deadline_today", "Ada Deadline Hari Ini")}
                     </span>
                   ) : (
                     <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 px-2.5 py-0.5 text-[11px] font-bold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
-                      <span className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.9)]" /> Bebas Deadline
+                      <span className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.9)]" /> {tr("profile_deadline_free", "Bebas Deadline")}
                     </span>
                   )}
                 </p>
@@ -719,9 +720,9 @@ export default function Profile() {
             </div>
             <div className="flex flex-wrap items-center gap-2 shrink-0 sm:pt-0.5">
               {uid !== me.user_id && <>
-                <AccentButton onClick={openDm} disabled={dmBusy} data-testid="profile-message-btn"><MessageCircle size={16} />Pesan</AccentButton>
+                <AccentButton onClick={openDm} disabled={dmBusy} data-testid="profile-message-btn"><MessageCircle size={16} />{tr("profile_msg_btn", "Pesan")}</AccentButton>
               </>}
-              {canEdit && <GhostButton onClick={() => setEdit(true)} data-testid="profile-edit-btn"><Pencil size={15} />Ubah</GhostButton>}
+              {canEdit && <GhostButton onClick={() => setEdit(true)} data-testid="profile-edit-btn"><Pencil size={15} />{tr("profile_edit_btn", "Ubah")}</GhostButton>}
             </div>
           </div>
         </div>
@@ -736,7 +737,7 @@ export default function Profile() {
                     <Sparkles size={16} />
                   </div>
                   <div>
-                    <h3 className="text-xs font-bold text-ink">Dapatkan Centang Verified</h3>
+                    <h3 className="text-xs font-bold text-ink">{tr("profile_verify_cta_title", "Dapatkan Centang Verified")}</h3>
                     <p className="text-[11px] text-sub">Kelengkapan profil {profileComp.percent}% ({profileComp.filledCount}/{profileComp.totalCount})</p>
                   </div>
                 </div>
@@ -754,15 +755,15 @@ export default function Profile() {
                 className="mt-3 inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-xs font-bold text-white transition-colors"
               >
                 <BadgeCheck size={15} />
-                <span>Lengkapi Profil 100%</span>
+                <span>{tr("profile_verify_cta_btn", "Lengkapi Profil 100%")}</span>
               </button>
             </section>
           )}
-          <section className="card min-w-0 overflow-hidden p-4 sm:p-5"><h3 className="mb-3 text-sm font-bold">Tentang</h3><p className="text-sm text-sub break-words">{p.bio || "Belum ada biodata."}</p>
+          <section className="card min-w-0 overflow-hidden p-4 sm:p-5"><h3 className="mb-3 text-sm font-bold">{tr("profile_about_title", "Tentang")}</h3><p className="text-sm text-sub break-words">{p.bio || tr("profile_no_bio", "Belum ada biodata.")}</p>
             {p.skills?.length > 0 && <div className="mt-4 flex flex-wrap gap-1.5">{p.skills.map((s) => <span key={s} className="rounded-full bg-soft-purple px-2.5 py-1 text-xs font-medium">{s}</span>)}</div>}</section>
           <section className="card min-w-0 overflow-hidden space-y-3 p-4 sm:p-5" data-testid="profile-contact-info">
             {info.map(([I, l, v]) => <div key={l} className="flex items-center gap-2.5 sm:gap-3 text-sm min-w-0"><I size={15} className="text-sub shrink-0" /><span className="w-24 sm:w-28 shrink-0 text-sub">{l}</span><span className="min-w-0 flex-1 truncate font-medium">{v}</span></div>)}
-            {mgr && <button onClick={() => navigate(`/people/${mgr.user_id}`)} className="flex w-full min-w-0 items-center gap-3 rounded-xl bg-surface2 p-2 text-left text-sm"><Avatar user={mgr} size={28} showStatus={false} /><span className="min-w-0"><span className="block text-[11px] text-sub">Melapor ke</span><span className="block truncate font-semibold">{mgr.name}</span></span></button>}
+            {mgr && <button onClick={() => navigate(`/people/${mgr.user_id}`)} className="flex w-full min-w-0 items-center gap-3 rounded-xl bg-surface2 p-2 text-left text-sm"><Avatar user={mgr} size={28} showStatus={false} /><span className="min-w-0"><span className="block text-[11px] text-sub">{tr("profile_reports_to", "Melapor ke")}</span><span className="block truncate font-semibold">{mgr.name}</span></span></button>}
             {(ws.profile_fields || [])
               .filter((cf) => canSeeField(cf.visibility) && (p.custom?.[cf.key] ?? p.custom_fields?.[cf.key]) !== undefined && (p.custom?.[cf.key] ?? p.custom_fields?.[cf.key]) !== "")
               .map((cf) => {
@@ -782,16 +783,16 @@ export default function Profile() {
           <div className="mb-4 flex flex-wrap items-center justify-between gap-2.5">
             <div className="flex items-center gap-2">
               <Newspaper size={16} className="text-brand shrink-0" />
-              <h3 className="text-sm font-bold text-ink">Riwayat Aktivitas Feed</h3>
+              <h3 className="text-sm font-bold text-ink">{tr("profile_feed_title", "Riwayat Aktivitas Feed")}</h3>
               <span className="rounded-full bg-surface2 px-2 py-0.5 text-[11px] font-semibold text-sub">
                 {feedHistory.length}
               </span>
             </div>
             <div className="inline-flex items-center rounded-xl bg-surface2 p-0.5 text-xs font-semibold" data-testid="profile-feed-tabs">
               {[
-                { key: "all", label: `Semua (${feedHistory.length})` },
-                { key: "posts", label: `Postingan (${postItems.length})` },
-                { key: "replies", label: `Balasan (${replyItems.length})` },
+                { key: "all", label: `${tr("profile_feed_tab_all", "Semua")} (${feedHistory.length})` },
+                { key: "posts", label: `${tr("profile_feed_tab_posts", "Postingan")} (${postItems.length})` },
+                { key: "replies", label: `${tr("profile_feed_tab_replies", "Balasan")} (${replyItems.length})` },
               ].map((tab) => (
                 <button
                   key={tab.key}
@@ -812,7 +813,7 @@ export default function Profile() {
 
           {feedLoading ? (
             <div className="py-10 flex justify-center">
-              <Spinner label="Memuat riwayat feed" />
+              <Spinner label={tr("profile_feed_loading", "Memuat riwayat feed")} />
             </div>
           ) : filteredFeed.length > 0 ? (
             <div className="space-y-2.5">
@@ -851,7 +852,7 @@ export default function Profile() {
                           }`}
                         >
                           {isReply ? <CornerDownRight size={11} /> : <Newspaper size={11} />}
-                          {isReply ? "Balasan" : "Postingan"}
+                          {isReply ? tr("profile_feed_tab_replies", "Balasan") : tr("profile_feed_tab_posts", "Postingan")}
                         </span>
                         {item.topic && (
                           <span className="inline-flex items-center gap-0.5 rounded-full bg-surface px-2 py-0.5 text-[10.5px] font-semibold text-sub border border-slate-200/70 dark:border-slate-700/70">
@@ -869,7 +870,7 @@ export default function Profile() {
                     {isReply && item.parent_post && (
                       <div className="mt-2 flex items-start gap-2 rounded-xl border-l-2 border-brand/50 bg-surface/80 px-2.5 py-1.5 text-xs text-sub">
                         <span className="min-w-0 line-clamp-1">
-                          Membalas{" "}
+                          {tr("profile_feed_reply_prefix", "Membalas")}{" "}
                           {item.parent_post.author_id ? (
                             <Link
                               to={`/people/${item.parent_post.author_id}`}
@@ -895,7 +896,7 @@ export default function Profile() {
                     {item.poll?.question && (
                       <div className="mt-2 inline-flex items-center gap-1.5 rounded-xl bg-soft-purple px-2.5 py-1 text-xs font-medium text-ink">
                         <BarChart3 size={13} className="text-purple-600 dark:text-purple-300 shrink-0" />
-                        <span className="truncate max-w-xs">Polling: {item.poll.question}</span>
+                        <span className="truncate max-w-xs">{tr("profile_feed_poll_prefix", "Polling:")} {item.poll.question}</span>
                       </div>
                     )}
 
@@ -913,7 +914,7 @@ export default function Profile() {
                       {attachmentCount > 0 && (
                         <span className="inline-flex items-center gap-1">
                           <Paperclip size={12} />
-                          {attachmentCount} lampiran
+                          {attachmentCount} {tr("profile_feed_attachments_unit", "lampiran")}
                         </span>
                       )}
                     </div>
@@ -925,13 +926,13 @@ export default function Profile() {
             <div className="rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 py-10 px-4 text-center">
               <p className="text-sm font-semibold text-ink">
                 {feedTab === "posts"
-                  ? "Belum ada postingan di Beranda."
+                  ? tr("profile_feed_empty_posts", "Belum ada postingan di Beranda.")
                   : feedTab === "replies"
-                  ? "Belum ada balasan di Beranda."
-                  : "Belum ada aktivitas di Feed Beranda."}
+                  ? tr("profile_feed_empty_replies", "Belum ada balasan di Beranda.")
+                  : tr("profile_feed_empty_all", "Belum ada aktivitas di Feed Beranda.")}
               </p>
               <p className="mt-1 text-xs text-sub">
-                Semua postingan dan balasan yang dikirim ke Beranda akan tercatat di sini.
+                {tr("profile_feed_empty_desc", "Semua postingan dan balasan yang dikirim ke Beranda akan tercatat di sini.")}
               </p>
             </div>
           )}
