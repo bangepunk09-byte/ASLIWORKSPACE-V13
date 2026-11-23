@@ -102,6 +102,10 @@ export function applyTheme(t) {
     root.style.setProperty("--chip-radius", `${Math.max(6, baseRadius - 4)}px`);
     root.style.setProperty("--card-radius", `${baseRadius + 6}px`);
   }
+
+  const headerColor = t.tokens?.surface || (t.mode === "dark" ? "#171E2E" : "#FFFFFF");
+  const themeMetaTags = document.querySelectorAll('meta[name="theme-color"]');
+  themeMetaTags.forEach((tag) => tag.setAttribute("content", headerColor));
 }
 
 function lum(hex) {

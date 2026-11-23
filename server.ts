@@ -8325,15 +8325,17 @@ async function startServer() {
     res.json(g);
   });
 
-  // Team Stats Endpoint for MonthlyStats / TeamPerformance (scoped per division board)
-  app.get("/api/stats/team", (req, res) => {
-    const reqUser = getReqUser(req) || currentSessionUser;
+  // Team Stats helper + Endpoint for MonthlyStats / TeamPerformance (scoped per division board)
+  function computeTeamStatsForUser(
+    reqUser: any,
+    opts: { range?: string; anchor?: string; board_id?: string; department?: string } = {}
+  ) {
     const isSuper = reqUser?.role === "super_admin" || reqUser?.role === "workspace_admin";
     const userDept = String(reqUser?.department || "").trim().toLowerCase();
-    const range = (req.query.range as string) || "7d";
+    const range = opts.range || "7d";
     const now = new Date();
     const todayStr = now.toISOString().slice(0, 10);
-    const anchor = (req.query.anchor as string) || todayStr;
+    const anchor = opts.anchor || todayStr;
 
     const isCollabBoard = (b: any) => {
       if (!b) return false;
@@ -8392,8 +8394,8 @@ async function startServer() {
       return 0;
     });
 
-    const requestedBoardId = String(req.query.board_id || "").trim();
-    const requestedDept = String(req.query.department || "").trim().toLowerCase();
+    const requestedBoardId = String(opts.board_id || "").trim();
+    const requestedDept = String(opts.department || "").trim().toLowerCase();
 
     let scopeMode: "board" | "all" = "board";
     let targetBoard: any = null;
@@ -8620,7 +8622,7 @@ async function startServer() {
       task_count: allDbTasks.filter((t: any) => !t.archived && taskMatchesBoard(t, b)).length
     }));
 
-    res.json({
+    return {
       scope: {
         mode: scopeMode,
         board_id: scopeMode === "all" ? "all" : (targetBoard?.id || ""),
@@ -8649,7 +8651,19 @@ async function startServer() {
       week,
       series,
       people
-    });
+    };
+  }
+
+  app.get("/api/stats/team", (req, res) => {
+    const reqUser = getReqUser(req) || currentSessionUser;
+    res.json(
+      computeTeamStatsForUser(reqUser, {
+        range: (req.query.range as string) || "7d",
+        anchor: req.query.anchor as string,
+        board_id: req.query.board_id as string,
+        department: req.query.department as string,
+      })
+    );
   });
 
   // Activity & Reminders Endpoints for Dashboard
@@ -10297,6 +10311,32 @@ async function startServer() {
       .slice(0, 25)
       .map((p: any) => hydratePostForUser(p, uid, true));
 
+    const deletedMeetingIds = new Set(Array.isArray(db.deleted_meeting_ids) ? db.deleted_meeting_ids : []);
+    const deletedGcalIds = new Set(Array.isArray(db.deleted_gcal_ids) ? db.deleted_gcal_ids : []);
+    const deletedMeetingKeys = new Set(Array.isArray(db.deleted_meeting_keys) ? db.deleted_meeting_keys : []);
+    const seenMeetingKeys = new Set<string>();
+    const activeMeetings = (db.meetings || [])
+      .filter((m: any) => {
+        if (!m || !m.id) return false;
+        const gcalId = String(m.gcal_event_id || (String(m.id).startsWith("gcal_") ? String(m.id).replace(/^gcal_/, "") : ""));
+        const key = makeMeetingKey(m);
+        if (deletedMeetingIds.has(m.id) || (gcalId && deletedGcalIds.has(gcalId)) || deletedMeetingKeys.has(key)) {
+          return false;
+        }
+        if (seenMeetingKeys.has(key)) return false;
+        seenMeetingKeys.add(key);
+        return true;
+      })
+      .sort((a: any, b: any) => new Date(`${a.date}T${a.start_time}`).getTime() - new Date(`${b.date}T${b.start_time}`).getTime());
+
+    const userNotes = (Array.isArray(db.circle_notes) ? db.circle_notes : [])
+      .filter((n: any) => n && n.user_id === uid)
+      .map(normalizeStickyNote)
+      .sort((a: any, b: any) => {
+        if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1;
+        return String(b.updated_at || b.created_at || "").localeCompare(String(a.updated_at || a.created_at || ""));
+      });
+
     res.json({
       rev,
       workspace: db.workspace,
@@ -10312,6 +10352,10 @@ async function startServer() {
       posts: topPosts,
       trending: computeTrendingTags(),
       groups: buildGroupsBrowseList(reqUser),
+      meetings: activeMeetings,
+      notes: userNotes,
+      projects: Array.isArray(db.projects) ? db.projects : [],
+      stats_team: computeTeamStatsForUser(reqUser, { range: "7d" }),
     });
   });
 

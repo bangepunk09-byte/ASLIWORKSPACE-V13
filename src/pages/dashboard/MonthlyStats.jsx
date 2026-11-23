@@ -55,7 +55,172 @@ function makeStatsCacheKey(userId, boardScopeKey, rRange) {
   return `${userId || "anon"}::${boardScopeKey || "default"}::${rRange}`;
 }
 
-function getCachedStats(userId, boardScopeKey, rRange) {
+export function hydrateTeamStatsCache(userId, statsData, boardScopeKey = "default", rRange = "7d") {
+  if (!isValidStats(statsData)) return;
+  const key = makeStatsCacheKey(userId, boardScopeKey, rRange);
+  statsMemoryCache[key] = statsData;
+  try {
+    localStorage.setItem(`circle_stats_team_v2_cache_${key}`, JSON.stringify(statsData));
+  } catch {}
+  if (statsData.scope?.board_id && statsData.scope.board_id !== boardScopeKey) {
+    const altKey = makeStatsCacheKey(userId, statsData.scope.board_id, rRange);
+    statsMemoryCache[altKey] = statsData;
+    try {
+      localStorage.setItem(`circle_stats_team_v2_cache_${altKey}`, JSON.stringify(statsData));
+    } catch {}
+  }
+}
+
+function computeInstantClientStats(tasks = [], users = [], me = null, rRange = "7d") {
+  const safeTasks = Array.isArray(tasks) ? tasks : [];
+  const safeUsers = Array.isArray(users) ? users.filter((u) => u && !u.is_bot && u.role !== "assistant" && u.user_id !== "user_circle_assistant") : [];
+  const isSuper = me?.role === "super_admin" || me?.role === "workspace_admin";
+  const myDept = String(me?.department || "Marketing").trim();
+  const myDeptLower = myDept.toLowerCase();
+
+  let targetDept = myDept;
+  let scopedTasks = safeTasks.filter((t) => String(t?.department || "").trim().toLowerCase() === myDeptLower);
+  if (scopedTasks.length === 0 && isSuper && safeTasks.length > 0) {
+    const firstWithDept = safeTasks.find((t) => t?.department && String(t.department).trim().toLowerCase() !== "semua divisi");
+    if (firstWithDept?.department) {
+      targetDept = String(firstWithDept.department).trim();
+      const tdLower = targetDept.toLowerCase();
+      scopedTasks = safeTasks.filter((t) => String(t?.department || "").trim().toLowerCase() === tdLower);
+    } else {
+      scopedTasks = safeTasks;
+    }
+  }
+
+  const targetDeptLower = targetDept.toLowerCase();
+  const assignedIds = new Set();
+  scopedTasks.forEach((t) => {
+    if (t?.assignee_id) assignedIds.add(t.assignee_id);
+    if (Array.isArray(t?.assignee_ids)) t.assignee_ids.forEach((id) => id && assignedIds.add(id));
+  });
+
+  const scopedUsers = safeUsers.filter((u) => {
+    const ud = String(u.department || "").trim().toLowerCase();
+    return ud === targetDeptLower || assignedIds.has(u.user_id);
+  });
+  const finalUsers = scopedUsers.length > 0 ? scopedUsers : safeUsers;
+
+  const nowMs = Date.now();
+  const WIB_OFFSET_MS = 7 * 3600000;
+  const wibNow = new Date(nowMs + WIB_OFFSET_MS);
+  const wibTodayStr = wibNow.toISOString().slice(0, 10);
+
+  let week = [];
+  if (rRange === "4w") {
+    week = Array.from({ length: 30 }, (_, i) => new Date(wibNow.getTime() - (29 - i) * 86400000).toISOString().slice(0, 10));
+  } else {
+    const dayOfWeek = (wibNow.getUTCDay() + 6) % 7;
+    const mondayMs = wibNow.getTime() - dayOfWeek * 86400000;
+    week = Array.from({ length: 7 }, (_, i) => new Date(mondayMs + i * 86400000).toISOString().slice(0, 10));
+  }
+
+  const parseDlMs = (val) => {
+    if (!val) return null;
+    const s = String(val).trim();
+    if (!s) return null;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+      const d = new Date(`${s}T23:59:59.999+07:00`);
+      return isNaN(d.getTime()) ? null : d.getTime();
+    }
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? null : d.getTime();
+  };
+
+  let doneOnTime = 0;
+  let doneLate = 0;
+  let activeOverdue = 0;
+  let activeOnTrack = 0;
+
+  scopedTasks.forEach((t) => {
+    if (!t) return;
+    const isDone = t.status === "done" || Boolean(t.archived);
+    const dlMs = parseDlMs(t.deadline);
+    if (isDone) {
+      const compRaw = t.completed_at || t.submit_date || t.updated_at || t.created_at;
+      const compMs = compRaw ? new Date(compRaw).getTime() : nowMs;
+      if (dlMs !== null && !isNaN(compMs) && compMs > dlMs) doneLate += 1;
+      else doneOnTime += 1;
+    } else {
+      if (dlMs !== null && nowMs > dlMs) activeOverdue += 1;
+      else activeOnTrack += 1;
+    }
+  });
+
+  const doneCount = doneOnTime + doneLate;
+  const activeCount = activeOverdue + activeOnTrack;
+  const dueCount = doneCount + activeOverdue;
+  const onTimeRate = dueCount > 0 ? Math.round((doneOnTime / dueCount) * 100) : 0;
+
+  const series = week.map((d, idx) => ({
+    start: d,
+    name: rRange === "4w" ? d.slice(5) : (WD_FULL[idx] || d.slice(5)),
+    done: 0,
+    Selesai: 0,
+    overdue: 0,
+    Overdue: 0,
+  }));
+
+  const activeScopedTasks = scopedTasks.filter((t) => t && !t.archived && t.status !== "done");
+  const totalActiveLoad = activeScopedTasks.length || 1;
+
+  const people = finalUsers.map((u) => {
+    const myActive = activeScopedTasks.filter(
+      (t) => t.assignee_id === u.user_id || (Array.isArray(t.assignee_ids) && t.assignee_ids.includes(u.user_id))
+    );
+    const myOverdue = myActive.filter((t) => {
+      const dl = parseDlMs(t.deadline);
+      return dl !== null && nowMs > dl;
+    });
+    const status = myOverdue.length > 0 || myActive.length >= 6 ? "pressure" : myActive.length >= 3 ? "stabil" : "optimal";
+    return {
+      user_id: u.user_id,
+      status,
+      status_reason: myOverdue.length > 0 ? `${myOverdue.length} tugas lewat deadline` : "",
+      active: myActive.length,
+      share: activeScopedTasks.length > 0 ? Math.round((myActive.length / totalActiveLoad) * 100) : 0,
+      day_deadlines: 0,
+      tasks: myActive.slice(0, 3).map((t) => ({ id: t.id, title: t.title })),
+      more: Math.max(0, myActive.length - 3),
+    };
+  });
+
+  return {
+    scope: {
+      mode: "board",
+      board_id: `brd_div_${targetDeptLower}`,
+      board_name: targetDept,
+      department: targetDept,
+      color: "#FF5364",
+      is_admin: isSuper,
+      total_tasks: scopedTasks.length,
+    },
+    available_scopes: [],
+    today: wibTodayStr,
+    anchor: wibTodayStr,
+    range: rRange,
+    summary: {
+      done: doneCount,
+      done_on_time: doneOnTime,
+      done_late: doneLate,
+      overdue: activeOverdue,
+      active_on_track: activeOnTrack,
+      active: activeCount,
+      total: scopedTasks.length,
+      on_time_rate: onTimeRate,
+      due: dueCount,
+      on_time: doneOnTime,
+    },
+    week,
+    series,
+    people: people.length > 0 ? people : FALLBACK_PEOPLE,
+  };
+}
+
+function getCachedStats(userId, boardScopeKey, rRange, fallbackTasks = [], fallbackUsers = [], me = null) {
   const key = makeStatsCacheKey(userId, boardScopeKey, rRange);
   if (isValidStats(statsMemoryCache[key])) return statsMemoryCache[key];
   try {
@@ -68,6 +233,9 @@ function getCachedStats(userId, boardScopeKey, rRange) {
       }
     }
   } catch {}
+  if (Array.isArray(fallbackTasks) && fallbackTasks.length > 0) {
+    return computeInstantClientStats(fallbackTasks, fallbackUsers, me, rRange);
+  }
   return INITIAL_DATA;
 }
 
@@ -114,10 +282,10 @@ function TeamChart({ data, type }) {
   const common = { data: rows, margin: { top: 10, right: 12, left: -18, bottom: 0 } };
   const axes = [<CartesianGrid key="g" strokeDasharray="3 6" vertical={false} stroke="var(--c-border, #E5E7EB)" />, <XAxis key="x" dataKey="name" tickLine={false} axisLine={false} tick={{ fontSize: 12, fill: "var(--c-sub, #7A8194)" }} />, <YAxis key="y" allowDecimals={false} tickLine={false} axisLine={false} tick={{ fontSize: 12, fill: "var(--c-sub, #7A8194)" }} />, <Tooltip key="t" cursor={{ fill: "rgba(0,0,0,0.04)" }} contentStyle={{ borderRadius: 12, border: "1px solid #E5E7EB", fontSize: 12 }} />];
   return (
-    <div className="h-64 sm:h-72 min-h-[260px] w-full transition-all duration-300" data-testid="team-chart">
-      <ResponsiveContainer width="100%" height={260} debounce={50}>
-        {type === "line" ? <LineChart {...common}>{axes}<Line type="monotone" dataKey="Selesai" stroke={GREEN} strokeWidth={3} dot={{ r: safeData.range === "4w" ? 2 : 3 }} isAnimationActive={true} animationDuration={300} /><Line type="monotone" dataKey="Overdue" stroke={RED} strokeWidth={3} dot={{ r: safeData.range === "4w" ? 2 : 3 }} isAnimationActive={true} animationDuration={300} /></LineChart>
-          : <BarChart {...common}>{axes}<Bar dataKey="Selesai" fill={GREEN} radius={[6, 6, 0, 0]} maxBarSize={safeData.range === "4w" ? 14 : 28} isAnimationActive={true} animationDuration={300} /><Bar dataKey="Overdue" fill={RED} radius={[6, 6, 0, 0]} maxBarSize={safeData.range === "4w" ? 14 : 28} isAnimationActive={true} animationDuration={300} /></BarChart>}
+    <div className="h-64 sm:h-72 min-h-[260px] w-full" data-testid="team-chart">
+      <ResponsiveContainer width="100%" height={260} debounce={0}>
+        {type === "line" ? <LineChart {...common}>{axes}<Line type="monotone" dataKey="Selesai" stroke={GREEN} strokeWidth={3} dot={{ r: safeData.range === "4w" ? 2 : 3 }} isAnimationActive={false} /><Line type="monotone" dataKey="Overdue" stroke={RED} strokeWidth={3} dot={{ r: safeData.range === "4w" ? 2 : 3 }} isAnimationActive={false} /></LineChart>
+          : <BarChart {...common}>{axes}<Bar dataKey="Selesai" fill={GREEN} radius={[6, 6, 0, 0]} maxBarSize={safeData.range === "4w" ? 14 : 28} isAnimationActive={false} /><Bar dataKey="Overdue" fill={RED} radius={[6, 6, 0, 0]} maxBarSize={safeData.range === "4w" ? 14 : 28} isAnimationActive={false} /></BarChart>}
       </ResponsiveContainer>
     </div>
   );
@@ -672,23 +840,32 @@ function BottleneckSummary({ tasks = [], projectsMap = {}, scope, scopeLabel, av
 }
 
 export default function MonthlyStats({ showPerformance = true, showBottleneck = true, showPersonnel = true, tasks = [], onOpenTask }) {
-  const { subscribe, me, isAdmin } = useApp();
+  const { subscribe, me, users, isAdmin } = useApp();
   const [anchor, setAnchor] = useState(null);
   const [range, setRange] = useState("7d");
   const [selectedBoardId, setSelectedBoardId] = useState("");
-  const [data, setData] = useState(() => getCachedStats(me?.user_id, "default", "7d"));
-  const [projectsMap, setProjectsMap] = useState({});
+  const [data, setData] = useState(() => getCachedStats(me?.user_id, "default", "7d", tasks, users, me));
+  const [projectsMap, setProjectsMap] = useState(() => {
+    try {
+      const saved = localStorage.getItem("circle_cache_projects");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return Object.fromEntries(parsed.map((p) => [p.id, p]));
+      }
+    } catch {}
+    return {};
+  });
 
   useEffect(() => {
     setSelectedBoardId("");
-    setData(getCachedStats(me?.user_id, "default", range));
+    setData(getCachedStats(me?.user_id, "default", range, tasks, users, me));
   }, [me?.user_id]);
 
   const load = useCallback((targetRange, targetBoardId) => {
     const r = targetRange || range;
     const bId = targetBoardId !== undefined ? targetBoardId : selectedBoardId;
     const scopeKey = bId || "default";
-    const cached = getCachedStats(me?.user_id, scopeKey, r);
+    const cached = getCachedStats(me?.user_id, scopeKey, r, tasks, users, me);
     if (cached) setData(cached);
 
     api.get("/stats/team", {
@@ -700,16 +877,12 @@ export default function MonthlyStats({ showPerformance = true, showBottleneck = 
     })
       .then((res) => {
         if (isValidStats(res.data)) {
-          const cacheKey = makeStatsCacheKey(me?.user_id, scopeKey, r);
-          statsMemoryCache[cacheKey] = res.data;
+          hydrateTeamStatsCache(me?.user_id, res.data, scopeKey, r);
           setData(res.data);
-          try {
-            localStorage.setItem(`circle_stats_team_v2_cache_${cacheKey}`, JSON.stringify(res.data));
-          } catch {}
         }
       })
       .catch(() => {});
-  }, [anchor, range, selectedBoardId, me?.user_id]);
+  }, [anchor, range, selectedBoardId, me?.user_id, tasks, users, me]);
 
   useEffect(() => {
     load(range, selectedBoardId);
@@ -717,10 +890,12 @@ export default function MonthlyStats({ showPerformance = true, showBottleneck = 
 
   useEffect(() => {
     if (!showBottleneck) return;
+    if (Object.keys(projectsMap).length > 0) return;
     api.get("/projects")
       .then((res) => {
         if (Array.isArray(res.data)) {
           setProjectsMap(Object.fromEntries(res.data.map((p) => [p.id, p])));
+          try { localStorage.setItem("circle_cache_projects", JSON.stringify(res.data)); } catch {}
         }
       })
       .catch(() => {});
@@ -728,11 +903,21 @@ export default function MonthlyStats({ showPerformance = true, showBottleneck = 
 
   useEffect(() => {
     return subscribe((evt) => {
+      if (evt.type === "bootstrap:dashboard") {
+        if (isValidStats(evt.stats_team) && !selectedBoardId && range === "7d") {
+          hydrateTeamStatsCache(me?.user_id, evt.stats_team, "default", "7d");
+          setData(evt.stats_team);
+        }
+        if (Array.isArray(evt.projects)) {
+          setProjectsMap(Object.fromEntries(evt.projects.map((p) => [p.id, p])));
+        }
+        return;
+      }
       if (evt.type === "tasks:changed" || evt.type === "tasks:deleted" || evt.type === "users:changed" || evt.type === "boards:changed") {
         load(range, selectedBoardId);
       }
     });
-  }, [subscribe, load, range, selectedBoardId]);
+  }, [subscribe, load, range, selectedBoardId, me?.user_id]);
 
   if (!showPerformance && !showBottleneck && !showPersonnel) return null;
 

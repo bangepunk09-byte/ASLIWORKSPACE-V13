@@ -160,6 +160,12 @@ export default function StickyNotesWidget({ densityStyles }) {
 
   useEffect(() => {
     return subscribe((evt) => {
+      if (evt.type === "bootstrap:dashboard") {
+        if (Array.isArray(evt.notes)) {
+          commitNotes(evt.notes);
+        }
+        return;
+      }
       if (evt.type !== "notes:changed") return;
       if (evt.user_id && uid && evt.user_id !== uid) return;
       if (evt.action === "delete" && evt.deleted_id) {

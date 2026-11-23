@@ -25,6 +25,7 @@ import { googleBasicSignIn } from "../lib/auth";
 import { prefetchMarketplaceState, reconcileMarketplaceEnabledCache } from "../pages/marketplace/marketplaceStore";
 import { setTopQuickActionNotifActive } from "../lib/sonnerCompat";
 import { hasTopNotifQuickAction } from "../components/TopNotificationPopup";
+import { hydrateTeamStatsCache } from "../pages/dashboard/MonthlyStats";
 
 const AppCtx = createContext(null);
 export const useApp = () => useContext(AppCtx);
@@ -385,6 +386,36 @@ export function AppProvider({ children }) {
         if (Array.isArray(bootData.groups)) {
           hydrateGroupsCache(bootData.groups, currentUid);
         }
+        if (Array.isArray(bootData.meetings)) {
+          try {
+            localStorage.setItem(`circle_meetings_cache_${currentUid}`, JSON.stringify(bootData.meetings));
+            localStorage.setItem("circle_meetings_cache", JSON.stringify(bootData.meetings));
+          } catch {}
+        }
+        if (Array.isArray(bootData.notes)) {
+          try {
+            localStorage.setItem(`circle_sticky_notes_v1_${currentUid}`, JSON.stringify(bootData.notes));
+            localStorage.setItem("circle_sticky_notes_v1", JSON.stringify(bootData.notes));
+          } catch {}
+        }
+        if (Array.isArray(bootData.projects)) {
+          try {
+            localStorage.setItem("circle_projects_cache", JSON.stringify(bootData.projects));
+          } catch {}
+        }
+        if (bootData.stats_team && typeof bootData.stats_team === "object") {
+          hydrateTeamStatsCache(currentUid, bootData.stats_team, "all", "7d");
+        }
+        subs.current.forEach((fn) =>
+          fn({
+            type: "bootstrap:dashboard",
+            meetings: bootData.meetings,
+            notes: bootData.notes,
+            projects: bootData.projects,
+            stats_team: bootData.stats_team,
+            drive_shortcuts: bootData.drive_shortcuts,
+          })
+        );
         lastLoadAllAtRef.current = Date.now();
       } finally {
         loadAllInFlightRef.current = null;

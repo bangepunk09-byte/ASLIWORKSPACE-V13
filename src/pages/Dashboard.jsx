@@ -43,7 +43,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "
 import BackgroundEditor from "./settings/BackgroundEditor";
 import TaskCreate from "./tasks/TaskCreate";
 import TaskDetail from "./tasks/TaskDetail";
-const MonthlyStats = lazy(() => import("./dashboard/MonthlyStats"));
+import MonthlyStats from "./dashboard/MonthlyStats";
 import { playSound } from "../lib/sound";
 
 const DEFAULT_WIDGET_CONFIG = {
@@ -232,6 +232,17 @@ export default function Dashboard() {
   useEffect(
     () =>
       subscribe((evt) => {
+        if (evt.type === "bootstrap:dashboard") {
+          if (Array.isArray(evt.meetings)) {
+            setMeetings(evt.meetings);
+            try { localStorage.setItem("circle_cache_meetings", JSON.stringify(evt.meetings)); } catch {}
+          }
+          if (Array.isArray(evt.drive_shortcuts)) {
+            setDriveShortcuts(evt.drive_shortcuts);
+            setCachedDriveShortcuts(evt.drive_shortcuts);
+          }
+          return;
+        }
         if (evt.type === "drive_shortcuts:changed" && Array.isArray(evt.data)) {
           setDriveShortcuts(evt.data);
           setCachedDriveShortcuts(evt.data);
@@ -708,19 +719,13 @@ export default function Dashboard() {
         {/* ============================================================ */}
         {(widgetLayout.visible.performance !== false || widgetLayout.visible.bottleneck !== false || widgetLayout.visible.personnel !== false) && (
           <div className="w-full min-w-0">
-            <Suspense
-              fallback={
-                <div className="h-[220px] w-full animate-pulse rounded-3xl border border-slate-200/70 bg-surface/60 dark:border-slate-800/70" />
-              }
-            >
-              <MonthlyStats
-                showPerformance={widgetLayout.visible.performance !== false}
-                showBottleneck={widgetLayout.visible.bottleneck !== false}
-                showPersonnel={widgetLayout.visible.personnel !== false}
-                tasks={tasks}
-                onOpenTask={setSelectedTaskId}
-              />
-            </Suspense>
+            <MonthlyStats
+              showPerformance={widgetLayout.visible.performance !== false}
+              showBottleneck={widgetLayout.visible.bottleneck !== false}
+              showPersonnel={widgetLayout.visible.personnel !== false}
+              tasks={tasks}
+              onOpenTask={setSelectedTaskId}
+            />
           </div>
         )}
 

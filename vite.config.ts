@@ -26,7 +26,7 @@ export default defineConfig(() => {
           short_name: 'CIRCLE',
           description:
             'Enterprise collaboration portal with Google Auth, Calendar, and Drive integration.',
-          theme_color: '#FF5364',
+          theme_color: '#ffffff',
           background_color: '#ffffff',
           display: 'standalone',
           orientation: 'portrait-primary',

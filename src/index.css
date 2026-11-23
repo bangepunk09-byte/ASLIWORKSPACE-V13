@@ -37,6 +37,12 @@ body {
   -webkit-overflow-scrolling: touch;
   touch-action: pan-y;
 }
+@media (max-width: 767px) {
+  html, body {
+    background: var(--c-surface) !important;
+    background-color: var(--c-surface) !important;
+  }
+}
 /* Prevent descender clipping (g, j, p, q, y, parentheses) inside overflow:hidden text while keeping 100% symmetrical vertical centering */
 .truncate,
 .line-clamp-1,

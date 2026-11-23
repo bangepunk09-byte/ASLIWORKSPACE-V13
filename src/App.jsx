@@ -7,9 +7,9 @@ import Shell from "./components/Shell";
 import { Spinner } from "./components/common";
 import { NotificationList } from "./components/NotificationPanel";
 import { routeLoaders } from "./lib/routePreload";
+import Dashboard from "./pages/Dashboard";
 
 const Login = lazy(routeLoaders["/login"]);
-const Dashboard = lazy(routeLoaders["/"]);
 const Messages = lazy(routeLoaders["/messages"]);
 const Groups = lazy(routeLoaders["/groups"]);
 const Directory = lazy(routeLoaders["/directory"]);

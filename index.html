@@ -67,7 +67,7 @@
       })();
     </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <meta name="theme-color" content="#FF5364" />
+    <meta name="theme-color" content="#FFFFFF" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
@@ -102,11 +102,16 @@
           var p = JSON.parse(localStorage.getItem("circle_user_prefs") || "{}");
           var m = p.theme_mode;
           var dark = m === "dark" || (m === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+          var modeKey = dark ? "dark" : "light";
+          var customSurface = p.theme && p.theme[modeKey] && p.theme[modeKey].surface;
+          var headerColor = customSurface || (dark ? "#171E2E" : "#FFFFFF");
           if (dark) {
             document.documentElement.classList.add("dark");
           } else {
             document.documentElement.classList.remove("dark");
           }
+          var metaTheme = document.querySelector('meta[name="theme-color"]');
+          if (metaTheme) metaTheme.setAttribute("content", headerColor);
         } catch (e) {}
       })();
     </script>

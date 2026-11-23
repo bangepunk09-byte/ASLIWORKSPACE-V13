@@ -403,9 +403,9 @@ function MobileNav({ openSearch }) {
 
   return (
     <>
-      {/* Mobile Top App Bar (48px height, clean 3-zone structure) */}
+      {/* Mobile Top App Bar (48px height, clean 3-zone structure, unified surface color with status bar) */}
       <header
-        className="md:hidden shrink-0 z-30 flex min-h-12 w-full max-w-full items-center justify-between gap-2 border-b border-slate-200/80 dark:border-slate-800/80 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md px-3 pt-safe select-none"
+        className="md:hidden shrink-0 z-30 flex min-h-12 w-full max-w-full items-center justify-between gap-2 border-b border-slate-200/80 dark:border-slate-800/80 bg-surface px-3 pt-safe select-none"
         data-testid="mobile-header"
       >
         <button
@@ -711,12 +711,13 @@ export default function Shell() {
     <>
       <TopNotificationPopup notif={topNotif} onClose={closeTopNotif} />
       <OfflineIndicator />
-      <div className="fixed inset-0 flex h-[100dvh] max-h-[100dvh] w-full max-w-[100vw] bg-background overflow-hidden overscroll-none print:static print:h-auto print:max-h-none print:overflow-visible">
+      <div aria-hidden="true" className="md:hidden fixed inset-x-0 top-0 z-50 h-[env(safe-area-inset-top,0px)] bg-surface pointer-events-none" />
+      <div className="fixed inset-0 flex h-[100dvh] max-h-[100dvh] w-full max-w-[100vw] bg-surface md:bg-background overflow-hidden overscroll-none print:static print:h-auto print:max-h-none print:overflow-visible">
         <Sidebar compact={compact} setCompact={setCompact} openSearch={() => setSearch(true)} />
         <div className={`flex h-full max-h-[100dvh] min-w-0 flex-1 flex-col overflow-hidden transition-[margin] duration-200 ${compact ? "md:ml-[76px]" : "md:ml-[248px]"} md:mr-[60px] print:!ml-0 print:!mr-0 print:h-auto print:max-h-none print:overflow-visible`}>
           {!chatOpen && <MobileNav openSearch={() => setSearch(true)} />}
           <main
-            className={`min-w-0 min-h-0 flex-1 w-full max-w-full overflow-x-hidden overscroll-y-contain ${
+            className={`min-w-0 min-h-0 flex-1 w-full max-w-full bg-background overflow-x-hidden overscroll-y-contain ${
               chatOpen || isMessagesRoot
                 ? "overflow-hidden"
                 : "overflow-y-auto pb-[calc(3.75rem+env(safe-area-inset-bottom))] md:pb-0"
