@@ -260,6 +260,71 @@ export function playSound(type = "click") {
         break;
       }
 
+      case "keyboard": {
+        // Tactile mechanical keystroke click with subtle pitch variation
+        const jitter = 0.94 + Math.random() * 0.12;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "triangle";
+        osc.frequency.setValueAtTime(920 * jitter, now);
+        osc.frequency.exponentialRampToValueAtTime(240 * jitter, now + 0.024);
+        gain.gain.setValueAtTime(0.055, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.028);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.032);
+        break;
+      }
+
+      case "key_space": {
+        // Deeper, fuller thock for Spacebar
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "triangle";
+        osc.frequency.setValueAtTime(520, now);
+        osc.frequency.exponentialRampToValueAtTime(165, now + 0.034);
+        gain.gain.setValueAtTime(0.068, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.038);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.042);
+        break;
+      }
+
+      case "key_enter": {
+        // Crisp two-stage tactile return key click
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "triangle";
+        osc.frequency.setValueAtTime(640, now);
+        osc.frequency.exponentialRampToValueAtTime(290, now + 0.038);
+        gain.gain.setValueAtTime(0.072, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.044);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.048);
+        break;
+      }
+
+      case "key_delete": {
+        // Soft low tap for Backspace/Delete
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(480, now);
+        osc.frequency.exponentialRampToValueAtTime(190, now + 0.026);
+        gain.gain.setValueAtTime(0.05, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.03);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.034);
+        break;
+      }
+
       case "click":
       default: {
         // Subtle tactile UI tap
@@ -281,3 +346,91 @@ export function playSound(type = "click") {
     console.debug("Audio playback error:", err);
   }
 }
+
+const NON_TEXT_INPUT_TYPES = new Set([
+  "button",
+  "checkbox",
+  "color",
+  "file",
+  "hidden",
+  "image",
+  "radio",
+  "range",
+  "reset",
+  "submit",
+]);
+
+const SILENT_KEYS = new Set([
+  "Shift",
+  "Control",
+  "Alt",
+  "Meta",
+  "CapsLock",
+  "Tab",
+  "Escape",
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "Home",
+  "End",
+  "PageUp",
+  "PageDown",
+  "Insert",
+  "ContextMenu",
+  "NumLock",
+  "ScrollLock",
+  "Pause",
+]);
+
+let lastKeySoundAt = 0;
+
+export function initKeyboardTypingSound() {
+  if (typeof window === "undefined") return;
+  if (window.__circleKeyboardSoundAttached) return;
+  window.__circleKeyboardSoundAttached = true;
+
+  window.addEventListener(
+    "keydown",
+    (e) => {
+      if (!e || e.isComposing) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+      const target = e.target;
+      if (!target || typeof target !== "object") return;
+      const tag = (target.tagName || "").toUpperCase();
+      const isInput =
+        tag === "INPUT" &&
+        !NON_TEXT_INPUT_TYPES.has(String(target.type || "text").toLowerCase()) &&
+        !target.readOnly &&
+        !target.disabled;
+      const isTextarea = tag === "TEXTAREA" && !target.readOnly && !target.disabled;
+      const isEditable = Boolean(target.isContentEditable);
+
+      if (!isInput && !isTextarea && !isEditable) return;
+
+      const key = String(e.key || "");
+      if (!key || SILENT_KEYS.has(key) || /^F\d{1,2}$/.test(key)) return;
+
+      const nowMs = performance.now();
+      if (nowMs - lastKeySoundAt < 22) return;
+      lastKeySoundAt = nowMs;
+
+      if (key === " " || e.code === "Space") {
+        playSound("key_space");
+      } else if (key === "Enter") {
+        playSound("key_enter");
+      } else if (key === "Backspace" || key === "Delete") {
+        playSound("key_delete");
+      } else if (key.length === 1) {
+        playSound("keyboard");
+      }
+    },
+    true
+  );
+}
+
+if (typeof window !== "undefined") {
+  initKeyboardTypingSound();
+}
+

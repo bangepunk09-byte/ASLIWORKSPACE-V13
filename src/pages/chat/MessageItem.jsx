@@ -918,7 +918,27 @@ function MessageItem({ m, mine, grouped, conv, onReply, onCreateTask, readBy }) 
         {Object.keys(localReactions || {}).length > 0 && (
           <div className="mt-1 flex flex-wrap gap-1">{Object.entries(localReactions).map(([e, us]) => <button key={e} onClick={() => react(e)} title={us.map((u) => userMap[u]?.name).join(", ")} className={`rounded-full border px-2 py-0.5 text-xs ${us.includes(me?.user_id) ? "border-[var(--c-accent)] bg-soft-red" : "bg-surface"}`} data-testid={`reaction-${e}`}>{e} {us.length}</button>)}</div>
         )}
-        {isMine && readBy !== undefined && <span className="mt-0.5 flex items-center gap-0.5 text-[10px] text-sub" data-testid="read-receipt">{readBy > 0 ? <><CheckCheck size={12} className="text-blue-500" />{tr("chat_msg_read_label", "Dibaca")}{conv.type === "group" ? ` ${tr("chat_msg_read_by_prefix", "oleh")} ${readBy}` : ""}</> : <><Check size={12} />{tr("chat_msg_sent_label", "Terkirim")}</>}</span>}
+        {isMine && readBy !== undefined && (
+          <span
+            className={`mt-0.5 flex items-center gap-0.5 text-[10px] transition-colors ${
+              readBy > 0 ? "font-semibold text-emerald-600 dark:text-emerald-400" : "text-sub"
+            }`}
+            data-testid="read-receipt"
+          >
+            {readBy > 0 ? (
+              <>
+                <CheckCheck size={12} className="text-emerald-500 dark:text-emerald-400" />
+                {tr("chat_msg_sent_label", "Terkirim")} · {tr("chat_msg_read_label", "Dibaca")}
+                {conv.type === "group" ? ` ${tr("chat_msg_read_by_prefix", "oleh")} ${readBy}` : ""}
+              </>
+            ) : (
+              <>
+                <Check size={12} />
+                {tr("chat_msg_sent_label", "Terkirim")}
+              </>
+            )}
+          </span>
+        )}
       </div>
       <ImageLightbox image={lightboxImg} onClose={() => setLightboxImg(null)} />
     </div>

@@ -32,7 +32,7 @@ const INITIAL_DATA = {
     return d.toISOString().slice(0, 10);
   }),
   range: "7d",
-  summary: { done: 0, overdue: 0, on_time: 0, due: 0, on_time_rate: 100 },
+  summary: { done: 0, done_on_time: 0, done_late: 0, overdue: 0, active_on_track: 0, active: 0, total: 0, on_time: 0, due: 0, on_time_rate: 0 },
   series: [
     { start: "2026-11-02", name: "Senin", done: 0, overdue: 0 },
     { start: "2026-11-03", name: "Selasa", done: 0, overdue: 0 },
@@ -59,7 +59,7 @@ function getCachedStats(userId, boardScopeKey, rRange) {
   const key = makeStatsCacheKey(userId, boardScopeKey, rRange);
   if (isValidStats(statsMemoryCache[key])) return statsMemoryCache[key];
   try {
-    const cached = localStorage.getItem(`circle_stats_team_cache_${key}`);
+    const cached = localStorage.getItem(`circle_stats_team_v2_cache_${key}`);
     if (cached) {
       const parsed = JSON.parse(cached);
       if (isValidStats(parsed)) {
@@ -225,9 +225,59 @@ function TeamPerformance({ data, anchor, setAnchor, range, setRange, scopeLabel,
         </div>
       </div>
       <div className="mt-4 sm:mt-6 grid grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-4 min-w-0">
-        <StatCard tone="green" label={tr("dash_perf_done", "Tugas Selesai")} value={s.done ?? 0} note={s.done ? `${s.done} ${tr("stats_done_unit", "tugas selesai")}` : tr("stats_no_done", "Belum ada selesai")} icon={CheckCircle2} testid="team-stat-done" />
-        <StatCard tone="red" label={tr("dash_perf_overdue", "Overdue")} value={s.overdue ?? 0} note={s.overdue ? `${s.overdue} ${tr("stats_late_unit", "lewat deadline")}` : tr("stats_no_late", "Tidak ada telat")} icon={AlertTriangle} testid="team-stat-overdue" />
-        <StatCard tone="gray" label={tr("dash_perf_ontime", "Ketepatan Waktu")} value={`${s.on_time_rate ?? 0}%`} note={s.due ? `${s.on_time} ${tr("stats_ontime_of", "dari")} ${s.due} ${tr("stats_ontime_suffix", "tugas tepat waktu")}` : tr("stats_no_task_data", "Belum ada data tugas")} icon={Target} testid="team-stat-ontime" className="col-span-2 sm:col-span-1" />
+        <StatCard
+          tone="green"
+          label={tr("dash_perf_done", "Tugas Selesai")}
+          value={s.done ?? 0}
+          note={
+            s.done
+              ? `${s.done} ${tr("stats_done_unit", "tugas selesai")}${
+                  s.done_late > 0
+                    ? ` (${s.done_on_time ?? 0} tepat waktu, ${s.done_late} telat)`
+                    : s.total
+                    ? ` dari ${s.total} tugas`
+                    : ""
+                }`
+              : s.active > 0
+              ? `${tr("stats_no_done", "Belum ada selesai")} · ${s.active} tugas aktif`
+              : tr("stats_no_done", "Belum ada selesai")
+          }
+          icon={CheckCircle2}
+          testid="team-stat-done"
+        />
+        <StatCard
+          tone="red"
+          label={tr("dash_perf_overdue", "Overdue")}
+          value={s.overdue ?? 0}
+          note={
+            s.overdue
+              ? `${s.overdue} ${tr("stats_late_unit", "lewat deadline")}${
+                  s.done_late > 0 ? ` (+${s.done_late} selesai telat)` : ""
+                }`
+              : s.done_late > 0
+              ? `${s.done_late} selesai lewat deadline`
+              : tr("stats_no_late", "Tidak ada telat")
+          }
+          icon={AlertTriangle}
+          testid="team-stat-overdue"
+        />
+        <StatCard
+          tone="gray"
+          label={tr("dash_perf_ontime", "Ketepatan Waktu")}
+          value={`${s.on_time_rate ?? 0}%`}
+          note={
+            s.due > 0
+              ? `${s.on_time ?? 0} ${tr("stats_ontime_of", "dari")} ${s.due} ${tr("stats_ontime_suffix", "tugas tepat waktu")}${
+                  s.active_on_track > 0 ? ` · ${s.active_on_track} berjalan` : ""
+                }`
+              : s.active_on_track > 0
+              ? `Belum ada selesai · ${s.active_on_track} sedang berjalan`
+              : tr("stats_no_task_data", "Belum ada data tugas")
+          }
+          icon={Target}
+          testid="team-stat-ontime"
+          className="col-span-2 sm:col-span-1"
+        />
       </div>
       <div className="mt-4 sm:mt-5 w-full min-w-0">
         <TeamChart data={data} type={type} />
@@ -654,7 +704,7 @@ export default function MonthlyStats({ showPerformance = true, showBottleneck = 
           statsMemoryCache[cacheKey] = res.data;
           setData(res.data);
           try {
-            localStorage.setItem(`circle_stats_team_cache_${cacheKey}`, JSON.stringify(res.data));
+            localStorage.setItem(`circle_stats_team_v2_cache_${cacheKey}`, JSON.stringify(res.data));
           } catch {}
         }
       })

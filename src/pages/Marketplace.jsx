@@ -25,7 +25,7 @@ import { toast } from "sonner";
 import { useApp } from "../context/AppContext";
 import { api, errMsg, fileUrl } from "../lib/api";
 import { playSound } from "../lib/sound";
-import { Avatar, PageHeader } from "../components/common";
+import { Avatar, PageHeader, renderFormattedCopy } from "../components/common";
 import {
   Select,
   SelectTrigger,
@@ -613,54 +613,80 @@ export default function Marketplace() {
       {/* TAB 1 & 4: EXPLORE & WISHLIST */}
       {(tab === "explore" || tab === "wishlist") && (
         <div className="space-y-5">
-          {tab === "explore" && bannerEnabled && (
-            <section
-              className="relative overflow-hidden rounded-2xl sm:rounded-3xl border border-slate-200/80 dark:border-slate-800 bg-slate-900"
-              data-testid="marketplace-hero-banner"
-            >
-              <img
-                src={bannerImageSrc}
-                alt={storeName}
-                className="h-44 sm:h-56 w-full object-cover opacity-80"
-              />
-              <div
-                className={`absolute inset-0 bg-gradient-to-r ${bannerOverlay.overlayClass} flex items-center p-5 sm:p-8`}
+          {tab === "explore" && bannerEnabled && (() => {
+            const titleHasExplicitBold = /(\*\*[^*]+\*\*|<b>[\s\S]+?<\/b>|<strong>[\s\S]+?<\/strong>)/.test(bannerTitle || "");
+            return (
+              <section
+                className="relative overflow-hidden rounded-2xl sm:rounded-3xl border border-slate-200/80 dark:border-slate-800 bg-slate-900"
+                data-testid="marketplace-hero-banner"
               >
-                <div className="max-w-lg space-y-2 text-white">
-                  {bannerKicker && (
-                    <p
-                      className={`text-[11px] font-bold uppercase tracking-widest ${bannerOverlay.kickerClass}`}
+                <img
+                  src={bannerImageSrc}
+                  alt={storeName}
+                  className="absolute inset-0 h-full w-full object-cover opacity-80"
+                />
+                <div
+                  className={`relative min-h-[11rem] sm:min-h-[14rem] bg-gradient-to-r ${bannerOverlay.overlayClass} flex items-center p-5 sm:p-8`}
+                >
+                  <div className="max-w-xl space-y-2 text-white">
+                    {bannerKicker && (
+                      <p
+                        className={`text-[11px] font-bold uppercase tracking-widest whitespace-pre-line ${bannerOverlay.kickerClass}`}
+                      >
+                        {renderFormattedCopy(bannerKicker, {
+                          boldClass: "font-black text-white",
+                          highlightClass: "rounded bg-white/20 px-1.5 py-0.5 font-extrabold text-white",
+                        })}
+                      </p>
+                    )}
+                    <h2
+                      className={`text-xl sm:text-3xl leading-tight whitespace-pre-line ${
+                        titleHasExplicitBold ? "font-medium text-white/90" : "font-extrabold text-white"
+                      }`}
                     >
-                      {bannerKicker}
-                    </p>
-                  )}
-                  <h2 className="text-xl sm:text-3xl font-extrabold leading-tight">
-                    {bannerTitle}
-                  </h2>
-                  {(bannerSubtitle || bannerPromoCode || bannerPromoText) && (
-                    <p className="text-xs sm:text-sm text-slate-200 leading-relaxed">
-                      {bannerSubtitle}
-                      {bannerPromoCode ? (
-                        <>
-                          {bannerSubtitle ? " " : ""}
-                          {bannerPromoPrefix ? `${bannerPromoPrefix} ` : ""}
-                          <strong className="font-mono text-white">
-                            {bannerPromoCode}
-                          </strong>
-                          {bannerPromoText ? ` ${bannerPromoText}` : ""}
-                        </>
-                      ) : bannerPromoText ? (
-                        <>
-                          {bannerSubtitle ? " " : ""}
-                          {bannerPromoText}
-                        </>
-                      ) : null}
-                    </p>
-                  )}
+                      {renderFormattedCopy(bannerTitle, {
+                        boldClass: "font-extrabold text-white",
+                        normalPartClass: titleHasExplicitBold ? "font-normal text-white/90" : "",
+                        highlightClass: "rounded-lg bg-brand/90 px-2 py-0.5 font-extrabold text-white",
+                      })}
+                    </h2>
+                    {(bannerSubtitle || bannerPromoCode || bannerPromoText) && (
+                      <p className="text-xs sm:text-sm text-slate-200 leading-relaxed whitespace-pre-line">
+                        {renderFormattedCopy(bannerSubtitle, {
+                          boldClass: "font-extrabold text-white",
+                          highlightClass: "rounded bg-white/20 px-1.5 py-0.5 font-bold text-white",
+                        })}
+                        {bannerPromoCode ? (
+                          <>
+                            {bannerSubtitle ? " " : ""}
+                            {bannerPromoPrefix ? (
+                              <>
+                                {renderFormattedCopy(bannerPromoPrefix, { boldClass: "font-extrabold text-white" })}{" "}
+                              </>
+                            ) : null}
+                            <strong className="font-mono font-extrabold text-white">
+                              {renderFormattedCopy(bannerPromoCode, { boldClass: "font-extrabold text-white" })}
+                            </strong>
+                            {bannerPromoText ? (
+                              <>
+                                {" "}
+                                {renderFormattedCopy(bannerPromoText, { boldClass: "font-extrabold text-white" })}
+                              </>
+                            ) : null}
+                          </>
+                        ) : bannerPromoText ? (
+                          <>
+                            {bannerSubtitle ? " " : ""}
+                            {renderFormattedCopy(bannerPromoText, { boldClass: "font-extrabold text-white" })}
+                          </>
+                        ) : null}
+                      </p>
+                    )}
+                  </div>
                 </div>
-              </div>
-            </section>
-          )}
+              </section>
+            );
+          })()}
 
           {/* Filter & Search Toolbar */}
           <div className="flex flex-col sm:flex-row sm:items-center gap-3">

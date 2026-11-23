@@ -133,7 +133,7 @@ function Panel({ conv, reload, onClose, onLeft }) {
   const isOfficialOrDept = conv.group_type === "department" || String(conv.id || "").startsWith("group_official_");
   const isMyDeptManager = isOfficialOrDept && ["manager", "department_manager", "project_manager"].includes(me?.role) && me?.department && String(me.department).trim().toLowerCase() === String(conv.name || "").trim().toLowerCase();
   const amAdmin = Boolean(conv.can_manage || isAdmin || (conv.created_by && conv.created_by === me?.user_id) || conv.admin_ids?.includes(me?.user_id) || isMyDeptManager);
-  const canDeleteOfficial = !isOfficialOrDept && !conv.is_verified ? amAdmin : isAdmin;
+  const canDeleteOfficial = !isOfficialOrDept ? amAdmin : isAdmin;
   const muted = (prefs.muted_conversations || []).includes(conv.id);
   const run = (fn, msg, sfx) => async () => {
     if (busyAction) return;
@@ -767,7 +767,14 @@ export default function ChatView({ cid, initialConv = null, onChange, onRead, on
       });
       if (d?.pinned !== undefined) loadConv();
     }
-    if (e.type === "read" && d?.conversation_id === cid) setConv((c) => c && ({ ...c, reads: { ...(c.reads || {}), [d.user_id]: d.at } }));
+    if (e.type === "read" && d?.conversation_id === cid) {
+      setConv((c) => {
+        if (!c) return c;
+        const next = { ...c, reads: { ...(c.reads || {}), [d.user_id]: d.at } };
+        CHAT_CACHE[`conv_${cid}`] = next;
+        return next;
+      });
+    }
     if (e.type === "typing" && d?.conversation_id === cid) setTyping((t) => ({ ...t, [d.user_id]: Date.now() }));
   }), [subscribe, cid, me?.user_id]); // eslint-disable-line
 
@@ -828,8 +835,32 @@ export default function ChatView({ cid, initialConv = null, onChange, onRead, on
     ? (other?.name || (activeConv.name && activeConv.name !== "Direct Message" ? activeConv.name : tr("messages_default_dm_title", "Pesan Langsung")))
     : (activeConv.name || tr("messages_default_group_title", "Grup Chat"));
   const typers = Object.entries(typing).filter(([, t]) => Date.now() - t < 4000).map(([id]) => userMap[id]?.name?.split(" ")[0]).filter(Boolean);
-  const readers = (ts) => Object.entries(activeConv.reads || {}).filter(([id, at]) => id !== me?.user_id && at >= ts).length;
+  const toEpochMs = (v) => {
+    if (!v) return 0;
+    if (typeof v === "number") return v;
+    const n = Number(v);
+    if (!Number.isNaN(n) && n > 0) return n;
+    const parsed = new Date(v).getTime();
+    return Number.isNaN(parsed) ? 0 : parsed;
+  };
   const safeMsgs = Array.isArray(msgs) ? msgs : [];
+  const readers = (ts) => {
+    const msgMs = toEpochMs(ts);
+    if (!msgMs) return 0;
+    const readerSet = new Set();
+    for (const [id, at] of Object.entries(activeConv.reads || {})) {
+      if (id && id !== me?.user_id && toEpochMs(at) >= msgMs) {
+        readerSet.add(id);
+      }
+    }
+    for (const m of safeMsgs) {
+      const sid = m?.sender_id || m?.user_id;
+      if (sid && sid !== me?.user_id && toEpochMs(m.created_at) >= msgMs) {
+        readerSet.add(sid);
+      }
+    }
+    return readerSet.size;
+  };
   const isMyMessage = (m) => Boolean(me?.user_id && (m.sender_id === me.user_id || m.user_id === me.user_id));
   const lastMine = [...safeMsgs].reverse().find((m) => isMyMessage(m))?.id;
   const openPanel = () => (window.innerWidth >= 1280 ? setPanel(!panel) : setMobilePanel(true));
@@ -889,7 +920,7 @@ export default function ChatView({ cid, initialConv = null, onChange, onRead, on
             <span className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5 min-w-0">
                 <span className="truncate text-sm sm:text-base font-bold leading-snug py-0.5" data-testid="chat-title">{title}</span>
-                {activeConv.is_verified && <ShieldCheck size={14} className="shrink-0 text-blue-500 fill-blue-500/10" />}
+                {(activeConv.group_type === "department" || String(activeConv.id || "").startsWith("group_official_")) && <ShieldCheck size={14} className="shrink-0 text-blue-500 fill-blue-500/10" />}
               </div>
               <span className="block truncate text-[11px] sm:text-xs text-sub leading-snug">{typers.length ? <span className="text-brand" data-testid="typing-indicator">{typers.join(", ")} {tr("chat_typing_suffix", "sedang mengetik…")}</span> : other ? (online.has(other.user_id) ? tr("nav_status_online", "Online") : other.job_title) : `${(activeConv.member_ids || []).filter((id) => id !== "user_circle_assistant").length} ${tr("chat_members_unit", "anggota")}${activeConv.archived ? ` ${tr("chat_archived_badge", "· Diarsipkan")}` : ""}`}</span>
             </span>

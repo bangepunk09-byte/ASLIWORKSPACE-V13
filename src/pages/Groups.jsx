@@ -194,7 +194,7 @@ export default function Groups() {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5">
                         <p className="truncate font-bold text-sm">{g.name}</p>
-                        {g.is_verified && <ShieldCheck size={14} className="shrink-0 text-blue-500" />}
+                        {g.is_dept_group && <ShieldCheck size={14} className="shrink-0 text-blue-500" title={t("groups_official_title", "Grup Divisi Resmi")} />}
                       </div>
                       <p className="text-[11px] text-emerald-700 dark:text-emerald-300 font-semibold">{t("groups_invited_badge", "Anda diundang bergabung")}</p>
                     </div>
@@ -249,7 +249,7 @@ export default function Groups() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5 min-w-0">
                     <p className="truncate font-bold leading-snug py-0.5">{g.name}</p>
-                    {g.is_verified && <ShieldCheck size={14} className="shrink-0 text-blue-500" fill="currentColor" fillOpacity={0.1} title={t("groups_official_title", "Grup Resmi")} />}
+                    {g.is_dept_group && <ShieldCheck size={14} className="shrink-0 text-blue-500" fill="currentColor" fillOpacity={0.1} title={t("groups_official_title", "Grup Divisi Resmi")} />}
                   </div>
                   <div className="flex flex-wrap items-center gap-1.5 text-xs text-sub leading-snug">
                     <span>{typeLabel}{g.archived ? ` ${t("groups_archived_suffix", "· diarsipkan")}` : ""}</span>

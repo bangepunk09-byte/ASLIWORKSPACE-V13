@@ -845,12 +845,28 @@ export async function tryExecuteCircleCommand(params: {
     const computeScorecard = (u: any) => {
       const assigned = rawTasks.filter((t: any) => (Array.isArray(t.assignee_ids) && t.assignee_ids.includes(u.user_id)) || t.assignee_id === u.user_id);
       const done = assigned.filter((t: any) => t.status === "done" || t.archived);
-      const onTime = done.filter((t: any) => !t.deadline || !t.completed_at || new Date(t.completed_at) <= new Date(t.deadline));
+      const onTime = done.filter((t: any) => {
+        if (!t.deadline) return true;
+        const compAt = t.completed_at || t.submit_date || t.archived_at || t.updated_at;
+        return !compAt || new Date(compAt) <= new Date(t.deadline);
+      });
       const active = assigned.filter((t: any) => t.status !== "done" && !t.archived);
       const overdue = active.filter((t: any) => t.deadline && new Date(t.deadline) < now);
-      const completionRate = assigned.length ? Math.round((done.length / assigned.length) * 100) : 100;
-      const slaRate = done.length ? Math.round((onTime.length / done.length) * 100) : 100;
-      return { name: u.name, dept: u.department || "-", total: assigned.length, done: done.length, active: active.length, overdue: overdue.length, completionRate, slaRate };
+      const evaluatedDue = done.length + overdue.length;
+      const completionRate = assigned.length ? Math.round((done.length / assigned.length) * 100) : 0;
+      const slaRate = evaluatedDue > 0 ? Math.round((onTime.length / evaluatedDue) * 100) : 0;
+      return {
+        name: u.name,
+        dept: u.department || "-",
+        total: assigned.length,
+        done: done.length,
+        onTime: onTime.length,
+        evaluatedDue,
+        active: active.length,
+        overdue: overdue.length,
+        completionRate,
+        slaRate
+      };
     };
 
     if (targetUser) {
@@ -860,8 +876,8 @@ export async function tryExecuteCircleCommand(params: {
         text: [
           `🏅 **KPI & Scorecard: ${s.name}** (${s.dept})`,
           `• Total Tugas Ditangani: **${s.total}** (${s.done} selesai · ${s.active} aktif · ${s.overdue} telat)`,
-          `• Tingkat Penyelesaian: **${s.completionRate}%**`,
-          `• Ketepatan SLA Deadline: **${s.slaRate}%**`
+          `• Tingkat Penyelesaian: **${s.completionRate}%** (${s.done}/${s.total})`,
+          `• Ketepatan Waktu (SLA): **${s.slaRate}%** (${s.onTime}/${s.evaluatedDue} tugas tepat waktu)`
         ].join("\n")
       };
     }
@@ -873,7 +889,7 @@ export async function tryExecuteCircleCommand(params: {
       text: [
         `🏅 **Scorecard KPI Seluruh Tim (${cards.length} Anggota)**`,
         ...cards.slice(0, 12).map((c: any) =>
-          `• **${c.name}** (${c.dept}): **${c.done} selesai** (${c.completionRate}%) · SLA **${c.slaRate}%** · ${c.active} aktif${c.overdue > 0 ? ` · ⚠️ ${c.overdue} telat` : ""}`
+          `• **${c.name}** (${c.dept}): **${c.done} selesai** (${c.completionRate}%) · Ketepatan Waktu **${c.slaRate}%** (${c.onTime}/${c.evaluatedDue}) · ${c.active} aktif${c.overdue > 0 ? ` · ⚠️ ${c.overdue} telat` : ""}`
         )
       ].join("\n")
     };
@@ -885,24 +901,42 @@ export async function tryExecuteCircleCommand(params: {
   if (cmdToken === "/sla" || /(ketepatan deadline|laporan sla)/i.test(lower)) {
     const rawTasks = Array.isArray(db.tasks) ? db.tasks : [];
     const doneTasks = rawTasks.filter((t: any) => t.status === "done" || t.archived);
-    const doneOnTime = doneTasks.filter((t: any) => !t.deadline || !t.completed_at || new Date(t.completed_at) <= new Date(t.deadline));
-    const overallSla = doneTasks.length ? Math.round((doneOnTime.length / doneTasks.length) * 100) : 100;
+    const doneOnTime = doneTasks.filter((t: any) => {
+      if (!t.deadline) return true;
+      const compAt = t.completed_at || t.submit_date || t.archived_at || t.updated_at;
+      return !compAt || new Date(compAt) <= new Date(t.deadline);
+    });
+    const activeOverdueCount = intel.tasks.overdue_count || 0;
+    const evaluatedTotal = doneTasks.length + activeOverdueCount;
+    const overallSla = evaluatedTotal > 0 ? Math.round((doneOnTime.length / evaluatedTotal) * 100) : 0;
 
     const divLines = intel.divisions.map((d: any) => {
-      const divTotal = d.total_tasks;
-      const divHealthy = Math.max(0, divTotal - d.overdue_tasks.length);
-      const rate = divTotal ? Math.round((divHealthy / divTotal) * 100) : 100;
-      return `• **${d.name}**: Kepatuhan **${rate}%** (${d.overdue_tasks.length} tugas overdue dari ${divTotal} total)`;
+      const divDoneCount = d.done_tasks_count || 0;
+      const divOverdueCount = d.overdue_tasks.length || 0;
+      const divEvaluated = divDoneCount + divOverdueCount;
+      const divOnTimeCount = rawTasks.filter((t: any) => {
+        const isDone = t.status === "done" || Boolean(t.archived);
+        if (!isDone) return false;
+        const bMatch = d.boards?.some((b: any) => b.id === t.board_id);
+        const deptMatch = String(t.department || "").trim().toLowerCase() === d.key;
+        if (!bMatch && !deptMatch) return false;
+        if (!t.deadline) return true;
+        const compAt = t.completed_at || t.submit_date || t.archived_at || t.updated_at;
+        return !compAt || new Date(compAt) <= new Date(t.deadline);
+      }).length;
+      const rate = divEvaluated > 0 ? Math.round((divOnTimeCount / divEvaluated) * 100) : 0;
+      return `• **${d.name}**: Ketepatan Waktu **${rate}%** (${divOnTimeCount} dari ${divEvaluated} tugas tepat waktu · ${divOverdueCount} overdue · ${d.active_tasks_count} aktif)`;
     });
 
     return {
       handled: true,
       text: [
-        `📏 **Laporan Kepatuhan SLA Deadline Workspace**`,
-        `• SLA Tugas Selesai Tepat Waktu: **${overallSla}%** (${doneOnTime.length}/${doneTasks.length} kartu selesai)`,
-        `• Tugas Aktif Sedang Terlambat: **${intel.tasks.overdue_count} kartu**`,
+        `📏 **Laporan Ketepatan Waktu & Kepatuhan SLA Workspace**`,
+        `• Ketepatan Waktu: **${overallSla}%** (${doneOnTime.length} dari ${evaluatedTotal} tugas tepat waktu)`,
+        `• Tugas Selesai: **${doneTasks.length} kartu** (${doneOnTime.length} tepat waktu, ${Math.max(0, doneTasks.length - doneOnTime.length)} selesai telat)`,
+        `• Tugas Aktif Overdue: **${activeOverdueCount} kartu**`,
         ``,
-        `🏢 **SLA Kesehatan per Divisi:**`,
+        `🏢 **Ketepatan Waktu per Divisi:**`,
         ...divLines
       ].join("\n")
     };
@@ -1980,6 +2014,45 @@ export async function tryExecuteCircleCommand(params: {
         ...(total === 0 ? [`\nTidak ditemukan data yang cocok dengan **"${argRaw}"**.`] : [])
       ].filter(Boolean).join("\n")
     };
+  }
+
+  // =========================================================================
+  // 63. /ai atau /gemini [pertanyaan bebas / instruksi AI]
+  // =========================================================================
+  if (cmdToken === "/ai" || cmdToken === "/gemini") {
+    if (!argRaw) {
+      return {
+        handled: true,
+        text: [
+          `✨ **Circle Gemini AI Aktif!**`,
+          `Kamu bisa langsung chat bebas dengan bahasa sehari-hari atau gunakan \`/ai [pertanyaan/instruksi]\`.`,
+          ``,
+          `**Contoh yang bisa kamu tanyakan ke Circle:**`,
+          `• **Analisa Workspace Live:** _"Siapa yang lagi under pressure dan tugas apa yang paling kritis hari ini?"_`,
+          `• **Brainstorming & Strategi:** \`/ai Buatkan 5 ide campaign kreatif untuk akhir tahun beserta KPI-nya\``,
+          `• **Copywriting & Konten:** \`/caption\`, \`/content-brief\`, \`/polish\`, \`/email\`, \`/translate\`, \`/summarize\``,
+          `• **Eksekusi Langsung:** \`/task\`, \`/done\`, \`/meeting\`, \`/post\`, \`/poll\`, \`/remind\``
+        ].join("\n")
+      };
+    }
+    // Return handled: false if argRaw is present so it flows directly into the full context-grounded Gemini AI engine in circleBot.ts,
+    // or execute via aiClient directly with full workspace intelligence:
+    if (aiClient) {
+      const aiResp = await tryGeminiAssist(
+        aiClient,
+        [
+          `Kamu adalah Circle (ditenagai oleh Google Gemini AI), asisten AI eksekutif & partner brainstorming di workspace "${intel.workspace_name}".`,
+          `Jika pertanyaan menyangkut data internal workspace, mengaculah 100% pada data JSON live berikut: ${JSON.stringify(intel)}.`,
+          `Jika pertanyaan berupa brainstorming, copywriting, strategi, coding, atau pengetahuan umum, jawab dengan cerdas, lengkap, rapi (gunakan bullet • dan **bold**), serta solutif dalam Bahasa Indonesia.`
+        ].join("\n"),
+        `Pengguna: ${actorName} (${senderUser?.department || "Tim"})\nPermintaan: ${argRaw}`,
+        ""
+      );
+      if (aiResp) {
+        return { handled: true, text: aiResp };
+      }
+    }
+    return { handled: false, text: "" };
   }
 
   return { handled: false, text: "" };

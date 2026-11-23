@@ -983,14 +983,14 @@ export default function Schedule() {
 
                     {/* Attendees Stack */}
                     {m.attendee_ids?.length > 0 && (
-                      <div className="mt-4 flex items-center gap-2">
+                      <div className="mt-4 flex items-center gap-2.5">
                         <span className="text-[11px] text-sub font-semibold">{t("schedule_card_participants", "Peserta:")}</span>
-                        <div className="flex -space-x-1.5">
+                        <div className="flex items-center -space-x-1">
                           {[...m.attendee_ids.slice(0, 4)].reverse().map((uid, idx) => (
-                            <Avatar key={uid} user={userMap[uid]} size={24} showStatus={false} className="border-2 border-surface rounded-full relative" style={{ zIndex: idx }} />
+                            <Avatar key={uid} user={userMap[uid]} size={28} showStatus={false} className="rounded-full relative" style={{ zIndex: idx }} />
                           ))}
                           {m.attendee_ids.length > 4 && (
-                            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-surface2 text-[9px] font-bold text-sub border-2 border-surface relative" style={{ zIndex: 0 }}>
+                            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-surface2 text-[10px] font-bold text-sub border border-slate-200 dark:border-slate-700 relative" style={{ zIndex: 0 }}>
                               +{m.attendee_ids.length - 4}
                             </span>
                           )}

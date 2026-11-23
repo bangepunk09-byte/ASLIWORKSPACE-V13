@@ -147,7 +147,7 @@ export function GroupDialog({ open, onOpenChange, group, onSaved }) {
         <DialogHeader>
           <div className="flex items-center gap-2">
             <DialogTitle>{group ? tr("groups_dialog_edit_title", "Ubah Grup") : tr("groups_dialog_create_title", "Buat Grup Baru")}</DialogTitle>
-            {me.role === "super_admin" && (
+            {f.group_type === "department" && (
               <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
                 <ShieldCheck size={10} strokeWidth={3} />
                 {tr("groups_dialog_official_badge", "RESMI")}

@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { format, formatDistanceToNowStrict, isToday, isPast, differenceInHours } from "date-fns";
 import { id as localeId } from "date-fns/locale";
@@ -295,15 +295,84 @@ export function GroupIcon({ c, size = 42, rounded = "rounded-2xl" }) {
   return <span className={`flex shrink-0 items-center justify-center ${rounded} bg-soft-purple font-bold text-ink`} style={{ width: size, height: size, fontSize: size * 0.4 }} data-testid={`group-avatar-${c?.id}`}>{(c?.name || "#").trim().slice(0, 1).toUpperCase()}</span>;
 }
 
-export const AvatarStack = memo(function AvatarStack({ ids = [], max = 4, size = 26 }) {
+export const AvatarStack = memo(function AvatarStack({ ids = [], max = 4, size = 26, ringDeadline = true }) {
   const { userMap } = useApp();
   return (
-    <div className="flex -space-x-1.5">
-      {[...ids.slice(0, max)].reverse().map((id, index) => <Avatar key={id} user={userMap[id]} size={size} showStatus={false} ringDeadline={false} className="relative border-2 border-[var(--c-surface)] rounded-full" style={{ zIndex: index }} />)}
-      {ids.length > max && <span className="relative flex items-center justify-center rounded-full bg-surface2 text-[10px] font-semibold text-sub border-2 border-[var(--c-surface)]" style={{ width: size, height: size, zIndex: 0 }}>+{ids.length - max}</span>}
+    <div className="flex items-center -space-x-1">
+      {[...ids.slice(0, max)].reverse().map((id, index) => <Avatar key={id} user={userMap[id]} size={size} showStatus={false} ringDeadline={ringDeadline} className="relative rounded-full" style={{ zIndex: index }} />)}
+      {ids.length > max && <span className="relative flex items-center justify-center rounded-full bg-surface2 text-[10px] font-semibold text-sub border border-slate-200 dark:border-slate-700" style={{ width: size, height: size, zIndex: 0 }}>+{ids.length - max}</span>}
     </div>
   );
 });
+
+export function hasRichCopyFormatting(str) {
+  if (typeof str !== "string") return false;
+  return /(\n|\*\*[^*]+\*\*|<b>[\s\S]+?<\/b>|<strong>[\s\S]+?<\/strong>|__[^_]+__|<u>[\s\S]+?<\/u>|\*[^*\n]+\*|<i>[\s\S]+?<\/i>|==[^=\n]+==)/.test(str);
+}
+
+export function renderFormattedCopy(str, opts = {}) {
+  if (typeof str !== "string" || !str) return str;
+  if (!hasRichCopyFormatting(str)) return str;
+  const {
+    boldClass = "font-extrabold",
+    normalPartClass = "",
+    highlightClass = "rounded bg-brand/20 px-1 py-0.5 font-bold text-brand",
+  } = opts;
+
+  const lines = str.split("\n");
+  const tokenRegex = /(\*\*[\s\S]+?\*\*|<b>[\s\S]+?<\/b>|<strong>[\s\S]+?<\/strong>|__[\s\S]+?__|<u>[\s\S]+?<\/u>|==[\s\S]+?==|\*[^*\n]+\*|<i>[\s\S]+?<\/i>)/g;
+
+  return lines.map((line, lineIdx) => {
+    const parts = line.split(tokenRegex).filter((p) => p !== "");
+    return (
+      <span key={lineIdx}>
+        {lineIdx > 0 && <br />}
+        {parts.map((part, idx) => {
+          if ((part.startsWith("**") && part.endsWith("**")) || (part.startsWith("<b>") && part.endsWith("</b>")) || (part.startsWith("<strong>") && part.endsWith("</strong>"))) {
+            const inner = part.startsWith("**")
+              ? part.slice(2, -2)
+              : part.replace(/^<(b|strong)>|<\/(b|strong)>$/g, "");
+            return (
+              <strong key={idx} className={boldClass}>
+                {inner}
+              </strong>
+            );
+          }
+          if ((part.startsWith("__") && part.endsWith("__")) || (part.startsWith("<u>") && part.endsWith("</u>"))) {
+            const inner = part.startsWith("__") ? part.slice(2, -2) : part.slice(3, -4);
+            return (
+              <u key={idx} className="underline underline-offset-2">
+                {inner}
+              </u>
+            );
+          }
+          if (part.startsWith("==") && part.endsWith("==")) {
+            return (
+              <mark key={idx} className={highlightClass}>
+                {part.slice(2, -2)}
+              </mark>
+            );
+          }
+          if ((part.startsWith("*") && part.endsWith("*")) || (part.startsWith("<i>") && part.endsWith("</i>"))) {
+            const inner = part.startsWith("*") ? part.slice(1, -1) : part.slice(3, -4);
+            return (
+              <em key={idx} className="italic">
+                {inner}
+              </em>
+            );
+          }
+          return normalPartClass ? (
+            <span key={idx} className={normalPartClass}>
+              {part}
+            </span>
+          ) : (
+            part
+          );
+        })}
+      </span>
+    );
+  });
+}
 
 export const LabelChip = memo(function LabelChip({ label, small }) {
   if (!label) return null;
@@ -379,6 +448,8 @@ export const rel = (iso) => {
 };
 
 export function PageHeader({ title, subtitle, actions, icon: Icon }) {
+  const isMultilineTitle = typeof title === "string" && title.includes("\n");
+  const isMultilineSubtitle = typeof subtitle === "string" && subtitle.includes("\n");
   return (
     <div className="mb-4 sm:mb-6 flex w-full max-w-full min-w-0 flex-col gap-2.5 sm:gap-3 lg:flex-row lg:items-center lg:justify-between border-b border-slate-200/70 dark:border-slate-800/80 pb-3 lg:border-b-0 lg:pb-0">
       <div className="flex flex-1 items-center gap-3 min-w-0">
@@ -388,12 +459,12 @@ export function PageHeader({ title, subtitle, actions, icon: Icon }) {
           </span>
         )}
         <div className="min-w-0 flex-1">
-          <h1 className="text-xl sm:text-3xl font-extrabold tracking-tight text-ink leading-normal truncate" data-testid="page-title">
-            {title}
+          <h1 className={`text-xl sm:text-3xl font-extrabold tracking-tight text-ink leading-normal ${isMultilineTitle ? "whitespace-pre-line" : "truncate"}`} data-testid="page-title">
+            {typeof title === "string" ? renderFormattedCopy(title) : title}
           </h1>
           {subtitle && (
-            <p className="text-xs sm:text-sm text-sub mt-0.5 line-clamp-2 sm:line-clamp-1 leading-relaxed">
-              {subtitle}
+            <p className={`text-xs sm:text-sm text-sub mt-0.5 leading-relaxed ${isMultilineSubtitle ? "whitespace-pre-line" : "line-clamp-2 sm:line-clamp-1"}`}>
+              {typeof subtitle === "string" ? renderFormattedCopy(subtitle) : subtitle}
             </p>
           )}
         </div>
@@ -412,8 +483,8 @@ export function Empty({ icon: Icon, title, text, description, action }) {
   return (
     <div className="flex flex-col items-center justify-center py-14 text-center" data-testid="empty-state">
       {Icon && <span className="mb-3 flex h-14 w-14 items-center justify-center rounded-3xl bg-surface2 text-sub"><Icon size={24} /></span>}
-      <p className="font-semibold">{title}</p>
-      {msg && <p className="mt-1 max-w-sm text-sm text-sub">{msg}</p>}
+      <p className="font-semibold whitespace-pre-line">{typeof title === "string" ? renderFormattedCopy(title) : title}</p>
+      {msg && <p className="mt-1 max-w-sm text-sm text-sub whitespace-pre-line">{typeof msg === "string" ? renderFormattedCopy(msg) : msg}</p>}
       {action && <div className="mt-4">{action}</div>}
     </div>
   );
@@ -446,42 +517,52 @@ export const ROLE_NAMES = {
   member: "Anggota",
 };
 
+function parseTaskDeadlineDate(raw) {
+  if (!raw) return null;
+  const str = String(raw).trim();
+  if (!str) return null;
+  const d = new Date(str);
+  if (isNaN(d.getTime())) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+    d.setHours(23, 59, 59, 999);
+  }
+  return d;
+}
+
 export function getTaskCompliance(t) {
   if (!t) return "In Progress";
 
-  const isDone = t.status === "done";
+  const isDone = t.status === "done" || Boolean(t.archived);
+  const dl = parseTaskDeadlineDate(t.deadline);
 
   // Jika task sudah selesai (DONE)
   if (isDone) {
-    if (!t.deadline) return "On time";
-    const finishedAt = new Date(t.completed_at || t.updated_at || Date.now());
-    const dl = new Date(t.deadline);
+    if (!dl) return "On time";
+    const finishedAt = new Date(t.completed_at || t.submit_date || t.archived_at || t.updated_at || Date.now());
     // Jika selesai melebihi deadline -> OVERDUE, jika tepat waktu/sebelumnya -> ON TIME
     return finishedAt > dl ? "Overdue" : "On time";
   }
 
   // Jika task belum selesai (To Do, In Progress, In Review)
-  if (!t.deadline) return "In Progress";
+  if (!dl) return "In Progress";
   const now = new Date();
-  const dl = new Date(t.deadline);
   // Jika sekarang sudah melewati deadline -> OVERDUE, jika masih dalam tenggat -> IN PROGRESS
   return now > dl ? "Overdue" : "In Progress";
 }
 
 export function getTaskComplianceDetail(t) {
   if (!t) return "";
-  const isDone = t.status === "done";
+  const isDone = t.status === "done" || Boolean(t.archived);
+  const dl = parseTaskDeadlineDate(t.deadline);
   if (isDone) {
-    if (!t.deadline) return "Selesai tepat waktu";
-    const finishedAt = new Date(t.completed_at || t.updated_at || Date.now());
-    const dl = new Date(t.deadline);
+    if (!dl) return "Selesai tepat waktu";
+    const finishedAt = new Date(t.completed_at || t.submit_date || t.archived_at || t.updated_at || Date.now());
     return finishedAt > dl
       ? "Selesai melewati deadline"
       : "Selesai tepat waktu";
   }
-  if (!t.deadline) return "Sedang dikerjakan";
+  if (!dl) return "Sedang dikerjakan";
   const now = new Date();
-  const dl = new Date(t.deadline);
   return now > dl
     ? "Belum selesai dan melewati deadline"
     : "Sedang dikerjakan dalam tenggat waktu";
@@ -609,3 +690,249 @@ export const MentionText = memo(function MentionText({
     return part;
   });
 });
+
+export function RichCopyField({
+  value = "",
+  onChange,
+  placeholder = "",
+  label,
+  singleLineLabel = false,
+  minRows = 1,
+  mono = false,
+  uppercase = false,
+  compact = false,
+  className = "",
+  inputClassName = "",
+  testid,
+}) {
+  const ref = useRef(null);
+  const strVal = String(value ?? "");
+  const effectiveSource = strVal || String(placeholder || "");
+  const lineCount = Math.max(minRows, Math.min(6, strVal.split("\n").length));
+
+  const applyWrap = (marker) => {
+    const el = ref.current;
+    const baseText = strVal || String(placeholder || "");
+    if (!el) {
+      const next = baseText.startsWith(marker) && baseText.endsWith(marker)
+        ? baseText.slice(marker.length, -marker.length)
+        : `${marker}${baseText}${marker}`;
+      onChange?.(uppercase ? next.toUpperCase() : next);
+      return;
+    }
+
+    // If field was empty and showing placeholder, seed from placeholder so user can immediately edit/bold it
+    const workingText = strVal || String(placeholder || "");
+    let start = el.selectionStart ?? 0;
+    let end = el.selectionEnd ?? 0;
+    if (!strVal && workingText) {
+      start = 0;
+      end = workingText.length;
+    }
+
+    let nextText;
+    let nextStart = start;
+    let nextEnd = end;
+
+    if (start !== end) {
+      const selected = workingText.slice(start, end);
+      const before = workingText.slice(0, start);
+      const after = workingText.slice(end);
+      if (selected.startsWith(marker) && selected.endsWith(marker) && selected.length >= marker.length * 2) {
+        const unwrapped = selected.slice(marker.length, -marker.length);
+        nextText = `${before}${unwrapped}${after}`;
+        nextEnd = start + unwrapped.length;
+      } else if (before.endsWith(marker) && after.startsWith(marker)) {
+        nextText = `${before.slice(0, -marker.length)}${selected}${after.slice(marker.length)}`;
+        nextStart = start - marker.length;
+        nextEnd = end - marker.length;
+      } else {
+        nextText = `${before}${marker}${selected}${marker}${after}`;
+        nextStart = start + marker.length;
+        nextEnd = end + marker.length;
+      }
+    } else {
+      // No selection: toggle wrap on the word under cursor, or entire text if cursor is at end
+      const trimmed = workingText.trim();
+      if (!trimmed) {
+        nextText = `${marker}teks${marker}`;
+        nextStart = marker.length;
+        nextEnd = marker.length + 4;
+      } else if (trimmed.startsWith(marker) && trimmed.endsWith(marker) && trimmed.length >= marker.length * 2) {
+        nextText = trimmed.slice(marker.length, -marker.length);
+        nextStart = 0;
+        nextEnd = nextText.length;
+      } else {
+        nextText = `${marker}${workingText}${marker}`;
+        nextStart = marker.length;
+        nextEnd = marker.length + workingText.length;
+      }
+    }
+
+    const finalVal = uppercase ? nextText.toUpperCase() : nextText;
+    onChange?.(finalVal);
+    requestAnimationFrame(() => {
+      if (ref.current) {
+        ref.current.focus();
+        try {
+          ref.current.setSelectionRange(nextStart, nextEnd);
+        } catch {}
+      }
+    });
+  };
+
+  const insertLineBreak = () => {
+    const el = ref.current;
+    const workingText = strVal || String(placeholder || "");
+    const pos = el ? (el.selectionStart ?? workingText.length) : workingText.length;
+    const end = el ? (el.selectionEnd ?? pos) : pos;
+    const nextText = `${workingText.slice(0, pos)}\n${workingText.slice(end)}`;
+    const finalVal = uppercase ? nextText.toUpperCase() : nextText;
+    onChange?.(finalVal);
+    requestAnimationFrame(() => {
+      if (ref.current) {
+        ref.current.focus();
+        try {
+          ref.current.setSelectionRange(pos + 1, pos + 1);
+        } catch {}
+      }
+    });
+  };
+
+  const loadDefaultIfEmpty = () => {
+    if (!strVal && placeholder) {
+      onChange?.(uppercase ? String(placeholder).toUpperCase() : String(placeholder));
+      requestAnimationFrame(() => {
+        if (ref.current) ref.current.focus();
+      });
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+      const k = e.key.toLowerCase();
+      if (k === "b") {
+        e.preventDefault();
+        applyWrap("**");
+        return;
+      }
+      if (k === "i") {
+        e.preventDefault();
+        applyWrap("*");
+        return;
+      }
+      if (k === "u") {
+        e.preventDefault();
+        applyWrap("__");
+        return;
+      }
+    }
+    if (e.key === "Enter") {
+      // Allow Enter to insert a new line without submitting the parent form
+      e.stopPropagation();
+    }
+  };
+
+  const toolbarButtons = (
+    <span className="inline-flex items-center gap-0.5 shrink-0" onClick={(e) => e.preventDefault()}>
+      {!strVal && placeholder && !compact && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            loadDefaultIfEmpty();
+          }}
+          title="Muat teks default agar bisa langsung diedit penggalannya"
+          className="inline-flex h-5 items-center rounded border border-slate-200 dark:border-slate-700 bg-surface px-1.5 text-[10px] font-semibold text-sub hover:border-brand hover:text-brand transition-colors cursor-pointer mr-0.5"
+        >
+          Isi Default
+        </button>
+      )}
+      <button
+        type="button"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          applyWrap("**");
+        }}
+        title="Bold / Tebalkan teks yang diblok (Ctrl+B)"
+        className="inline-flex h-5 w-5 items-center justify-center rounded border border-slate-200 dark:border-slate-700 bg-surface text-[10.5px] font-black text-ink hover:border-brand hover:bg-brand/10 hover:text-brand transition-colors cursor-pointer"
+        data-testid={testid ? `${testid}-bold-btn` : undefined}
+      >
+        B
+      </button>
+      <button
+        type="button"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          applyWrap("*");
+        }}
+        title="Italic / Miringkan teks yang diblok (Ctrl+I)"
+        className="inline-flex h-5 w-5 items-center justify-center rounded border border-slate-200 dark:border-slate-700 bg-surface text-[10.5px] italic font-serif font-bold text-ink hover:border-brand hover:bg-brand/10 hover:text-brand transition-colors cursor-pointer"
+      >
+        I
+      </button>
+      <button
+        type="button"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          insertLineBreak();
+        }}
+        title="Sisipkan baris baru / penggalan baris (Enter)"
+        className="inline-flex h-5 items-center justify-center rounded border border-slate-200 dark:border-slate-700 bg-surface px-1 text-[10px] font-bold text-ink hover:border-brand hover:bg-brand/10 hover:text-brand transition-colors cursor-pointer"
+        data-testid={testid ? `${testid}-enter-btn` : undefined}
+      >
+        ↵
+      </button>
+    </span>
+  );
+
+  return (
+    <div className={`min-w-0 ${className}`}>
+      {label && (
+        <div className="mb-1 flex items-center justify-between gap-1.5 min-w-0">
+          <span
+            className={`text-xs font-semibold text-sub ${
+              singleLineLabel ? "block truncate whitespace-nowrap" : "truncate"
+            }`}
+            title={typeof label === "string" ? label : undefined}
+          >
+            {label}
+          </span>
+          {toolbarButtons}
+        </div>
+      )}
+      <div className="relative flex items-start gap-1.5">
+        <textarea
+          ref={ref}
+          rows={lineCount}
+          value={strVal}
+          onKeyDown={handleKeyDown}
+          onChange={(e) => {
+            const v = uppercase ? e.target.value.toUpperCase() : e.target.value;
+            onChange?.(v);
+          }}
+          placeholder={placeholder}
+          className={`w-full resize-y rounded-xl border bg-surface2 px-3 py-2 text-xs sm:text-sm text-ink outline-none transition-colors focus:border-brand leading-snug ${
+            mono ? "font-mono" : ""
+          } ${compact ? "min-h-[34px] py-1.5 text-xs" : "min-h-[40px]"} ${inputClassName}`}
+          data-testid={testid}
+        />
+        {!label && <div className="pt-1 shrink-0">{toolbarButtons}</div>}
+      </div>
+      {!compact && effectiveSource && hasRichCopyFormatting(strVal) && (
+        <div className="mt-1 rounded-lg border border-dashed border-brand/30 bg-brand/5 px-2.5 py-1 text-[11px] text-ink whitespace-pre-line">
+          <span className="mr-1.5 text-[10px] font-bold uppercase tracking-wider text-brand">Preview:</span>
+          {renderFormattedCopy(strVal)}
+        </div>
+      )}
+    </div>
+  );
+}
+

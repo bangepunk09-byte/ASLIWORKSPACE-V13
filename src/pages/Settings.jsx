@@ -3,7 +3,7 @@ import { Settings as Cog, Sun, Moon, Monitor, Upload, Download, RotateCcw, FileS
 import { toast } from "sonner";
 import { useApp } from "../context/AppContext";
 import { api } from "../lib/api";
-import { PageHeader } from "../components/common";
+import { PageHeader, RichCopyField } from "../components/common";
 import { Switch } from "../components/ui/switch";
 import ThemeEditor from "./settings/ThemeEditor";
 import BackgroundEditor from "./settings/BackgroundEditor";
@@ -618,14 +618,17 @@ function CopywritingSettings() {
                     <span className="inline-block mt-0.5 rounded bg-brand/10 px-1.5 py-0.5 text-[10px] font-semibold text-brand">Key Kustom</span>
                   )}
                 </div>
-                <div className="sm:w-2/3 flex items-center gap-2">
-                  <input
+                <div className="sm:w-2/3 flex items-start gap-2">
+                  <RichCopyField
+                    compact
+                    className="flex-1"
                     value={currentVal}
-                    onChange={(e) => setDraft({ ...draft, [key]: e.target.value })}
+                    onChange={(val) => setDraft({ ...draft, [key]: val })}
                     placeholder={hasDefault ? defVal : "Masukkan teks kustom..."}
-                    className={`h-8 w-full rounded-lg border px-2.5 text-xs outline-none transition-colors ${
+                    inputClassName={
                       isCustomized ? "border-brand bg-brand/5 text-ink font-semibold" : "bg-surface2 text-sub"
-                    }`}
+                    }
+                    testid={`copywriting-field-${key}`}
                   />
                   {isCustomized && (
                     <button
@@ -636,7 +639,7 @@ function CopywritingSettings() {
                         delete next[key];
                         setDraft(next);
                       }}
-                      className="text-sub hover:text-rose-500 p-1 shrink-0"
+                      className="text-sub hover:text-rose-500 p-1.5 shrink-0 mt-0.5"
                     >
                       <RotateCcw size={12} />
                     </button>

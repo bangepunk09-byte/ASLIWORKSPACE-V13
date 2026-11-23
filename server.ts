@@ -6123,9 +6123,18 @@ async function startServer() {
       created_at: new Date().toISOString()
     };
 
-    const validStatuses = (db.workspace?.task_statuses || []).map((s: any) => s.key);
-    const resolvedStatus = req.body.status && (validStatuses.length === 0 || validStatuses.includes(req.body.status))
-      ? req.body.status
+    const validStatuses = (db.workspace?.task_statuses || [])
+      .map((s: any) => (typeof s === "string" ? s : s?.key))
+      .filter(Boolean);
+    const rawCreateStatus = String(req.body.status || "").trim().toLowerCase().replace(/\s+/g, "_");
+    const normalizedCreateStatus =
+      ["done", "selesai", "completed", "complete"].includes(rawCreateStatus) ? "done"
+      : ["in_review", "review", "approval"].includes(rawCreateStatus) ? "in_review"
+      : ["in_progress", "on_progress", "progress", "sedang_dikerjakan", "ongoing"].includes(rawCreateStatus) ? "in_progress"
+      : ["todo", "to_do", "open", "pending"].includes(rawCreateStatus) ? "todo"
+      : rawCreateStatus;
+    const resolvedStatus = normalizedCreateStatus && (validStatuses.length === 0 || validStatuses.includes(normalizedCreateStatus))
+      ? normalizedCreateStatus
       : (validStatuses[0] || "todo");
 
     const primaryAssigneeUser = primaryAssigneeId
@@ -6364,10 +6373,18 @@ async function startServer() {
       );
       const finalReqIds = resolvedRequestors.length > 0 ? resolvedRequestors : [actorId];
 
-      const validStatuses = (db.workspace?.task_statuses || []).map((s: any) => s.key);
-      const rawStatus = String(item.status || "").toLowerCase().replace(/\s+/g, "_");
-      const resolvedStatus = rawStatus && (validStatuses.length === 0 || validStatuses.includes(rawStatus))
-        ? rawStatus
+      const validStatuses = (db.workspace?.task_statuses || [])
+        .map((s: any) => (typeof s === "string" ? s : s?.key))
+        .filter(Boolean);
+      const rawStatus = String(item.status || item.deadline_compliance || "").trim().toLowerCase().replace(/\s+/g, "_");
+      const normalizedImportStatus =
+        ["done", "selesai", "completed", "complete", "on_time"].includes(rawStatus) ? "done"
+        : ["in_review", "review", "approval", "waiting_review"].includes(rawStatus) ? "in_review"
+        : ["in_progress", "on_progress", "progress", "sedang_dikerjakan", "ongoing"].includes(rawStatus) ? "in_progress"
+        : ["todo", "to_do", "open", "pending", "overdue"].includes(rawStatus) ? "todo"
+        : rawStatus;
+      const resolvedStatus = normalizedImportStatus && (validStatuses.length === 0 || validStatuses.includes(normalizedImportStatus))
+        ? normalizedImportStatus
         : (validStatuses[0] || "todo");
 
       const rawCps = Array.isArray(item.checkpoints) ? item.checkpoints : [];
@@ -6446,9 +6463,20 @@ async function startServer() {
           action: `mengimpor tugas "${String(item.title).trim()}" ke divisi ${resolvedDept}`,
           created_at: nowIso
         }],
-        created_at: nowIso,
-        updated_at: nowIso
+        created_at: item.created_at || nowIso,
+        updated_at: item.updated_at || nowIso,
+        ...(resolvedStatus === "done"
+          ? { completed_at: item.completed_at || item.submit_date || item.updated_at || nowIso }
+          : {})
       };
+      const impDeadline = t.deadline ? new Date(t.deadline) : null;
+      const impDlValid = impDeadline && !isNaN(impDeadline.getTime());
+      if (t.status === "done") {
+        const compTime = new Date((t as any).completed_at || nowIso);
+        (t as any).deadline_compliance = impDlValid && compTime > impDeadline! ? "Overdue" : "On time";
+      } else {
+        (t as any).deadline_compliance = impDlValid && new Date() > impDeadline! ? "Overdue" : "In Progress";
+      }
       db.tasks.unshift(t);
       createdList.push(t);
     });
@@ -7260,9 +7288,20 @@ async function startServer() {
         }
       });
 
-      // Recalculate progress percentage
+      // Recalculate progress percentage and auto-sync status when checkpoints complete
       const doneTotal = newCheckpoints.filter((c: any) => c.done).length;
       req.body.progress = newCheckpoints.length > 0 ? Math.round((doneTotal / newCheckpoints.length) * 100) : (t.status === "done" ? 100 : 0);
+      if (newCheckpoints.length > 0 && req.body.status === undefined) {
+        if (doneTotal === newCheckpoints.length && t.status !== "done") {
+          req.body.status = "done";
+          req.body.completed_at = t.completed_at || patchNowIso;
+        } else if (doneTotal < newCheckpoints.length && t.status === "done") {
+          req.body.status = doneTotal > 0 ? "in_progress" : "todo";
+          req.body.completed_at = null;
+        } else if (doneTotal > 0 && t.status === "todo") {
+          req.body.status = "in_progress";
+        }
+      }
 
       // Detect if a checkpoint has reached its assigned PIC's turn (ready to work on)
       const newActiveIdx = newCheckpoints.findIndex((c: any) => !c.done);
@@ -7365,8 +7404,16 @@ async function startServer() {
     
     // If status changed to done, mark completed_at and progress 100
     if (req.body.status === "done" && t.status !== "done") {
-      req.body.completed_at = new Date().toISOString();
-      if (!req.body.checkpoints) req.body.progress = 100;
+      req.body.completed_at = req.body.completed_at || new Date().toISOString();
+      if (!req.body.checkpoints) {
+        req.body.progress = 100;
+        if (Array.isArray(t.checkpoints) && t.checkpoints.length > 0) {
+          const doneNow = req.body.completed_at;
+          req.body.checkpoints = t.checkpoints.map((cp: any) =>
+            cp && !cp.done ? { ...cp, done: true, done_at: cp.done_at || doneNow, done_by: actorId } : cp
+          );
+        }
+      }
     }
     // Archive / Unarchive tracking
     if (req.body.archived === false && t.archived === true) {
@@ -8001,9 +8048,13 @@ async function startServer() {
       const canManage = isGroupAdmin({ ...g, admin_ids: adminIds, created_by: g.created_by || conv?.created_by }, reqUser);
       const isMember = Boolean(userId && mems.includes(userId));
       const hasInvitation = Boolean(userId && pendingInvs.some((inv: any) => inv.user_id === userId));
+      const resolvedGroupType = conv?.group_type || g.group_type || (String(g.id || "").startsWith("group_official_") ? "department" : "public");
+      const isDeptGroup = resolvedGroupType === "department" || String(g.id || "").startsWith("group_official_");
       return {
         ...g,
         ...(conv ? { name: conv.name || g.name, description: conv.description ?? g.description, image: conv.image ?? g.image, archived: conv.archived ?? g.archived, location: conv.location ?? g.location } : {}),
+        group_type: resolvedGroupType,
+        is_verified: isDeptGroup,
         created_by: g.created_by || conv?.created_by || adminIds[0] || null,
         admin_ids: adminIds,
         member_ids: mems,
@@ -8028,7 +8079,8 @@ async function startServer() {
     if (!reqUser?.user_id) {
       return res.status(401).json({ detail: "Autentikasi diperlukan untuk membuat grup." });
     }
-    const isVerified = reqUser.role === "super_admin";
+    const groupType = req.body?.group_type || "public";
+    const isVerified = groupType === "department";
     const creatorId = reqUser.user_id;
     const rawMembers = Array.isArray(req.body?.member_ids) ? req.body.member_ids : [];
     const rawDeputies = Array.isArray(req.body?.deputy_admin_ids)
@@ -8041,7 +8093,7 @@ async function startServer() {
       ...req.body,
       id: `conv_${Date.now()}`,
       type: "group",
-      group_type: req.body?.group_type || "public",
+      group_type: groupType,
       is_member: true,
       is_verified: isVerified,
       created_by: creatorId,
@@ -8230,53 +8282,132 @@ async function startServer() {
       );
     }
 
+    const WIB_OFFSET_MS = 7 * 3600000;
+    const toWibDateStr = (val: any): string => {
+      if (!val) return "";
+      const str = String(val).trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+      const d = new Date(str);
+      if (isNaN(d.getTime())) return str.slice(0, 10);
+      return new Date(d.getTime() + WIB_OFFSET_MS).toISOString().slice(0, 10);
+    };
+    const parseDeadlineEndMs = (val: any): number | null => {
+      if (!val) return null;
+      const str = String(val).trim();
+      if (!str) return null;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+        const d = new Date(`${str}T23:59:59.999+07:00`);
+        return isNaN(d.getTime()) ? null : d.getTime();
+      }
+      const d = new Date(str);
+      return isNaN(d.getTime()) ? null : d.getTime();
+    };
+    const parseTaskCompletedMs = (t: any, fallbackMs: number): number => {
+      const raw = t?.completed_at || t?.submit_date || t?.archived_at || t?.updated_at || t?.created_at;
+      if (!raw) return fallbackMs;
+      const str = String(raw).trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+        const d = new Date(`${str}T12:00:00.000+07:00`);
+        return isNaN(d.getTime()) ? fallbackMs : d.getTime();
+      }
+      const d = new Date(str);
+      return isNaN(d.getTime()) ? fallbackMs : d.getTime();
+    };
+
+    const nowMs = now.getTime();
+    const wibNow = new Date(nowMs + WIB_OFFSET_MS);
+    const wibTodayStr = wibNow.toISOString().slice(0, 10);
+
     let week: string[] = [];
     if (range === "4w") {
       week = Array.from({ length: 30 }, (_, i) => {
-        const d = new Date(now);
-        d.setDate(now.getDate() - (29 - i));
+        const d = new Date(wibNow.getTime() - (29 - i) * 86400000);
         return d.toISOString().slice(0, 10);
       });
     } else {
-      const dayOfWeek = (now.getDay() + 6) % 7; // 0 for Monday, 6 for Sunday
-      const monday = new Date(now);
-      monday.setDate(now.getDate() - dayOfWeek);
+      const dayOfWeek = (wibNow.getUTCDay() + 6) % 7; // 0 for Monday, 6 for Sunday in WIB
+      const mondayMs = wibNow.getTime() - dayOfWeek * 86400000;
       week = Array.from({ length: 7 }, (_, i) => {
-        const d = new Date(monday);
-        d.setDate(monday.getDate() + i);
+        const d = new Date(mondayMs + i * 86400000);
         return d.toISOString().slice(0, 10);
       });
     }
 
     // Dynamic task stats scoped strictly to active division / board
+    // Classify every task into 4 mutually exclusive buckets:
+    // 1. doneOnTimeTasks: completed on or before deadline (or without deadline)
+    // 2. doneLateTasks: completed AFTER deadline
+    // 3. activeOverdueTasks: NOT completed yet and deadline has already passed
+    // 4. activeOnTrackTasks: NOT completed yet and within deadline (or without deadline)
     const totalTasks = scopedTasks.length;
-    const doneTasks = scopedTasks.filter((t: any) => t.status === "done" || t.archived);
-    const overdueTasks = scopedTasks.filter((t: any) => t.status !== "done" && !t.archived && t.deadline && new Date(t.deadline) < now);
+    const doneOnTimeTasks: any[] = [];
+    const doneLateTasks: any[] = [];
+    const activeOverdueTasks: any[] = [];
+    const activeOnTrackTasks: any[] = [];
 
-    const onTimeRate = totalTasks > 0 ? Math.round(((totalTasks - overdueTasks.length) / totalTasks) * 100) : 100;
+    scopedTasks.forEach((t: any) => {
+      if (!t) return;
+      const isDone = t.status === "done" || Boolean(t.archived);
+      const dlMs = parseDeadlineEndMs(t.deadline);
+      if (isDone) {
+        const compMs = parseTaskCompletedMs(t, nowMs);
+        if (dlMs !== null && compMs > dlMs) {
+          doneLateTasks.push(t);
+        } else {
+          doneOnTimeTasks.push(t);
+        }
+      } else {
+        if (dlMs !== null && nowMs > dlMs) {
+          activeOverdueTasks.push(t);
+        } else {
+          activeOnTrackTasks.push(t);
+        }
+      }
+    });
 
-    const dayOfWeek = (now.getDay() + 6) % 7;
-    const series = week.map((d, idx) => {
+    const doneCount = doneOnTimeTasks.length + doneLateTasks.length;
+    const activeOverdueCount = activeOverdueTasks.length;
+    const activeOnTrackCount = activeOnTrackTasks.length;
+    const activeCount = activeOverdueCount + activeOnTrackCount;
+
+    // Ketepatan Waktu (On-Time SLA):
+    // - Numerator (on_time): tasks actually completed on or before their deadline (doneOnTimeTasks)
+    // - Denominator (due): all tasks that have been completed OR have already passed their deadline (doneCount + activeOverdueCount)
+    // This ensures:
+    //   1) Unfinished in-progress tasks are never falsely counted as "selesai tepat waktu"
+    //   2) When 0 tasks are completed, on_time is 0 and on_time_rate is 0%
+    //   3) Both active overdue tasks and tasks completed late reduce the on-time percentage
+    //   4) Future in-progress tasks don't unfairly penalize teams that completed 100% of due/done tasks on time
+    const evaluatedDueCount = doneCount + activeOverdueCount;
+    const onTimeCount = doneOnTimeTasks.length;
+    const onTimeRate = evaluatedDueCount > 0 ? Math.round((onTimeCount / evaluatedDueCount) * 100) : 0;
+
+    const series = week.map((d) => {
       const matchedDone = scopedTasks.filter((t: any) => {
-        const compDate = (t.completed_at || t.archived_at || "").slice(0, 10);
-        return compDate === d && (t.status === "done" || t.archived);
+        const isDone = t.status === "done" || Boolean(t.archived);
+        if (!isDone) return false;
+        const compDate = toWibDateStr(t.completed_at || t.submit_date || t.archived_at || t.updated_at);
+        return compDate === d;
       }).length;
 
       const matchedOverdue = scopedTasks.filter((t: any) => {
-        const deadDate = (t.deadline || "").slice(0, 10);
-        return deadDate === d && t.status !== "done" && !t.archived && new Date(t.deadline) < now;
+        const dlMs = parseDeadlineEndMs(t.deadline);
+        if (dlMs === null) return false;
+        const deadDate = toWibDateStr(t.deadline);
+        if (deadDate !== d) return false;
+        const isDone = t.status === "done" || Boolean(t.archived);
+        if (!isDone) return nowMs > dlMs;
+        const compMs = parseTaskCompletedMs(t, nowMs);
+        return compMs > dlMs;
       }).length;
-
-      const doneVal = matchedDone > 0 ? matchedDone : (range === "7d" && doneTasks.length > 0 && idx <= dayOfWeek ? Math.max(0, doneTasks.length - Math.max(0, dayOfWeek - idx)) : matchedDone);
-      const overdueVal = matchedOverdue;
 
       return {
         start: d,
         name: d.slice(5),
-        done: doneVal,
-        Selesai: doneVal,
-        overdue: overdueVal,
-        Overdue: overdueVal
+        done: matchedDone,
+        Selesai: matchedDone,
+        overdue: matchedOverdue,
+        Overdue: matchedOverdue
       };
     });
 
@@ -8302,15 +8433,20 @@ async function startServer() {
         total_tasks: totalTasks
       },
       available_scopes: availableScopes,
-      today: todayStr,
+      today: wibTodayStr,
       anchor,
       range,
       summary: {
-        done: doneTasks.length,
-        overdue: overdueTasks.length,
+        done: doneCount,
+        done_on_time: doneOnTimeTasks.length,
+        done_late: doneLateTasks.length,
+        overdue: activeOverdueCount,
+        active_on_track: activeOnTrackCount,
+        active: activeCount,
+        total: totalTasks,
         on_time_rate: onTimeRate,
-        due: totalTasks,
-        on_time: Math.max(0, totalTasks - overdueTasks.length)
+        due: evaluatedDueCount,
+        on_time: onTimeCount
       },
       week,
       series,
@@ -9871,8 +10007,10 @@ async function startServer() {
         ).length;
         const effectiveAt = lastMsg?.created_at || (c.type === "dm" ? c.last_message_at : null) || null;
 
+        const isDeptConv = c.type === "group" && (c.group_type === "department" || String(c.id || "").startsWith("group_official_"));
         return {
           ...c,
+          ...(c.type === "group" ? { is_verified: isDeptConv } : {}),
           name: c.type === "dm" && !String(c.id).startsWith("conv_circle_") ? "" : c.name,
           member_ids: cleanMems,
           members: cleanMems,
@@ -10095,9 +10233,11 @@ async function startServer() {
           .filter((m: any) => m.conversation_id === c.id && !m.deleted && Array.isArray(m.attachments) && m.attachments.length > 0)
           .flatMap((m: any) => m.attachments);
 
+    const isDeptGroup = c.type === "group" && (groupType === "department" || String(c.id || "").startsWith("group_official_"));
     res.json({
       ...c,
       group_type: groupType,
+      ...(c.type === "group" ? { is_verified: isDeptGroup } : {}),
       created_by: c.created_by || grpRecord?.created_by || adminIds[0] || null,
       admin_ids: adminIds,
       name: c.type === "dm" && !String(c.id).startsWith("conv_circle_") ? "" : c.name,
@@ -11078,6 +11218,7 @@ async function startServer() {
       const g = list.find((x: any) => x.id === req.params.id);
       if (g) {
         Object.assign(g, safePatch);
+        g.is_verified = Boolean(g.group_type === "department" || String(g.id || "").startsWith("group_official_"));
         if (Array.isArray(safePatch.deputy_admin_ids) || Array.isArray(safePatch.admin_ids)) {
           const requestedAdmins = Array.isArray(safePatch.deputy_admin_ids) ? safePatch.deputy_admin_ids : safePatch.admin_ids;
           const nextAdmins = Array.from(new Set([creatorId, ...requestedAdmins].filter((id: any) => Boolean(id) && id !== CIRCLE_BOT_ID)));

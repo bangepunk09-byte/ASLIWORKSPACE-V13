@@ -554,7 +554,7 @@ function Node({ unit, siblingsIndex, siblingsCount, tree, members, depth, ctx })
       {open && (
         <>
           {mem.length > 0 && (
-            <div className="ml-2.5 sm:ml-7 flex flex-wrap gap-1.5 sm:gap-2 border-l pl-2 sm:pl-5 py-1.5">
+            <div className="ml-2.5 sm:ml-7 flex flex-wrap gap-2.5 sm:gap-3 border-l pl-2.5 sm:pl-5 py-2">
               {mem.map((u) => (
                 <button
                   key={u.user_id}
@@ -564,15 +564,15 @@ function Node({ unit, siblingsIndex, siblingsCount, tree, members, depth, ctx })
                     e.dataTransfer.setData("text/plain", JSON.stringify({ user: u.user_id }));
                   }}
                   onClick={() => navigate(`/people/${u.user_id}`)}
-                  className={`flex items-center gap-2 rounded-full border bg-surface py-1 pl-1 pr-3.5 text-left shadow-2xs hover:border-brand transition-colors ${
+                  className={`flex items-center gap-2.5 rounded-full border bg-surface py-2 pl-2 pr-4 text-left shadow-2xs hover:border-brand transition-colors ${
                     ctx.q && u.name.toLowerCase().includes(ctx.q) ? "ring-2 ring-[var(--c-accent)]" : ""
                   }`}
                   data-testid={`org-member-${u.user_id}`}
                 >
-                  <Avatar user={u} size={28} />
-                  <span>
+                  <Avatar user={u} size={34} />
+                  <span className="leading-tight">
                     <span className="block text-xs font-bold text-ink">{u.name}</span>
-                    <span className="block text-[10px] text-sub">
+                    <span className="mt-0.5 block text-[10.5px] text-sub">
                       {u.job_title || u.department}
                       {userMap[u.manager_id] ? ` · ↑ ${userMap[u.manager_id].name.split(" ")[0]}` : ""}
                     </span>

@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { useApp } from "../../context/AppContext";
 import { api, errMsg, uploadFile, fileUrl } from "../../lib/api";
 import { DEFAULT_COPYWRITING, LOGIN_COPYWRITING_SECTIONS, cleanCopywritingMap } from "../../lib/i18n";
-import { Avatar, LabelChip, ROLE_NAMES, rel, Logo, Spinner } from "../../components/common";
+import { Avatar, LabelChip, ROLE_NAMES, rel, Logo, Spinner, renderFormattedCopy, RichCopyField } from "../../components/common";
 import { Switch } from "../../components/ui/switch";
 import { AppSelect, Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "../../components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../../components/ui/dialog";
@@ -2548,56 +2548,85 @@ export function MarketplaceSettingsCard({ compact = false }) {
                       </button>
                     </div>
 
-                    <div
-                      className="relative overflow-hidden rounded-2xl border border-slate-200/80 dark:border-slate-800 bg-slate-900"
-                      data-testid="marketplace-banner-preview"
-                    >
-                      <img
-                        src={resolveMarketplaceBannerImage(cfg.banner_image_url)}
-                        alt="Preview Hero Banner Marketplace"
-                        className="h-40 sm:h-48 w-full object-cover opacity-80"
-                      />
-                      <div
-                        className={`absolute inset-0 bg-gradient-to-r ${
-                          resolveMarketplaceBannerOverlay(cfg.banner_overlay_style).overlayClass
-                        } flex items-center p-4 sm:p-6`}
-                      >
-                        <div className="max-w-lg space-y-1.5 text-white">
-                          {cfg.banner_kicker && (
-                            <p
-                              className={`text-[10px] sm:text-[11px] font-bold uppercase tracking-widest ${
-                                resolveMarketplaceBannerOverlay(cfg.banner_overlay_style).kickerClass
-                              }`}
-                            >
-                              {cfg.banner_kicker}
-                            </p>
-                          )}
-                          <h4 className="text-lg sm:text-2xl font-extrabold leading-tight">
-                            {cfg.banner_title || "Temukan Produk Pilihan & Jasa Rekan Kantor"}
-                          </h4>
-                          {(cfg.banner_subtitle || cfg.banner_promo_code || cfg.banner_promo_text) && (
-                            <p className="text-xs text-slate-200 leading-relaxed">
-                              {cfg.banner_subtitle}
-                              {cfg.banner_promo_code ? (
-                                <>
-                                  {cfg.banner_subtitle ? " " : ""}
-                                  {cfg.banner_promo_prefix ? `${cfg.banner_promo_prefix} ` : ""}
-                                  <strong className="font-mono text-white">
-                                    {cfg.banner_promo_code}
-                                  </strong>
-                                  {cfg.banner_promo_text ? ` ${cfg.banner_promo_text}` : ""}
-                                </>
-                              ) : cfg.banner_promo_text ? (
-                                <>
-                                  {cfg.banner_subtitle ? " " : ""}
-                                  {cfg.banner_promo_text}
-                                </>
-                              ) : null}
-                            </p>
-                          )}
+                    {(() => {
+                      const previewTitle = cfg.banner_title || "Temukan Produk Pilihan & Jasa Rekan Kantor";
+                      const titleHasExplicitBold = /(\*\*[^*]+\*\*|<b>[\s\S]+?<\/b>|<strong>[\s\S]+?<\/strong>)/.test(previewTitle);
+                      return (
+                        <div
+                          className="relative overflow-hidden rounded-2xl border border-slate-200/80 dark:border-slate-800 bg-slate-900"
+                          data-testid="marketplace-banner-preview"
+                        >
+                          <img
+                            src={resolveMarketplaceBannerImage(cfg.banner_image_url)}
+                            alt="Preview Hero Banner Marketplace"
+                            className="absolute inset-0 h-full w-full object-cover opacity-80"
+                          />
+                          <div
+                            className={`relative min-h-[10rem] sm:min-h-[12rem] bg-gradient-to-r ${
+                              resolveMarketplaceBannerOverlay(cfg.banner_overlay_style).overlayClass
+                            } flex items-center p-4 sm:p-6`}
+                          >
+                            <div className="max-w-xl space-y-1.5 text-white">
+                              {cfg.banner_kicker && (
+                                <p
+                                  className={`text-[10px] sm:text-[11px] font-bold uppercase tracking-widest whitespace-pre-line ${
+                                    resolveMarketplaceBannerOverlay(cfg.banner_overlay_style).kickerClass
+                                  }`}
+                                >
+                                  {renderFormattedCopy(cfg.banner_kicker, {
+                                    boldClass: "font-black text-white",
+                                    highlightClass: "rounded bg-white/20 px-1.5 py-0.5 font-extrabold text-white",
+                                  })}
+                                </p>
+                              )}
+                              <h4
+                                className={`text-lg sm:text-2xl leading-tight whitespace-pre-line ${
+                                  titleHasExplicitBold ? "font-medium text-white/90" : "font-extrabold text-white"
+                                }`}
+                              >
+                                {renderFormattedCopy(previewTitle, {
+                                  boldClass: "font-extrabold text-white",
+                                  normalPartClass: titleHasExplicitBold ? "font-normal text-white/90" : "",
+                                  highlightClass: "rounded-lg bg-brand/90 px-2 py-0.5 font-extrabold text-white",
+                                })}
+                              </h4>
+                              {(cfg.banner_subtitle || cfg.banner_promo_code || cfg.banner_promo_text) && (
+                                <p className="text-xs text-slate-200 leading-relaxed whitespace-pre-line">
+                                  {renderFormattedCopy(cfg.banner_subtitle, {
+                                    boldClass: "font-extrabold text-white",
+                                    highlightClass: "rounded bg-white/20 px-1.5 py-0.5 font-bold text-white",
+                                  })}
+                                  {cfg.banner_promo_code ? (
+                                    <>
+                                      {cfg.banner_subtitle ? " " : ""}
+                                      {cfg.banner_promo_prefix ? (
+                                        <>
+                                          {renderFormattedCopy(cfg.banner_promo_prefix, { boldClass: "font-extrabold text-white" })}{" "}
+                                        </>
+                                      ) : null}
+                                      <strong className="font-mono font-extrabold text-white">
+                                        {renderFormattedCopy(cfg.banner_promo_code, { boldClass: "font-extrabold text-white" })}
+                                      </strong>
+                                      {cfg.banner_promo_text ? (
+                                        <>
+                                          {" "}
+                                          {renderFormattedCopy(cfg.banner_promo_text, { boldClass: "font-extrabold text-white" })}
+                                        </>
+                                      ) : null}
+                                    </>
+                                  ) : cfg.banner_promo_text ? (
+                                    <>
+                                      {cfg.banner_subtitle ? " " : ""}
+                                      {renderFormattedCopy(cfg.banner_promo_text, { boldClass: "font-extrabold text-white" })}
+                                    </>
+                                  ) : null}
+                                </p>
+                              )}
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                    </div>
+                      );
+                    })()}
                   </div>
 
                   {/* Image Picker & Theme Overlay */}
@@ -2682,77 +2711,71 @@ export function MarketplaceSettingsCard({ compact = false }) {
                     </div>
                   </div>
 
-                  {/* Text Customization Fields */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <label className="text-xs font-semibold text-sub">
-                      Label Atas (Kicker)
-                      <input
-                        value={cfg.banner_kicker}
-                        onChange={(e) => setCfg({ ...cfg, banner_kicker: e.target.value })}
-                        placeholder="INTERNAL EMPLOYEE EXCHANGE"
-                        className={`${inp} mt-1 w-full`}
-                        data-testid="marketplace-banner-kicker-input"
-                      />
-                    </label>
-
-                    <label className="text-xs font-semibold text-sub">
-                      Judul Utama Banner (Headline)
-                      <input
-                        value={cfg.banner_title}
-                        onChange={(e) => setCfg({ ...cfg, banner_title: e.target.value })}
-                        placeholder="Temukan Produk Pilihan & Jasa Rekan Kantor"
-                        className={`${inp} mt-1 w-full`}
-                        data-testid="marketplace-banner-title-input"
-                      />
-                    </label>
+                  {/* Text Customization Fields (Supports Enter Line Breaks & Bold Selection) */}
+                  <div className="rounded-xl border border-brand/20 bg-brand/5 px-3 py-2 text-[11px] text-sub flex flex-wrap items-center justify-between gap-2">
+                    <span>
+                      💡 <strong className="text-ink">Tips Edit Banner:</strong> Tekan <kbd className="rounded border bg-surface px-1.5 py-0.5 font-mono text-[10px] font-bold text-ink">Enter</kbd> (atau klik <strong className="text-ink">↵</strong>) untuk mengatur penggalan baris baru, dan blok kata lalu klik <strong className="text-ink">B</strong> (<kbd className="rounded border bg-surface px-1 py-0.5 font-mono text-[10px]">Ctrl+B</kbd>) untuk memilih teks yang ingin di-<strong>Bold</strong>.
+                    </span>
                   </div>
 
-                  <label className="block text-xs font-semibold text-sub">
-                    Deskripsi / Subjudul Banner
-                    <input
-                      value={cfg.banner_subtitle}
-                      onChange={(e) => setCfg({ ...cfg, banner_subtitle: e.target.value })}
-                      placeholder="Dukung sesama tim lewat transaksi QRIS, Virtual Account, E-Wallet, atau COD antar-meja."
-                      className={`${inp} mt-1 w-full`}
-                      data-testid="marketplace-banner-subtitle-input"
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
+                    <RichCopyField
+                      label="Label Atas (Kicker)"
+                      singleLineLabel
+                      value={cfg.banner_kicker}
+                      onChange={(val) => setCfg({ ...cfg, banner_kicker: val })}
+                      placeholder="INTERNAL EMPLOYEE EXCHANGE"
+                      testid="marketplace-banner-kicker-input"
                     />
-                  </label>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <label className="text-xs font-semibold text-sub">
-                      Teks Pengantar Promo
-                      <input
-                        value={cfg.banner_promo_prefix}
-                        onChange={(e) => setCfg({ ...cfg, banner_promo_prefix: e.target.value })}
-                        placeholder="Kode"
-                        className={`${inp} mt-1 w-full`}
-                        data-testid="marketplace-banner-promo-prefix-input"
-                      />
-                    </label>
+                    <RichCopyField
+                      label="Judul Utama Banner (Headline)"
+                      singleLineLabel
+                      value={cfg.banner_title}
+                      onChange={(val) => setCfg({ ...cfg, banner_title: val })}
+                      placeholder="Temukan Produk Pilihan & Jasa Rekan Kantor"
+                      testid="marketplace-banner-title-input"
+                    />
+                  </div>
 
-                    <label className="text-xs font-semibold text-sub">
-                      Highlight Kode Voucher (Opsional)
-                      <input
-                        value={cfg.banner_promo_code}
-                        onChange={(e) =>
-                          setCfg({ ...cfg, banner_promo_code: e.target.value.toUpperCase() })
-                        }
-                        placeholder="TEMANKANTOR"
-                        className={`${inp} mt-1 w-full font-mono`}
-                        data-testid="marketplace-banner-promo-code-input"
-                      />
-                    </label>
+                  <RichCopyField
+                    label="Deskripsi / Subjudul Banner"
+                    value={cfg.banner_subtitle}
+                    onChange={(val) => setCfg({ ...cfg, banner_subtitle: val })}
+                    placeholder="Dukung sesama tim lewat transaksi QRIS, Virtual Account, E-Wallet, atau COD antar-meja."
+                    minRows={2}
+                    testid="marketplace-banner-subtitle-input"
+                  />
 
-                    <label className="text-xs font-semibold text-sub">
-                      Keterangan Promo Voucher
-                      <input
-                        value={cfg.banner_promo_text}
-                        onChange={(e) => setCfg({ ...cfg, banner_promo_text: e.target.value })}
-                        placeholder="diskon 10%."
-                        className={`${inp} mt-1 w-full`}
-                        data-testid="marketplace-banner-promo-text-input"
-                      />
-                    </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-start">
+                    <RichCopyField
+                      label="Teks Pengantar Promo"
+                      singleLineLabel
+                      value={cfg.banner_promo_prefix}
+                      onChange={(val) => setCfg({ ...cfg, banner_promo_prefix: val })}
+                      placeholder="Kode"
+                      testid="marketplace-banner-promo-prefix-input"
+                    />
+
+                    <RichCopyField
+                      label="Highlight Kode Voucher"
+                      singleLineLabel
+                      value={cfg.banner_promo_code}
+                      onChange={(val) => setCfg({ ...cfg, banner_promo_code: val })}
+                      placeholder="TEMANKANTOR"
+                      mono
+                      uppercase
+                      testid="marketplace-banner-promo-code-input"
+                    />
+
+                    <RichCopyField
+                      label="Keterangan Promo Voucher"
+                      singleLineLabel
+                      value={cfg.banner_promo_text}
+                      onChange={(val) => setCfg({ ...cfg, banner_promo_text: val })}
+                      placeholder="diskon 10%."
+                      testid="marketplace-banner-promo-text-input"
+                    />
                   </div>
                 </div>
               )}
@@ -2774,7 +2797,7 @@ export function MarketplaceSettingsCard({ compact = false }) {
                     </span>
                   </div>
                   <p className="mt-0.5 text-xs text-sub">
-                    Ubah seluruh teks tombol, tab navigasi, placeholder pencarian, Toko Saya, keranjang, hingga pesan status kosong.
+                    Ubah seluruh teks tombol, tab navigasi, placeholder pencarian, Toko Saya, keranjang, hingga pesan status kosong. Mendukung Enter (baris baru) &amp; Bold (<code className="font-mono">**teks**</code>).
                   </p>
                 </div>
                 <button
@@ -2812,7 +2835,7 @@ export function MarketplaceSettingsCard({ compact = false }) {
               </div>
 
               {copyTab === "header_nav" && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 items-start">
                   {[
                     ["cart_btn_label", "Tombol Keranjang (Header)"],
                     ["sell_btn_label", "Tombol Jual Barang / Jasa (Header)"],
@@ -2823,32 +2846,29 @@ export function MarketplaceSettingsCard({ compact = false }) {
                     ["add_to_cart_label", "Tombol Tambah ke Keranjang (Kartu Produk)"],
                     ["sold_out_label", "Badge Stok Habis (Kartu Produk)"],
                   ].map(([k, label]) => (
-                    <label key={k} className="text-xs font-semibold text-sub">
-                      {label}
-                      <input
-                        value={cfg[k] ?? ""}
-                        onChange={(e) => setCfg({ ...cfg, [k]: e.target.value })}
-                        placeholder={DEFAULT_MARKETPLACE_COPYWRITING[k]}
-                        className={`${inp} mt-1 w-full`}
-                        data-testid={`marketplace-copy-${k}`}
-                      />
-                    </label>
-                  ))}
-                  <label className="sm:col-span-2 text-xs font-semibold text-sub">
-                    Placeholder Kolom Pencarian Produk
-                    <input
-                      value={cfg.search_placeholder ?? ""}
-                      onChange={(e) => setCfg({ ...cfg, search_placeholder: e.target.value })}
-                      placeholder={DEFAULT_MARKETPLACE_COPYWRITING.search_placeholder}
-                      className={`${inp} mt-1 w-full`}
-                      data-testid="marketplace-copy-search_placeholder"
+                    <RichCopyField
+                      key={k}
+                      label={label}
+                      singleLineLabel
+                      value={cfg[k] ?? ""}
+                      onChange={(val) => setCfg({ ...cfg, [k]: val })}
+                      placeholder={DEFAULT_MARKETPLACE_COPYWRITING[k]}
+                      testid={`marketplace-copy-${k}`}
                     />
-                  </label>
+                  ))}
+                  <RichCopyField
+                    className="sm:col-span-2"
+                    label="Placeholder Kolom Pencarian Produk"
+                    value={cfg.search_placeholder ?? ""}
+                    onChange={(val) => setCfg({ ...cfg, search_placeholder: val })}
+                    placeholder={DEFAULT_MARKETPLACE_COPYWRITING.search_placeholder}
+                    testid="marketplace-copy-search_placeholder"
+                  />
                 </div>
               )}
 
               {copyTab === "seller_cart" && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 items-start">
                   {[
                     ["seller_kpi_products_label", "KPI 1 Toko Saya (Produk Saya)"],
                     ["seller_kpi_pending_label", "KPI 2 Toko Saya (Pesanan Perlu Diproses)"],
@@ -2859,22 +2879,21 @@ export function MarketplaceSettingsCard({ compact = false }) {
                     ["cart_drawer_title", "Judul Panel Keranjang Belanja"],
                     ["cart_checkout_btn", "Tombol Lanjut ke Pembayaran (Keranjang)"],
                   ].map(([k, label]) => (
-                    <label key={k} className="text-xs font-semibold text-sub">
-                      {label}
-                      <input
-                        value={cfg[k] ?? ""}
-                        onChange={(e) => setCfg({ ...cfg, [k]: e.target.value })}
-                        placeholder={DEFAULT_MARKETPLACE_COPYWRITING[k]}
-                        className={`${inp} mt-1 w-full`}
-                        data-testid={`marketplace-copy-${k}`}
-                      />
-                    </label>
+                    <RichCopyField
+                      key={k}
+                      label={label}
+                      singleLineLabel
+                      value={cfg[k] ?? ""}
+                      onChange={(val) => setCfg({ ...cfg, [k]: val })}
+                      placeholder={DEFAULT_MARKETPLACE_COPYWRITING[k]}
+                      testid={`marketplace-copy-${k}`}
+                    />
                   ))}
                 </div>
               )}
 
               {copyTab === "empty_disabled" && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 items-start">
                   {[
                     ["empty_explore_title", "Judul Produk Tidak Ditemukan"],
                     ["empty_wishlist_title", "Judul Favorit Kosong"],
@@ -2889,27 +2908,25 @@ export function MarketplaceSettingsCard({ compact = false }) {
                     ["cart_empty_subtitle", "Subjudul Keranjang Kosong"],
                     ["disabled_title", "Judul Saat Marketplace Dinonaktifkan"],
                   ].map(([k, label]) => (
-                    <label key={k} className="text-xs font-semibold text-sub">
-                      {label}
-                      <input
-                        value={cfg[k] ?? ""}
-                        onChange={(e) => setCfg({ ...cfg, [k]: e.target.value })}
-                        placeholder={DEFAULT_MARKETPLACE_COPYWRITING[k]}
-                        className={`${inp} mt-1 w-full`}
-                        data-testid={`marketplace-copy-${k}`}
-                      />
-                    </label>
-                  ))}
-                  <label className="sm:col-span-2 text-xs font-semibold text-sub">
-                    Deskripsi Saat Marketplace Dinonaktifkan
-                    <input
-                      value={cfg.disabled_subtitle ?? ""}
-                      onChange={(e) => setCfg({ ...cfg, disabled_subtitle: e.target.value })}
-                      placeholder={DEFAULT_MARKETPLACE_COPYWRITING.disabled_subtitle}
-                      className={`${inp} mt-1 w-full`}
-                      data-testid="marketplace-copy-disabled_subtitle"
+                    <RichCopyField
+                      key={k}
+                      label={label}
+                      singleLineLabel
+                      value={cfg[k] ?? ""}
+                      onChange={(val) => setCfg({ ...cfg, [k]: val })}
+                      placeholder={DEFAULT_MARKETPLACE_COPYWRITING[k]}
+                      testid={`marketplace-copy-${k}`}
                     />
-                  </label>
+                  ))}
+                  <RichCopyField
+                    className="sm:col-span-2"
+                    label="Deskripsi Saat Marketplace Dinonaktifkan"
+                    value={cfg.disabled_subtitle ?? ""}
+                    onChange={(val) => setCfg({ ...cfg, disabled_subtitle: val })}
+                    placeholder={DEFAULT_MARKETPLACE_COPYWRITING.disabled_subtitle}
+                    minRows={2}
+                    testid="marketplace-copy-disabled_subtitle"
+                  />
                 </div>
               )}
             </div>

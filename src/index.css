@@ -340,17 +340,17 @@ html, body, *, *::before, *::after {
 
 @keyframes avatarDeadlinePulse {
   0%, 100% {
-    box-shadow: 0 0 0 2px var(--c-surface), 0 0 0 4px #ef4444, 0 0 10px rgba(239, 68, 68, 0.72);
+    box-shadow: 0 0 0 2.5px #ef4444, 0 0 10px rgba(239, 68, 68, 0.72);
   }
   50% {
-    box-shadow: 0 0 0 2px var(--c-surface), 0 0 0 4.5px #f43f5e, 0 0 22px rgba(239, 68, 68, 1);
+    box-shadow: 0 0 0 3px #f43f5e, 0 0 22px rgba(239, 68, 68, 1);
   }
 }
 .avatar-deadline-ring {
   animation: avatarDeadlinePulse 1.4s ease-in-out infinite;
 }
 .avatar-safe-ring {
-  box-shadow: 0 0 0 2px var(--c-surface), 0 0 0 3.5px #10b981, 0 0 7px rgba(16, 185, 129, 0.28);
+  box-shadow: 0 0 0 2.5px #10b981, 0 0 7px rgba(16, 185, 129, 0.28);
 }
 
 @media (prefers-reduced-motion: reduce) {

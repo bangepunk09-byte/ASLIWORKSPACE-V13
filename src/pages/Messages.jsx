@@ -25,7 +25,7 @@ const ConversationRow = memo(function ConversationRow({ c, active, onSelect, onC
         <span className="flex items-center justify-between gap-2">
           <span className="flex items-center gap-1 min-w-0">
             <span className="truncate text-sm font-semibold leading-snug">{c.title}</span>
-            {c.is_verified && <ShieldCheck size={13} className="shrink-0 text-blue-500 fill-blue-500/10" />}
+            {(c.group_type === "department" || String(c.id || "").startsWith("group_official_")) && <ShieldCheck size={13} className="shrink-0 text-blue-500 fill-blue-500/10" />}
           </span>
           <span className="shrink-0 text-[10px] text-sub">{fmtTime(c.last_message_at)}</span>
         </span>
@@ -383,7 +383,7 @@ export default function Messages() {
     if (!c) return false;
     if (c.type === "dm") return true;
     if (c.is_default) return false;
-    const isOfficialDept = String(c.id || "").startsWith("group_official_") || Boolean(c.is_verified);
+    const isOfficialDept = c.group_type === "department" || String(c.id || "").startsWith("group_official_");
     if (isOfficialDept) return isAdmin;
     return Boolean(
       isAdmin ||
