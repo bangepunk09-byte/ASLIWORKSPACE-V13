@@ -20,7 +20,7 @@ const DropdownMenuSubTrigger = React.forwardRef(({ className, inset, children, .
   <DropdownMenuPrimitive.SubTrigger
     ref={ref}
     className={cn(
-      "flex cursor-pointer select-none items-center gap-2.5 rounded-xl px-3 py-2 text-xs sm:text-sm font-medium outline-none border border-transparent transition-all duration-120 hover:bg-surface2 focus:bg-surface2 focus:text-ink data-[state=open]:bg-surface2 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
+      "flex cursor-pointer select-none items-center gap-2.5 rounded-xl px-3 py-2 text-xs sm:text-sm font-medium outline-none border border-transparent transition-colors duration-75 ease-out hover:bg-surface2 data-[highlighted]:bg-surface2 data-[highlighted]:text-ink data-[state=open]:bg-surface2 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
       inset && "pl-8",
       className
     )}
@@ -36,7 +36,7 @@ const DropdownMenuSubContent = React.forwardRef(({ className, ...props }, ref) =
   <DropdownMenuPrimitive.SubContent
     ref={ref}
     className={cn(
-      "z-50 min-w-[9rem] overflow-hidden rounded-2xl border border-slate-200/90 dark:border-slate-800 bg-surface p-1.5 text-ink shadow-xl shadow-slate-900/10 dark:shadow-black/40 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 origin-[--radix-dropdown-menu-content-transform-origin]",
+      "pointer-events-auto z-[300] min-w-[9rem] overflow-hidden rounded-2xl border border-slate-200/90 dark:border-slate-800 bg-surface p-1.5 text-ink shadow-xl shadow-slate-900/10 dark:shadow-black/40 animate-popover-enter",
       className
     )}
     {...props} />
@@ -50,8 +50,7 @@ const DropdownMenuContent = React.forwardRef(({ className, sideOffset = 6, ...pr
       ref={ref}
       sideOffset={sideOffset}
       className={cn(
-        "z-50 max-h-[var(--radix-dropdown-menu-content-available-height)] min-w-[10rem] overflow-y-auto overflow-x-hidden rounded-2xl border border-slate-200/90 dark:border-slate-800 bg-surface p-1.5 text-ink shadow-xl shadow-slate-900/10 dark:shadow-black/40 duration-150 ease-out space-y-0.5",
-        "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-98 data-[state=open]:zoom-in-98 data-[side=bottom]:slide-in-from-top-1.5 data-[side=left]:slide-in-from-right-1.5 data-[side=right]:slide-in-from-left-1.5 data-[side=top]:slide-in-from-bottom-1.5 origin-[--radix-dropdown-menu-content-transform-origin]",
+        "pointer-events-auto z-[300] max-h-[var(--radix-dropdown-menu-content-available-height)] min-w-[10rem] overflow-y-auto overflow-x-hidden overscroll-contain rounded-2xl border border-slate-200/90 dark:border-slate-800 bg-surface p-1.5 text-ink shadow-xl shadow-slate-900/10 dark:shadow-black/40 space-y-0.5 animate-popover-enter",
         className
       )}
       {...props} />
@@ -59,14 +58,19 @@ const DropdownMenuContent = React.forwardRef(({ className, sideOffset = 6, ...pr
 ))
 DropdownMenuContent.displayName = DropdownMenuPrimitive.Content.displayName
 
-const DropdownMenuItem = React.forwardRef(({ className, inset, ...props }, ref) => (
+const DropdownMenuItem = React.forwardRef(({ className, inset, onPointerMove, ...props }, ref) => (
   <DropdownMenuPrimitive.Item
     ref={ref}
+    onPointerMove={(e) => {
+      onPointerMove?.(e);
+      if (e.defaultPrevented) return;
+      if (document.activeElement !== e.currentTarget) {
+        e.currentTarget.focus({ preventScroll: true });
+      }
+    }}
     className={cn(
-      "relative flex cursor-pointer select-none items-center gap-2.5 rounded-xl px-3 py-2 text-xs sm:text-sm font-medium outline-none border border-transparent transition-all duration-120 text-ink",
-      "hover:bg-surface2",
-      "focus:bg-surface2 focus:text-ink",
-      "data-[highlighted]:bg-surface2 data-[highlighted]:text-ink",
+      "relative flex cursor-pointer select-none items-center gap-2.5 rounded-xl px-3 py-2 text-xs sm:text-sm font-medium outline-none border border-transparent transition-colors duration-75 ease-out text-ink",
+      "hover:bg-surface2 data-[highlighted]:bg-surface2 data-[highlighted]:text-ink",
       "data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&>svg]:size-4 [&>svg]:shrink-0",
       inset && "pl-8",
       className
@@ -75,16 +79,23 @@ const DropdownMenuItem = React.forwardRef(({ className, inset, ...props }, ref) 
 ))
 DropdownMenuItem.displayName = DropdownMenuPrimitive.Item.displayName
 
-const DropdownMenuCheckboxItem = React.forwardRef(({ className, children, checked, ...props }, ref) => (
+const DropdownMenuCheckboxItem = React.forwardRef(({ className, children, checked, onPointerMove, ...props }, ref) => (
   <DropdownMenuPrimitive.CheckboxItem
     ref={ref}
+    onPointerMove={(e) => {
+      onPointerMove?.(e);
+      if (e.defaultPrevented) return;
+      if (document.activeElement !== e.currentTarget) {
+        e.currentTarget.focus({ preventScroll: true });
+      }
+    }}
     className={cn(
-      "relative flex cursor-pointer select-none items-center rounded-xl py-2 pl-8 pr-3 text-xs sm:text-sm font-medium outline-none border border-transparent transition-all duration-120 hover:bg-surface2 focus:bg-surface2 focus:text-ink data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      "relative flex cursor-pointer select-none items-center rounded-xl py-2 pl-8 pr-3 text-xs sm:text-sm font-medium outline-none border border-transparent transition-colors duration-75 ease-out hover:bg-surface2 data-[highlighted]:bg-surface2 data-[highlighted]:text-ink data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
       className
     )}
     checked={checked}
     {...props}>
-    <span className="absolute left-2.5 flex h-4 w-4 items-center justify-center">
+    <span className="absolute left-2.5 flex h-4 w-4 items-center justify-center pointer-events-none">
       <DropdownMenuPrimitive.ItemIndicator>
         <Check className="h-4 w-4 text-brand" />
       </DropdownMenuPrimitive.ItemIndicator>
@@ -95,15 +106,22 @@ const DropdownMenuCheckboxItem = React.forwardRef(({ className, children, checke
 DropdownMenuCheckboxItem.displayName =
   DropdownMenuPrimitive.CheckboxItem.displayName
 
-const DropdownMenuRadioItem = React.forwardRef(({ className, children, ...props }, ref) => (
+const DropdownMenuRadioItem = React.forwardRef(({ className, children, onPointerMove, ...props }, ref) => (
   <DropdownMenuPrimitive.RadioItem
     ref={ref}
+    onPointerMove={(e) => {
+      onPointerMove?.(e);
+      if (e.defaultPrevented) return;
+      if (document.activeElement !== e.currentTarget) {
+        e.currentTarget.focus({ preventScroll: true });
+      }
+    }}
     className={cn(
-      "relative flex cursor-pointer select-none items-center rounded-xl py-2 pl-8 pr-3 text-xs sm:text-sm font-medium outline-none border border-transparent transition-all duration-120 hover:bg-surface2 focus:bg-surface2 focus:text-ink data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      "relative flex cursor-pointer select-none items-center rounded-xl py-2 pl-8 pr-3 text-xs sm:text-sm font-medium outline-none border border-transparent transition-colors duration-75 ease-out hover:bg-surface2 data-[highlighted]:bg-surface2 data-[highlighted]:text-ink data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
       className
     )}
     {...props}>
-    <span className="absolute left-2.5 flex h-4 w-4 items-center justify-center">
+    <span className="absolute left-2.5 flex h-4 w-4 items-center justify-center pointer-events-none">
       <DropdownMenuPrimitive.ItemIndicator>
         <Circle className="h-2 w-2 fill-brand text-brand" />
       </DropdownMenuPrimitive.ItemIndicator>

@@ -16,13 +16,13 @@ const SelectTrigger = React.forwardRef(({ className, children, ...props }, ref) 
   <SelectPrimitive.Trigger
     ref={ref}
     className={cn(
-      "group inline-flex h-10 w-full items-center justify-between gap-2 whitespace-nowrap rounded-full border border-border bg-surface px-4 py-0 text-xs sm:text-sm font-semibold leading-normal text-ink shadow-xs transition-all hover:bg-surface2 focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand disabled:cursor-not-allowed disabled:opacity-50 [&>span]:inline-flex [&>span]:items-center [&>span]:truncate [&>span]:leading-normal cursor-pointer",
+      "group inline-flex h-10 w-full items-center justify-between gap-2 whitespace-nowrap rounded-full border border-border bg-surface px-4 py-0 text-xs sm:text-sm font-semibold leading-normal text-ink shadow-xs transition-colors duration-100 ease-out hover:bg-surface2 focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand disabled:cursor-not-allowed disabled:opacity-50 [&>span]:inline-flex [&>span]:items-center [&>span]:truncate [&>span]:leading-normal cursor-pointer",
       className
     )}
     {...props}>
     {children}
     <SelectPrimitive.Icon asChild>
-      <ChevronDown className="h-4 w-4 text-sub opacity-75 shrink-0 transition-transform duration-150 group-data-[state=open]:rotate-180" />
+      <ChevronDown className="h-4 w-4 text-sub opacity-75 shrink-0 transition-transform duration-150 ease-out group-data-[state=open]:rotate-180" />
     </SelectPrimitive.Icon>
   </SelectPrimitive.Trigger>
 ))
@@ -31,7 +31,7 @@ SelectTrigger.displayName = SelectPrimitive.Trigger.displayName
 const SelectScrollUpButton = React.forwardRef(({ className, ...props }, ref) => (
   <SelectPrimitive.ScrollUpButton
     ref={ref}
-    className={cn("flex cursor-default items-center justify-center py-1 text-sub", className)}
+    className={cn("hidden", className)}
     {...props}>
     <ChevronUp className="h-4 w-4" />
   </SelectPrimitive.ScrollUpButton>
@@ -41,7 +41,7 @@ SelectScrollUpButton.displayName = SelectPrimitive.ScrollUpButton.displayName
 const SelectScrollDownButton = React.forwardRef(({ className, ...props }, ref) => (
   <SelectPrimitive.ScrollDownButton
     ref={ref}
-    className={cn("flex cursor-default items-center justify-center py-1 text-sub", className)}
+    className={cn("hidden", className)}
     {...props}>
     <ChevronDown className="h-4 w-4" />
   </SelectPrimitive.ScrollDownButton>
@@ -55,20 +55,18 @@ const SelectContent = React.forwardRef(({ className, children, position = "poppe
       ref={ref}
       sideOffset={sideOffset}
       className={cn(
-        "relative z-[250] max-h-72 min-w-[10rem] overflow-y-auto overflow-x-hidden rounded-2xl border border-border bg-surface text-ink shadow-2xl shadow-slate-900/12 dark:shadow-black/50 duration-150 ease-out data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 origin-[--radix-select-content-transform-origin]",
-        position === "popper" &&
-          "data-[side=bottom]:translate-y-1 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:-translate-y-1",
+        "pointer-events-auto relative z-[300] min-w-[10rem] overflow-hidden rounded-2xl border border-border bg-surface text-ink shadow-2xl shadow-slate-900/12 dark:shadow-black/50 animate-popover-enter",
         className
       )}
       position={position}
       {...props}>
-      <SelectScrollUpButton />
       <SelectPrimitive.Viewport
-        className={cn("p-1.5 space-y-0.5", position === "popper" &&
-          "w-full min-w-[var(--radix-select-trigger-width)]")}>
+        className={cn(
+          "max-h-80 overflow-y-auto overflow-x-hidden overscroll-contain p-1.5 space-y-0.5",
+          position === "popper" && "w-full min-w-[var(--radix-select-trigger-width)]"
+        )}>
         {children}
       </SelectPrimitive.Viewport>
-      <SelectScrollDownButton />
     </SelectPrimitive.Content>
   </SelectPrimitive.Portal>
 ))
@@ -82,19 +80,25 @@ const SelectLabel = React.forwardRef(({ className, ...props }, ref) => (
 ))
 SelectLabel.displayName = SelectPrimitive.Label.displayName
 
-const SelectItem = React.forwardRef(({ className, children, ...props }, ref) => (
+const SelectItem = React.forwardRef(({ className, children, onPointerMove, ...props }, ref) => (
   <SelectPrimitive.Item
     ref={ref}
+    onPointerMove={(e) => {
+      onPointerMove?.(e);
+      if (e.defaultPrevented) return;
+      if (document.activeElement !== e.currentTarget) {
+        e.currentTarget.focus({ preventScroll: true });
+      }
+    }}
     className={cn(
-      "relative flex w-full cursor-pointer select-none items-center rounded-xl py-2 pl-3 pr-8 text-xs sm:text-sm font-medium outline-none border border-transparent transition-all duration-120 text-ink",
-      "hover:bg-surface2 focus:bg-surface2 focus:text-ink",
-      "data-[highlighted]:bg-surface2 data-[highlighted]:text-ink",
-      "data-[state=checked]:bg-brand/10 data-[state=checked]:text-brand data-[state=checked]:font-bold",
+      "relative flex w-full cursor-pointer select-none items-center rounded-xl py-2 pl-3 pr-8 text-xs sm:text-sm font-medium outline-none border border-transparent transition-colors duration-75 ease-out text-ink",
+      "hover:bg-surface2 data-[highlighted]:bg-surface2 data-[highlighted]:text-ink",
+      "data-[state=checked]:bg-brand/10 data-[state=checked]:text-brand data-[state=checked]:font-semibold data-[state=checked]:hover:bg-brand/15 data-[state=checked]:data-[highlighted]:bg-brand/15 data-[state=checked]:data-[highlighted]:text-brand",
       "data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
       className
     )}
     {...props}>
-    <span className="absolute right-2.5 flex h-4 w-4 items-center justify-center">
+    <span className="absolute right-2.5 flex h-4 w-4 items-center justify-center pointer-events-none">
       <SelectPrimitive.ItemIndicator>
         <Check className="h-4 w-4 text-brand" />
       </SelectPrimitive.ItemIndicator>

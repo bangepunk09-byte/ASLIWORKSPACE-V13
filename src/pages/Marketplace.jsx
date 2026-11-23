@@ -16,6 +16,7 @@ import {
   Settings as Cog,
   ArrowLeft,
   Pencil,
+  Trash2,
   CreditCard,
   Truck,
   XCircle,
@@ -44,10 +45,15 @@ import {
 } from "./marketplace/catalogAssets";
 import {
   getInitialMarketplaceState,
+  markMarketplaceListingDeleted,
   prefetchMarketplaceState,
   setCachedMarketplaceState,
 } from "./marketplace/marketplaceStore";
-import { ProductDetailDialog, ListingFormDialog } from "./marketplace/ProductDialogs";
+import {
+  ProductDetailDialog,
+  ListingFormDialog,
+  DeleteProductConfirmDialog,
+} from "./marketplace/ProductDialogs";
 import {
   CartDrawer,
   CheckoutDialog,
@@ -79,6 +85,8 @@ export default function Marketplace() {
   const [selectedItem, setSelectedItem] = useState(null);
   const [formOpen, setFormOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
+  const [deletingItem, setDeletingItem] = useState(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
   const [checkoutPayload, setCheckoutPayload] = useState(null);
   const [payingOrder, setPayingOrder] = useState(null);
@@ -167,9 +175,12 @@ export default function Marketplace() {
         }
         if (evt.deleted_listing_id) {
           handledIncremental = true;
+          markMarketplaceListingDeleted(evt.deleted_listing_id, me?.user_id);
           commitState((prev) => ({
             ...prev,
             listings: (prev.listings || []).filter((x) => x.id !== evt.deleted_listing_id),
+            cart: (prev.cart || []).filter((c) => c.listing_id !== evt.deleted_listing_id),
+            wishlist: (prev.wishlist || []).filter((id) => id !== evt.deleted_listing_id),
           }));
         }
         if (Array.isArray(evt.updated_listings) && evt.updated_listings.length > 0) {
@@ -383,6 +394,32 @@ export default function Marketplace() {
       (c) => !(c.listing_id === listingId && c.variant === variant)
     );
     syncCart(next);
+  };
+
+  const handleConfirmDeleteListing = async () => {
+    if (!deletingItem?.id) return;
+    const targetId = deletingItem.id;
+    setDeletingItem(null);
+    playSound("delete");
+    markMarketplaceListingDeleted(targetId, me?.user_id);
+    commitState((prev) => ({
+      ...prev,
+      listings: (prev.listings || []).filter((x) => x.id !== targetId),
+      cart: (prev.cart || []).filter((c) => c.listing_id !== targetId),
+      wishlist: (prev.wishlist || []).filter((id) => id !== targetId),
+    }));
+    if (selectedItem?.id === targetId) {
+      setSelectedItem(null);
+    }
+    toast.success("Produk berhasil dihapus dari Marketplace.");
+    setDeleteBusy(true);
+    try {
+      await api.delete(`/marketplace/listings/${targetId}`);
+    } catch (err) {
+      toast.error(errMsg(err, "Gagal menghapus produk"));
+    } finally {
+      setDeleteBusy(false);
+    }
   };
 
   // 0ms optimistic order status transitions
@@ -787,20 +824,39 @@ export default function Marketplace() {
                             </span>
                           </div>
                         )}
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleWishlist(item.id);
-                          }}
-                          className="absolute right-2.5 top-2.5 flex h-9 w-9 items-center justify-center rounded-full bg-white/90 dark:bg-slate-900/90 shadow-xs hover:scale-105 transition-transform cursor-pointer"
-                          aria-label="Favoritkan"
-                        >
-                          <Heart
-                            size={16}
-                            className={liked ? "fill-rose-500 text-rose-500" : "text-sub"}
-                          />
-                        </button>
+                        <div className="absolute right-2.5 top-2.5 flex items-center gap-1.5">
+                          {(item.seller_id === me?.user_id ||
+                            me?.role === "super_admin" ||
+                            me?.role === "admin") && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDeletingItem(item);
+                              }}
+                              className="flex h-9 w-9 items-center justify-center rounded-full bg-white/90 dark:bg-slate-900/90 text-rose-600 shadow-xs hover:bg-rose-50 hover:scale-105 transition-all cursor-pointer"
+                              aria-label="Hapus produk"
+                              title="Hapus produk"
+                              data-testid={`delete-card-btn-${item.id}`}
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleWishlist(item.id);
+                            }}
+                            className="flex h-9 w-9 items-center justify-center rounded-full bg-white/90 dark:bg-slate-900/90 shadow-xs hover:scale-105 transition-transform cursor-pointer"
+                            aria-label="Favoritkan"
+                          >
+                            <Heart
+                              size={16}
+                              className={liked ? "fill-rose-500 text-rose-500" : "text-sub"}
+                            />
+                          </button>
+                        </div>
                       </div>
 
                       <div
@@ -1191,17 +1247,30 @@ export default function Marketplace() {
                         Stok: {item.stock} · Terjual: {item.sold_count || 0}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingItem(item);
-                        setFormOpen(true);
-                      }}
-                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border bg-surface2 text-sub hover:text-ink cursor-pointer"
-                      aria-label="Edit produk"
-                    >
-                      <Pencil size={14} />
-                    </button>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingItem(item);
+                          setFormOpen(true);
+                        }}
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border bg-surface2 text-sub hover:text-ink cursor-pointer"
+                        aria-label="Edit produk"
+                        title="Edit produk"
+                      >
+                        <Pencil size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDeletingItem(item)}
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-rose-200 dark:border-rose-900/50 bg-rose-50/70 dark:bg-rose-950/30 text-rose-600 hover:bg-rose-100 cursor-pointer"
+                        aria-label="Hapus produk"
+                        title="Hapus produk"
+                        data-testid={`seller-delete-btn-${item.id}`}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1233,6 +1302,9 @@ export default function Marketplace() {
           setEditingItem(item);
           setFormOpen(true);
         }}
+        onRequestDelete={(item) => {
+          setDeletingItem(item);
+        }}
       />
 
       <ListingFormDialog
@@ -1259,14 +1331,24 @@ export default function Marketplace() {
         }}
         onDeleted={(deletedId) => {
           if (deletedId) {
+            markMarketplaceListingDeleted(deletedId, me?.user_id);
             commitState((prev) => ({
               ...prev,
               listings: (prev.listings || []).filter((x) => x.id !== deletedId),
+              cart: (prev.cart || []).filter((c) => c.listing_id !== deletedId),
+              wishlist: (prev.wishlist || []).filter((id) => id !== deletedId),
             }));
           } else {
             loadState();
           }
         }}
+      />
+
+      <DeleteProductConfirmDialog
+        item={deletingItem}
+        busy={deleteBusy}
+        onClose={() => setDeletingItem(null)}
+        onConfirm={handleConfirmDeleteListing}
       />
 
       <CartDrawer

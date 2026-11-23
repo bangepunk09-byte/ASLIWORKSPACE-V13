@@ -701,6 +701,8 @@ export function TaskWorkspace({ projectId, compactHeader }) {
       {managingMembersBoard && (
         <BoardMembersModal
           board={managingMembersBoard}
+          boards={boards}
+          onSwitchBoard={(nextB) => setManagingMembersBoard(nextB)}
           onClose={() => setManagingMembersBoard(null)}
           onUpdated={() => {
             loadBoards();
@@ -749,22 +751,6 @@ export function TaskWorkspace({ projectId, compactHeader }) {
               >
                 <Plus size={16} className="shrink-0" />
               </button>
-
-              {currentBoard && (
-                <button
-                  type="button"
-                  onClick={() => setManagingMembersBoard(currentBoard)}
-                  className="inline-flex h-10 shrink-0 whitespace-nowrap items-center gap-1.5 rounded-full border bg-surface px-3 sm:px-3.5 text-xs font-semibold text-ink shadow-xs hover:bg-surface2 transition-all cursor-pointer"
-                  title={t("board_members_btn_title", "Anggota & Undang Orang ke Board")}
-                  data-testid="board-manage-members-btn"
-                >
-                  <Users size={14} className="text-brand shrink-0" />
-                  <span className="hidden sm:inline">{t("board_members_btn", "Anggota")}</span>
-                  <span className="rounded-full bg-brand/10 text-brand px-1.5 py-0.5 text-[10px] font-bold leading-none">
-                    {t("board_invite_short", "+ Undang")}
-                  </span>
-                </button>
-              )}
 
               {currentBoard && (isBoardCollaborative(currentBoard) || isAdmin || currentBoard.created_by === me?.user_id) && !String(currentBoard.id || "").startsWith("brd_div_") && (
                 <button
@@ -819,6 +805,33 @@ export function TaskWorkspace({ projectId, compactHeader }) {
                 {active}
               </span>
             )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              const currentBoard = boards.find((b) => b.id === boardId);
+              const displayedBoards = projectId
+                ? boards.filter((b) => b.project_id === projectId || isBoardCollaborative(b))
+                : boards;
+              const target =
+                currentBoard ||
+                displayedBoards.find(
+                  (b) =>
+                    b.department &&
+                    me?.department &&
+                    b.department.toLowerCase() === me.department.toLowerCase()
+                ) ||
+                displayedBoards[0] ||
+                boards[0];
+              if (target) setManagingMembersBoard(target);
+            }}
+            className="inline-flex h-10 shrink-0 whitespace-nowrap items-center gap-1.5 rounded-full border bg-surface px-3.5 text-xs font-semibold text-ink shadow-xs hover:bg-surface2 transition-all cursor-pointer"
+            title={t("board_members_btn_title", "Invite anggota ke Board atau Group Chat")}
+            data-testid="board-manage-members-btn"
+          >
+            <Plus size={14} className="text-brand shrink-0" />
+            <span>Invite</span>
           </button>
 
           {view === "list" && (() => {

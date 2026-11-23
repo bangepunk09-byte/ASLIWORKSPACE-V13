@@ -328,6 +328,7 @@ async function startServer() {
     circle_notes: [],
     deleted_user_ids: [],
     deleted_user_emails: [],
+    deleted_marketplace_listing_ids: [],
   };
 
   const DB_FILE = path.join(__dirname, '.circle_workspace_db.json');
@@ -2477,6 +2478,9 @@ async function startServer() {
       "marketplace_vouchers",
       "marketplace_carts",
       "marketplace_wishlists",
+      "deleted_user_ids",
+      "deleted_user_emails",
+      "deleted_marketplace_listing_ids",
     ];
 
     const snapshotData: Record<string, any> = {};
@@ -2925,6 +2929,7 @@ async function startServer() {
       "marketplace_orders",
       "marketplace_reviews",
       "marketplace_vouchers",
+      "deleted_marketplace_listing_ids",
     ];
 
     const hasRecognizedCollection =
@@ -3066,12 +3071,21 @@ async function startServer() {
       new Set([...prevDelEmails, ...nextDelEmails].map((e: any) => String(e || "").toLowerCase().trim()).filter(Boolean))
     );
 
+    const prevDelMktIds = Array.isArray(db.deleted_marketplace_listing_ids) ? db.deleted_marketplace_listing_ids : [];
+    const nextDelMktIds = Array.isArray(rawData.deleted_marketplace_listing_ids) ? rawData.deleted_marketplace_listing_ids : [];
+    db.deleted_marketplace_listing_ids = Array.from(new Set([...prevDelMktIds, ...nextDelMktIds].filter(Boolean)));
+    const delMktSet = new Set<string>(db.deleted_marketplace_listing_ids.map((id: any) => String(id)));
+
     for (const k of arrayKeys) {
       if (Array.isArray(rawData[k])) {
         if (k === "users") {
           const existingUsers = Array.isArray(db.users) ? [...db.users] : [];
           db.users = rawData.users.filter((u: any) => u && !isUserExplicitlyDeleted(u.user_id, u.email));
           mergeKnownAccountsIntoDb(existingUsers);
+        } else if (k === "marketplace_listings") {
+          db.marketplace_listings = rawData.marketplace_listings.filter(
+            (l: any) => l && !delMktSet.has(String(l.id))
+          );
         } else {
           db[k] = rawData[k];
         }
@@ -3260,6 +3274,10 @@ async function startServer() {
       new Set([...prevDelEmails, ...nextDelEmails].map((e: any) => String(e || "").toLowerCase().trim()).filter(Boolean))
     );
 
+    const prevDelMktIds = Array.isArray(db.deleted_marketplace_listing_ids) ? db.deleted_marketplace_listing_ids : [];
+    const nextDelMktIds = Array.isArray(rawData.deleted_marketplace_listing_ids) ? rawData.deleted_marketplace_listing_ids : [];
+    db.deleted_marketplace_listing_ids = Array.from(new Set([...prevDelMktIds, ...nextDelMktIds].filter(Boolean)));
+
     // 2. Users
     if (Array.isArray(rawData.users) && rawData.users.length > 0) {
       const beforeCount = (db.users || []).length;
@@ -3333,6 +3351,12 @@ async function startServer() {
           anyChanged = true;
         }
       }
+    }
+    if (Array.isArray(db.deleted_marketplace_listing_ids) && db.deleted_marketplace_listing_ids.length > 0 && Array.isArray(db.marketplace_listings)) {
+      const delSet = new Set<string>(db.deleted_marketplace_listing_ids.map((id: any) => String(id)));
+      const beforeLen = db.marketplace_listings.length;
+      db.marketplace_listings = db.marketplace_listings.filter((l: any) => l && !delSet.has(String(l.id)));
+      if (db.marketplace_listings.length !== beforeLen) anyChanged = true;
     }
 
     // 6. Workspace config & custom checkpoint templates
@@ -7860,6 +7884,84 @@ async function startServer() {
     res.json(accessible);
   });
 
+  function findBoardLinkedGroup(b: any, createIfMissing = false, actorId?: string) {
+    if (!b) return { group: null, conv: null };
+    const cleanDept = String(b.department || "").trim();
+    const cleanDeptLower = cleanDept.toLowerCase();
+    const isSpecificDept =
+      Boolean(cleanDeptLower) &&
+      !["semua divisi", "all", "kolaborasi", "project"].includes(cleanDeptLower);
+
+    const slug = (isSpecificDept ? cleanDeptLower : String(b.name || "").trim().toLowerCase()).replace(
+      /[^a-z0-9]+/g,
+      "_"
+    );
+    const officialId = isSpecificDept ? `group_official_${slug}` : "";
+    const targetNameLower = (isSpecificDept ? cleanDeptLower : String(b.name || "").trim().toLowerCase());
+
+    let group = (db.groups || []).find(
+      (g: any) =>
+        g &&
+        ((officialId && g.id === officialId) ||
+          g.board_id === b.id ||
+          String(g.name || "").trim().toLowerCase() === targetNameLower)
+    );
+    let conv = (db.conversations || []).find(
+      (c: any) =>
+        c &&
+        c.type === "group" &&
+        ((officialId && c.id === officialId) ||
+          (group && c.id === group.id) ||
+          c.board_id === b.id ||
+          String(c.name || "").trim().toLowerCase() === targetNameLower)
+    );
+
+    if (!group && !conv && createIfMissing) {
+      const newGroupId = officialId || `grp_board_${b.id}`;
+      const groupName = isSpecificDept ? cleanDept : (b.name || "Grup Kolaborasi");
+      const baseMembers = Array.from(
+        new Set([
+          ...(Array.isArray(b.member_ids) ? b.member_ids : []),
+          ...(Array.isArray(b.invited_member_ids) ? b.invited_member_ids : []),
+          ...(actorId ? [actorId] : []),
+        ].filter((id) => Boolean(id) && id !== CIRCLE_BOT_ID))
+      );
+      group = {
+        id: newGroupId,
+        name: groupName,
+        description: isSpecificDept
+          ? `Official channel for ${groupName} department discussions`
+          : `Grup diskusi kolaborasi untuk Board ${groupName}`,
+        group_type: isSpecificDept ? "department" : "public",
+        is_verified: isSpecificDept,
+        board_id: b.id,
+        type: "group",
+        created_by: actorId || "user_admin1",
+        created_at: new Date().toISOString(),
+        member_ids: baseMembers,
+        members: baseMembers,
+        manually_joined_ids: [],
+        member_count: baseMembers.length,
+      };
+      db.groups = Array.isArray(db.groups) ? db.groups : [];
+      db.groups.push(group);
+
+      conv = { ...group };
+      db.conversations = Array.isArray(db.conversations) ? db.conversations : [];
+      db.conversations.push(conv);
+    } else if (group && !conv) {
+      conv = { ...group, type: "group" };
+      db.conversations = Array.isArray(db.conversations) ? db.conversations : [];
+      db.conversations.push(conv);
+    } else if (conv && !group) {
+      group = { ...conv, type: "group" };
+      db.groups = Array.isArray(db.groups) ? db.groups : [];
+      db.groups.push(group);
+    }
+
+    return { group, conv };
+  }
+
   app.get("/api/boards/:id/members", (req, res) => {
     const b = db.boards.find((x: any) => x.id === req.params.id);
     if (!b) return res.status(404).json({ detail: "Board not found" });
@@ -7878,6 +7980,15 @@ async function startServer() {
       b.id === "brd_div_project"
     );
 
+    const { group, conv } = findBoardLinkedGroup(b, false);
+    const groupMemIds = new Set<string>([
+      ...(Array.isArray(group?.member_ids) ? group.member_ids : []),
+      ...(Array.isArray(group?.members) ? group.members : []),
+      ...(Array.isArray(conv?.member_ids) ? conv.member_ids : []),
+      ...(Array.isArray(conv?.members) ? conv.members : []),
+      ...(Array.isArray(b.chat_invited_member_ids) ? b.chat_invited_member_ids : []),
+    ]);
+
     const humanList = (db.users || []).filter((u: any) => !u.is_bot && u.role !== "assistant" && u.user_id !== CIRCLE_BOT_ID);
     const deptUsers = isCollab && b.all_workspace_members !== false
       ? humanList
@@ -7886,12 +7997,20 @@ async function startServer() {
     const invitedIds = Array.isArray(b.invited_member_ids) ? b.invited_member_ids : [];
     const collabExplicitIds = isCollab && Array.isArray(b.member_ids) ? b.member_ids : [];
     const extraIds = Array.from(new Set([...invitedIds, ...collabExplicitIds])).filter((uid) => !deptUsers.some((u: any) => u.user_id === uid));
-    const invitedUsers = humanList.filter((u: any) => extraIds.includes(u.user_id));
+    const invitedUsers = humanList
+      .filter((u: any) => extraIds.includes(u.user_id))
+      .map((u: any) => ({
+        ...u,
+        in_group_chat: groupMemIds.has(u.user_id),
+        invite_scope: groupMemIds.has(u.user_id) ? "board_and_chat" : "board_only",
+      }));
 
     res.json({
       board_id: b.id,
       board_name: b.name,
       department: b.department,
+      linked_group_id: group?.id || conv?.id || null,
+      linked_group_name: group?.name || conv?.name || b.department || b.name,
       board_type: isCollab ? (b.board_type || "collaborative") : "department",
       is_collaborative: isCollab,
       all_workspace_members: b.all_workspace_members !== false,
@@ -7963,19 +8082,60 @@ async function startServer() {
 
     const rawIds = req.body.user_ids || (req.body.user_id ? [req.body.user_id] : []);
     const userIdsToAdd = (Array.isArray(rawIds) ? rawIds : [rawIds]).filter((id: string) => Boolean(id) && id !== CIRCLE_BOT_ID);
+    const alsoAddGroupChat = Boolean(
+      req.body.include_group_chat === true ||
+      req.body.invite_scope === "board_and_chat"
+    );
 
     b.invited_member_ids = Array.isArray(b.invited_member_ids) ? b.invited_member_ids : [];
     const beforeCount = b.invited_member_ids.length;
     b.invited_member_ids = Array.from(new Set([...b.invited_member_ids, ...userIdsToAdd]));
-    b.member_ids = [...b.invited_member_ids];
+    b.member_ids = Array.from(new Set([...(Array.isArray(b.member_ids) ? b.member_ids : []), ...b.invited_member_ids]));
+    b.chat_invited_member_ids = Array.isArray(b.chat_invited_member_ids) ? b.chat_invited_member_ids : [];
 
     const actor = getReqUser(req) || currentSessionUser;
+    let joinedGroupName = "";
+
+    if (alsoAddGroupChat) {
+      b.chat_invited_member_ids = Array.from(new Set([...b.chat_invited_member_ids, ...userIdsToAdd]));
+      const { group, conv } = findBoardLinkedGroup(b, true, actor?.user_id);
+      joinedGroupName = group?.name || conv?.name || b.department || b.name;
+
+      [group, conv].forEach((targetGrp: any) => {
+        if (!targetGrp) return;
+        const curMems = Array.isArray(targetGrp.member_ids)
+          ? targetGrp.member_ids
+          : Array.isArray(targetGrp.members)
+          ? targetGrp.members
+          : [];
+        const nextMems = Array.from(new Set([...curMems, ...userIdsToAdd].filter((id) => Boolean(id) && id !== CIRCLE_BOT_ID)));
+        targetGrp.member_ids = nextMems;
+        targetGrp.members = nextMems;
+        targetGrp.member_count = nextMems.length;
+        const curManual = Array.isArray(targetGrp.manually_joined_ids) ? targetGrp.manually_joined_ids : [];
+        targetGrp.manually_joined_ids = Array.from(new Set([...curManual, ...userIdsToAdd]));
+        if (Array.isArray(targetGrp.left_member_ids)) {
+          targetGrp.left_member_ids = targetGrp.left_member_ids.filter((id: string) => !userIdsToAdd.includes(id));
+        }
+      });
+    } else {
+      // Ensure board-only invite does NOT mark them in chat_invited_member_ids if they weren't already
+      // (unless req.body.keep_existing_chat is set)
+      if (req.body.invite_scope === "board_only") {
+        b.chat_invited_member_ids = b.chat_invited_member_ids.filter((id: string) => !userIdsToAdd.includes(id));
+      }
+    }
+
     userIdsToAdd.forEach((uid: string) => {
       if (uid && uid !== actor?.user_id) {
         createNotification({
           user_id: uid,
-          title: `Diundang ke ${b.name}`,
-          body: `${actor?.name || "Rekan kerja"} mengundang Anda untuk mengakses ${b.name} (${b.department ? `Divisi ${b.department}` : "Workspace"}).`,
+          title: alsoAddGroupChat
+            ? `Diundang ke Board & Group Chat ${b.name}`
+            : `Diundang ke Board ${b.name}`,
+          body: alsoAddGroupChat
+            ? `${actor?.name || "Rekan kerja"} mengundang Anda untuk mengakses Board ${b.name} sekaligus bergabung ke Group Chat ${joinedGroupName}.`
+            : `${actor?.name || "Rekan kerja"} mengundang Anda untuk mengakses Board ${b.name} (Akses Board Saja).`,
           type: "board_invite",
           category: "tasks",
           actor_id: actor?.user_id,
@@ -7984,9 +8144,21 @@ async function startServer() {
       }
     });
 
-    saveDbToFile();
+    saveDbToFile(true);
     broadcast({ type: "tasks:changed" });
-    res.json({ success: true, board: b, invited_member_ids: b.invited_member_ids, newly_invited: b.invited_member_ids.length - beforeCount });
+    broadcast({ type: "boards:changed" });
+    if (alsoAddGroupChat) {
+      broadcast({ type: "groups:changed" });
+      broadcast({ type: "conversations:changed" });
+    }
+    res.json({
+      success: true,
+      board: b,
+      include_group_chat: alsoAddGroupChat,
+      joined_group_name: joinedGroupName || null,
+      invited_member_ids: b.invited_member_ids,
+      newly_invited: b.invited_member_ids.length - beforeCount
+    });
   });
 
   app.post("/api/boards/:id/remove-member", (req, res) => {
@@ -7997,8 +8169,34 @@ async function startServer() {
     if (targetUid) {
       b.invited_member_ids = (b.invited_member_ids || []).filter((id: string) => id !== targetUid);
       b.member_ids = (b.member_ids || []).filter((id: string) => id !== targetUid);
-      saveDbToFile();
+      b.chat_invited_member_ids = (b.chat_invited_member_ids || []).filter((id: string) => id !== targetUid);
+
+      const targetUser = (db.users || []).find((u: any) => u.user_id === targetUid);
+      const { group, conv } = findBoardLinkedGroup(b, false);
+      [group, conv].forEach((targetGrp: any) => {
+        if (!targetGrp) return;
+        const userDeptLower = String(targetUser?.department || "").trim().toLowerCase();
+        const grpNameLower = String(targetGrp.name || "").trim().toLowerCase();
+        const isNativeDeptMember = Boolean(userDeptLower && userDeptLower === grpNameLower);
+        if (Array.isArray(targetGrp.manually_joined_ids)) {
+          targetGrp.manually_joined_ids = targetGrp.manually_joined_ids.filter((id: string) => id !== targetUid);
+        }
+        if (!isNativeDeptMember) {
+          if (Array.isArray(targetGrp.member_ids)) {
+            targetGrp.member_ids = targetGrp.member_ids.filter((id: string) => id !== targetUid);
+            targetGrp.member_count = targetGrp.member_ids.length;
+          }
+          if (Array.isArray(targetGrp.members)) {
+            targetGrp.members = targetGrp.members.filter((id: string) => id !== targetUid);
+          }
+        }
+      });
+
+      saveDbToFile(true);
       broadcast({ type: "tasks:changed" });
+      broadcast({ type: "boards:changed" });
+      broadcast({ type: "groups:changed" });
+      broadcast({ type: "conversations:changed" });
     }
     res.json({ success: true, board: b });
   });

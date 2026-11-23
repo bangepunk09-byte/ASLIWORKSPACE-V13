@@ -11,11 +11,14 @@ import {
   Plus,
   Minus,
   Trash2,
+  AlertTriangle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api, errMsg, uploadFile } from "../../lib/api";
+import { playSound } from "../../lib/sound";
 import { upsertConversationInCache } from "../../lib/workspaceCaches";
 import { Avatar } from "../../components/common";
+import { markMarketplaceListingDeleted } from "./marketplaceStore";
 import {
   Dialog,
   DialogContent,
@@ -50,6 +53,7 @@ export function ProductDetailDialog({
   onAddToCart,
   onBuyNow,
   onEdit,
+  onRequestDelete,
 }) {
   const navigate = useNavigate();
   const [variant, setVariant] = useState("");
@@ -66,7 +70,8 @@ export function ProductDetailDialog({
   if (!item) return null;
   const itemReviews = reviews.filter((r) => r.listing_id === item.id);
   const isOwner = item.seller_id === me?.user_id;
-  const canEdit = isOwner || me?.role === "super_admin";
+  const isSeedItem = String(item.id || "").startsWith("mkt_seed_");
+  const canEdit = isOwner || me?.role === "super_admin" || me?.role === "admin" || isSeedItem;
   const imgSrc = resolveProductImage(item);
   const outOfStock = Number(item.stock || 0) <= 0;
 
@@ -300,16 +305,33 @@ export function ProductDetailDialog({
             {/* Purchase CTAs */}
             <div className="pt-3 border-t flex flex-wrap items-center gap-2.5">
               {canEdit && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    onClose();
-                    onEdit(item);
-                  }}
-                  className="h-11 rounded-xl border bg-surface2 px-4 text-xs font-bold text-ink hover:bg-surface transition-colors cursor-pointer"
-                >
-                  Edit Produk
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onEdit(item);
+                    }}
+                    className="h-11 rounded-xl border bg-surface2 px-4 text-xs font-bold text-ink hover:bg-surface transition-colors cursor-pointer"
+                    data-testid="pdp-edit-product-btn"
+                  >
+                    Edit Produk
+                  </button>
+                  {onRequestDelete && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClose();
+                        onRequestDelete(item);
+                      }}
+                      className="h-11 rounded-xl border border-rose-200 dark:border-rose-900/50 bg-rose-50/70 dark:bg-rose-950/30 px-3.5 text-xs font-bold text-rose-600 hover:bg-rose-100 transition-colors inline-flex items-center gap-1.5 cursor-pointer"
+                      data-testid="pdp-delete-product-btn"
+                    >
+                      <Trash2 size={15} />
+                      <span>Hapus</span>
+                    </button>
+                  )}
+                </>
               )}
               <button
                 type="button"
@@ -357,9 +379,13 @@ export function ListingFormDialog({ open, editingItem, me, onClose, onSaved, onD
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setConfirmDeleteOpen(false);
+      return;
+    }
     if (editingItem) {
       setTitle(editingItem.title || "");
       setPrice(String(editingItem.price || ""));
@@ -488,15 +514,17 @@ export function ListingFormDialog({ open, editingItem, me, onClose, onSaved, onD
   const handleDelete = async () => {
     if (!editingItem) return;
     const targetId = editingItem.id;
+    setConfirmDeleteOpen(false);
+    playSound("delete");
+    markMarketplaceListingDeleted(targetId, me?.user_id);
     onDeleted?.(targetId);
     onClose();
-    toast.success("Produk dihapus dari Marketplace.");
+    toast.success("Produk berhasil dihapus dari Marketplace.");
     setDeleting(true);
     try {
       await api.delete(`/marketplace/listings/${targetId}`);
     } catch (err) {
       toast.error(errMsg(err, "Gagal menghapus produk"));
-      onSaved?.();
     } finally {
       setDeleting(false);
     }
@@ -709,8 +737,9 @@ export function ListingFormDialog({ open, editingItem, me, onClose, onSaved, onD
               <button
                 type="button"
                 disabled={deleting}
-                onClick={handleDelete}
+                onClick={() => setConfirmDeleteOpen(true)}
                 className="h-10 rounded-xl border border-rose-200 dark:border-rose-900/50 bg-rose-50/70 dark:bg-rose-950/30 px-3.5 text-xs font-bold text-rose-600 hover:bg-rose-100 flex items-center gap-1.5 cursor-pointer"
+                data-testid="listing-delete-btn"
               >
                 <Trash2 size={14} />
                 <span>{deleting ? "Menghapus..." : "Hapus Produk"}</span>
@@ -737,6 +766,84 @@ export function ListingFormDialog({ open, editingItem, me, onClose, onSaved, onD
             </div>
           </DialogFooter>
         </form>
+      </DialogContent>
+
+      <DeleteProductConfirmDialog
+        item={confirmDeleteOpen ? editingItem : null}
+        busy={deleting}
+        onClose={() => setConfirmDeleteOpen(false)}
+        onConfirm={handleDelete}
+      />
+    </Dialog>
+  );
+}
+
+export function DeleteProductConfirmDialog({ item, busy = false, onClose, onConfirm }) {
+  if (!item) return null;
+  const imgSrc = resolveProductImage(item);
+
+  return (
+    <Dialog open={Boolean(item)} onOpenChange={(open) => !open && !busy && onClose?.()}>
+      <DialogContent
+        className="max-w-md p-0 overflow-hidden bg-surface rounded-2xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl"
+        data-testid="delete-product-confirm-dialog"
+      >
+        <div className="p-6 space-y-4">
+          <div className="flex items-start gap-3.5">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400">
+              <AlertTriangle size={24} />
+            </div>
+            <div className="space-y-1 pr-4">
+              <DialogTitle className="text-base sm:text-lg font-extrabold text-ink leading-snug">
+                Apakah Anda yakin ingin menghapus produk Anda?
+              </DialogTitle>
+              <DialogDescription className="text-xs text-sub leading-relaxed">
+                Produk yang dihapus akan hilang secara permanen dari katalog Marketplace dan tidak dapat dikembalikan.
+              </DialogDescription>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 rounded-2xl border bg-surface2/70 p-3">
+            <img
+              src={imgSrc}
+              alt={item.title}
+              className="h-14 w-14 rounded-xl object-cover border bg-surface shrink-0"
+            />
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-bold text-ink truncate leading-snug pb-0.5">
+                {item.title}
+              </p>
+              <p className="text-xs font-extrabold text-brand tabular-nums">
+                {formatIDR(item.price)}
+              </p>
+              <p className="text-[11px] text-sub truncate">
+                {item.category || "Barang"} · Stok: {item.stock ?? 0}
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter className="pt-2 flex flex-row items-center justify-end gap-2.5">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onClose}
+              className="h-10 rounded-xl border bg-surface px-4 text-xs font-bold text-sub hover:text-ink hover:bg-surface2 transition-colors cursor-pointer"
+              data-testid="cancel-delete-product-btn"
+            >
+              Batal
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onConfirm}
+              className="h-10 rounded-xl bg-rose-600 hover:bg-rose-700 px-4 text-xs font-bold text-white shadow-sm inline-flex items-center gap-1.5 transition-colors disabled:opacity-50 cursor-pointer"
+              data-testid="confirm-delete-product-btn"
+            >
+              <Trash2 size={14} />
+              <span>{busy ? "Menghapus..." : "Ya, Hapus Produk"}</span>
+            </button>
+          </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
   );

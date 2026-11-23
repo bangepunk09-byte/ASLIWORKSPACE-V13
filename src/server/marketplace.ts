@@ -340,6 +340,26 @@ export function ensureMarketplaceData(db: Record<string, any>) {
   if (!db.marketplace_wishlists || typeof db.marketplace_wishlists !== "object") {
     db.marketplace_wishlists = {};
   }
+  if (!Array.isArray(db.deleted_marketplace_listing_ids)) {
+    db.deleted_marketplace_listing_ids = [];
+  }
+
+  const deletedSet = new Set<string>(db.deleted_marketplace_listing_ids.map((id: any) => String(id)));
+
+  if (Array.isArray(db.marketplace_listings) && db.marketplace_listings.length > 0) {
+    db.workspace.marketplace_seeded = true;
+    if (deletedSet.size > 0) {
+      db.marketplace_listings = db.marketplace_listings.filter((l: any) => l && !deletedSet.has(String(l.id)));
+    }
+    return;
+  }
+
+  if (db.workspace.marketplace_seeded || deletedSet.size > 0) {
+    if (!Array.isArray(db.marketplace_listings)) {
+      db.marketplace_listings = [];
+    }
+    return;
+  }
 
   if (!Array.isArray(db.marketplace_listings) || db.marketplace_listings.length === 0) {
     const humanUsers = (Array.isArray(db.users) ? db.users : []).filter(
@@ -362,6 +382,7 @@ export function ensureMarketplaceData(db: Record<string, any>) {
     const s3 = pickSeller(0, "Admin ASLI RI", "Management");
     const now = new Date().toISOString();
 
+    db.workspace.marketplace_seeded = true;
     db.marketplace_listings = [
       {
         id: "mkt_seed_keyboard",
@@ -459,7 +480,7 @@ export function ensureMarketplaceData(db: Record<string, any>) {
         created_at: now,
         updated_at: now,
       },
-    ];
+    ].filter((l) => !deletedSet.has(l.id));
 
     if (db.marketplace_reviews.length === 0) {
       db.marketplace_reviews = [
@@ -787,7 +808,14 @@ export function registerMarketplaceRoutes(app: Express, deps: MarketplaceDeps) {
       });
     }
 
-    const listings = (db.marketplace_listings || []).map(enrichListing);
+    const deletedSet = new Set<string>(
+      Array.isArray(db.deleted_marketplace_listing_ids)
+        ? db.deleted_marketplace_listing_ids.map((id: any) => String(id))
+        : []
+    );
+    const listings = (db.marketplace_listings || [])
+      .filter((l: any) => l && !deletedSet.has(String(l.id)))
+      .map(enrichListing);
     const allOrders = Array.isArray(db.marketplace_orders) ? db.marketplace_orders : [];
     const myOrders =
       reqUser.role === "super_admin"
@@ -797,10 +825,10 @@ export function registerMarketplaceRoutes(app: Express, deps: MarketplaceDeps) {
           );
 
     const rawCart = Array.isArray(db.marketplace_carts?.[reqUser.user_id])
-      ? db.marketplace_carts[reqUser.user_id]
+      ? db.marketplace_carts[reqUser.user_id].filter((c: any) => c && !deletedSet.has(String(c.listing_id)))
       : [];
     const wishlist = Array.isArray(db.marketplace_wishlists?.[reqUser.user_id])
-      ? db.marketplace_wishlists[reqUser.user_id]
+      ? db.marketplace_wishlists[reqUser.user_id].filter((id: any) => !deletedSet.has(String(id)))
       : [];
 
     res.json({
@@ -808,6 +836,7 @@ export function registerMarketplaceRoutes(app: Express, deps: MarketplaceDeps) {
       config,
       payment_gateway: getPaymentGatewayEnvStatus(config),
       listings,
+      deleted_listing_ids: Array.from(deletedSet),
       orders: myOrders,
       cart: rawCart,
       wishlist,
@@ -899,7 +928,13 @@ export function registerMarketplaceRoutes(app: Express, deps: MarketplaceDeps) {
     const idx = db.marketplace_listings.findIndex((l: any) => l.id === req.params.id);
     if (idx === -1) return res.status(404).json({ detail: "Produk tidak ditemukan." });
     const prev = db.marketplace_listings[idx];
-    if (prev.seller_id !== reqUser.user_id && reqUser.role !== "super_admin") {
+    const isSeedItem = String(prev.id || "").startsWith("mkt_seed_");
+    const canModify =
+      prev.seller_id === reqUser.user_id ||
+      reqUser.role === "super_admin" ||
+      reqUser.role === "admin" ||
+      isSeedItem;
+    if (!canModify) {
       return res.status(403).json({ detail: "Anda tidak memiliki izin mengubah produk ini." });
     }
 
@@ -934,7 +969,7 @@ export function registerMarketplaceRoutes(app: Express, deps: MarketplaceDeps) {
     };
 
     db.marketplace_listings[idx] = updated;
-    saveDbToFile();
+    saveDbToFile(true);
     const enriched = enrichListing(updated);
     broadcast({ type: "marketplace:changed", listing: enriched });
     res.json(enriched);
@@ -947,16 +982,53 @@ export function registerMarketplaceRoutes(app: Express, deps: MarketplaceDeps) {
     const reqUser = checkEnabled(req, res);
     if (!reqUser) return;
 
-    const target = db.marketplace_listings.find((l: any) => l.id === req.params.id);
-    if (!target) return res.status(404).json({ detail: "Produk tidak ditemukan." });
-    if (target.seller_id !== reqUser.user_id && reqUser.role !== "super_admin") {
-      return res.status(403).json({ detail: "Hanya pemilik toko atau Super Admin yang dapat menghapus produk." });
+    const targetId = String(req.params.id || "").trim();
+    if (!targetId) return res.status(400).json({ detail: "ID produk tidak valid." });
+
+    const target = (db.marketplace_listings || []).find((l: any) => l && l.id === targetId);
+    const isSeedItem = targetId.startsWith("mkt_seed_");
+    if (target) {
+      const canDelete =
+        target.seller_id === reqUser.user_id ||
+        reqUser.role === "super_admin" ||
+        reqUser.role === "admin" ||
+        isSeedItem;
+      if (!canDelete) {
+        return res.status(403).json({ detail: "Hanya pemilik produk atau Admin yang dapat menghapus produk ini." });
+      }
     }
 
-    db.marketplace_listings = db.marketplace_listings.filter((l: any) => l.id !== req.params.id);
-    saveDbToFile();
-    broadcast({ type: "marketplace:changed", deleted_listing_id: req.params.id });
-    res.json({ success: true });
+    if (!Array.isArray(db.deleted_marketplace_listing_ids)) {
+      db.deleted_marketplace_listing_ids = [];
+    }
+    if (!db.deleted_marketplace_listing_ids.includes(targetId)) {
+      db.deleted_marketplace_listing_ids.push(targetId);
+    }
+    if (db.workspace && typeof db.workspace === "object") {
+      db.workspace.marketplace_seeded = true;
+    }
+
+    db.marketplace_listings = (db.marketplace_listings || []).filter((l: any) => l && l.id !== targetId);
+    db.marketplace_reviews = (db.marketplace_reviews || []).filter((r: any) => r && r.listing_id !== targetId);
+
+    if (db.marketplace_carts && typeof db.marketplace_carts === "object") {
+      Object.keys(db.marketplace_carts).forEach((uid) => {
+        if (Array.isArray(db.marketplace_carts[uid])) {
+          db.marketplace_carts[uid] = db.marketplace_carts[uid].filter((c: any) => c && c.listing_id !== targetId);
+        }
+      });
+    }
+    if (db.marketplace_wishlists && typeof db.marketplace_wishlists === "object") {
+      Object.keys(db.marketplace_wishlists).forEach((uid) => {
+        if (Array.isArray(db.marketplace_wishlists[uid])) {
+          db.marketplace_wishlists[uid] = db.marketplace_wishlists[uid].filter((id: any) => id !== targetId);
+        }
+      });
+    }
+
+    saveDbToFile(true);
+    broadcast({ type: "marketplace:changed", deleted_listing_id: targetId });
+    res.json({ success: true, deleted_listing_id: targetId });
   });
 
   // Toggle wishlist

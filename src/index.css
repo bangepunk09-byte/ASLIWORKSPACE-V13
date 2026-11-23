@@ -196,9 +196,28 @@ html[data-shape="sharp"] .rounded-md {
   animation: modal-enter 30ms cubic-bezier(0, 0, 0.2, 1) both;
 }
 
-/* 5. DROPDOWN & POPOVER — SNAPPY INSTANT (30ms) */
+/* 5. DROPDOWN & POPOVER — SNAPPY INSTANT (40ms, ZERO TRANSFORM JUMP) */
 .animate-popover-enter {
-  animation: popover-enter 30ms cubic-bezier(0, 0, 0.2, 1) both;
+  animation: popover-enter 40ms cubic-bezier(0, 0, 0.2, 1) both;
+}
+
+/* Guarantee all portaled Radix dropdowns/selects/popovers receive pointer events cleanly inside Dialogs and render on a stable GPU layer */
+[data-radix-popper-content-wrapper] {
+  pointer-events: auto !important;
+  z-index: 300 !important;
+  backface-visibility: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Prevent layout/box-model transition jitter on all dropdown, select, and menu items during fast hover */
+[role="listbox"] [role="option"],
+[role="menu"] [role="menuitem"],
+[role="menu"] [role="menuitemcheckbox"],
+[role="menu"] [role="menuitemradio"] {
+  transition-property: background-color, color, border-color, opacity !important;
+  transition-duration: 75ms !important;
+  transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1) !important;
+  backface-visibility: hidden;
 }
 
 /* 6. CALENDAR & VIEW SWITCHING — INSTANT (0ms DELAY) */
@@ -229,7 +248,7 @@ html[data-shape="sharp"] .rounded-md {
 }
 
 @keyframes popover-enter {
-  0% { opacity: 0.96; }
+  0% { opacity: 0.95; }
   100% { opacity: 1; }
 }
 

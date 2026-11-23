@@ -423,15 +423,12 @@ export default function Board({ tasks, onOpen, onNew, reload, onMoveTask, board,
               <button
                 type="button"
                 onClick={onInvite}
-                className="inline-flex items-center gap-2 rounded-full border bg-surface2/80 hover:bg-surface2 pl-3.5 pr-2.5 py-2 text-xs font-bold text-ink shadow-2xs transition-all hover:scale-[1.02] cursor-pointer"
-                title={tr("board_invite_title", "Undang rekan atau atur anggota board")}
+                className="inline-flex items-center gap-1.5 rounded-full border bg-surface2/80 hover:bg-surface2 px-3.5 py-2 text-xs font-semibold text-ink shadow-2xs transition-all hover:scale-[1.02] cursor-pointer"
+                title={tr("board_invite_title", "Invite anggota ke Board atau Group Chat")}
                 data-testid="board-invite-header-btn"
               >
-                <UserPlus size={14} className="text-brand shrink-0" />
-                <span>{tr("board_invite_btn", "Undang ke Board")}</span>
-                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-brand text-white text-xs font-extrabold leading-none shrink-0">
-                  +
-                </span>
+                <Plus size={14} className="text-brand shrink-0" />
+                <span>Invite</span>
               </button>
             )}
           </div>

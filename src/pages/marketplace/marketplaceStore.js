@@ -254,15 +254,92 @@ export function setCachedGatewayInfo(info) {
   } catch {}
 }
 
-export function getCachedMarketplaceListings() {
+const DELETED_LISTINGS_KEY = "circle_marketplace_deleted_ids";
+const MEMORY_DELETED_IDS = new Set();
+
+try {
+  const rawDel = localStorage.getItem(DELETED_LISTINGS_KEY);
+  if (rawDel) {
+    const parsedDel = JSON.parse(rawDel);
+    if (Array.isArray(parsedDel)) {
+      parsedDel.forEach((id) => id && MEMORY_DELETED_IDS.add(String(id)));
+    }
+  }
+} catch {}
+
+export function getDeletedMarketplaceListingIds() {
   try {
-    const raw = localStorage.getItem(LISTINGS_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    const rawDel = localStorage.getItem(DELETED_LISTINGS_KEY);
+    if (rawDel) {
+      const parsedDel = JSON.parse(rawDel);
+      if (Array.isArray(parsedDel)) {
+        parsedDel.forEach((id) => id && MEMORY_DELETED_IDS.add(String(id)));
+      }
     }
   } catch {}
-  return INSTANT_SEED_LISTINGS;
+  return MEMORY_DELETED_IDS;
+}
+
+export function markMarketplaceListingDeleted(id, uid) {
+  const cleanId = String(id || "").trim();
+  if (!cleanId) return;
+  MEMORY_DELETED_IDS.add(cleanId);
+  try {
+    localStorage.setItem(DELETED_LISTINGS_KEY, JSON.stringify(Array.from(MEMORY_DELETED_IDS)));
+  } catch {}
+
+  try {
+    const rawListings = localStorage.getItem(LISTINGS_KEY);
+    if (rawListings) {
+      const parsed = JSON.parse(rawListings);
+      if (Array.isArray(parsed)) {
+        localStorage.setItem(
+          LISTINGS_KEY,
+          JSON.stringify(parsed.filter((l) => l && String(l.id) !== cleanId))
+        );
+      }
+    }
+  } catch {}
+
+  const keys = [stateKey(uid), stateKey("anon")];
+  keys.forEach((k) => {
+    const mem = MEMORY_STATE.get(k);
+    if (mem && typeof mem === "object" && Array.isArray(mem.listings)) {
+      MEMORY_STATE.set(k, {
+        ...mem,
+        listings: mem.listings.filter((l) => l && String(l.id) !== cleanId),
+      });
+    }
+    try {
+      const raw = localStorage.getItem(k);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object" && Array.isArray(parsed.listings)) {
+          localStorage.setItem(
+            k,
+            JSON.stringify({
+              ...parsed,
+              listings: parsed.listings.filter((l) => l && String(l.id) !== cleanId),
+            })
+          );
+        }
+      }
+    } catch {}
+  });
+}
+
+export function getCachedMarketplaceListings() {
+  const deletedSet = getDeletedMarketplaceListingIds();
+  try {
+    const raw = localStorage.getItem(LISTINGS_KEY);
+    if (raw !== null) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed.filter((l) => l && !deletedSet.has(String(l.id)));
+      }
+    }
+  } catch {}
+  return INSTANT_SEED_LISTINGS.filter((l) => l && !deletedSet.has(String(l.id)));
 }
 
 export const DEFAULT_MARKETPLACE_COPYWRITING = {
@@ -316,6 +393,7 @@ export const DEFAULT_MARKETPLACE_COPYWRITING = {
 
 export function reconcileMarketplaceEnabledCache(uid, enabledBool, marketplaceConfig = null) {
   if (typeof enabledBool !== "boolean") return;
+  const deletedSet = getDeletedMarketplaceListingIds();
   const keys = [stateKey(uid), stateKey("anon")];
   keys.forEach((k) => {
     const existing = MEMORY_STATE.get(k);
@@ -326,9 +404,11 @@ export function reconcileMarketplaceEnabledCache(uid, enabledBool, marketplaceCo
         ...(marketplaceConfig && typeof marketplaceConfig === "object"
           ? { config: { ...(existing.config || {}), ...marketplaceConfig } }
           : {}),
-        ...(enabledBool && (!Array.isArray(existing.listings) || existing.listings.length === 0)
-          ? { listings: getCachedMarketplaceListings() }
-          : {}),
+        listings: Array.isArray(existing.listings)
+          ? existing.listings.filter((l) => l && !deletedSet.has(String(l.id)))
+          : enabledBool
+          ? getCachedMarketplaceListings()
+          : [],
       };
       MEMORY_STATE.set(k, updated);
     }
@@ -343,9 +423,11 @@ export function reconcileMarketplaceEnabledCache(uid, enabledBool, marketplaceCo
             ...(marketplaceConfig && typeof marketplaceConfig === "object"
               ? { config: { ...(parsed.config || {}), ...marketplaceConfig } }
               : {}),
-            ...(enabledBool && (!Array.isArray(parsed.listings) || parsed.listings.length === 0)
-              ? { listings: getCachedMarketplaceListings() }
-              : {}),
+            listings: Array.isArray(parsed.listings)
+              ? parsed.listings.filter((l) => l && !deletedSet.has(String(l.id)))
+              : enabledBool
+              ? getCachedMarketplaceListings()
+              : [],
           };
           localStorage.setItem(k, JSON.stringify(updated));
         }
@@ -357,13 +439,15 @@ export function reconcileMarketplaceEnabledCache(uid, enabledBool, marketplaceCo
 export function getInitialMarketplaceState(uid, ws) {
   const k = stateKey(uid);
   const wsEnabledKnown = typeof ws?.marketplace_enabled === "boolean";
+  const deletedSet = getDeletedMarketplaceListingIds();
   const reconcileWithWs = (candidate) => {
     if (!candidate || typeof candidate !== "object") return candidate;
     const resolvedEnabled = wsEnabledKnown ? ws.marketplace_enabled : candidate.enabled !== false;
-    const resolvedListings =
-      resolvedEnabled && (!Array.isArray(candidate.listings) || candidate.listings.length === 0)
-        ? getCachedMarketplaceListings()
-        : candidate.listings || [];
+    const resolvedListings = Array.isArray(candidate.listings)
+      ? candidate.listings.filter((l) => l && !deletedSet.has(String(l.id)))
+      : resolvedEnabled
+      ? getCachedMarketplaceListings()
+      : [];
     const merged = {
       ...candidate,
       enabled: resolvedEnabled,
@@ -426,18 +510,32 @@ export function getInitialMarketplaceState(uid, ws) {
 export function setCachedMarketplaceState(uid, nextState) {
   if (!nextState || typeof nextState !== "object") return;
   const k = stateKey(uid);
-  MEMORY_STATE.set(k, nextState);
+  const deletedSet = getDeletedMarketplaceListingIds();
+  if (Array.isArray(nextState.deleted_listing_ids)) {
+    nextState.deleted_listing_ids.forEach((id) => id && deletedSet.add(String(id)));
+    try {
+      localStorage.setItem(DELETED_LISTINGS_KEY, JSON.stringify(Array.from(deletedSet)));
+    } catch {}
+  }
+  const cleanListings = Array.isArray(nextState.listings)
+    ? nextState.listings.filter((l) => l && !deletedSet.has(String(l.id)))
+    : nextState.listings;
+  const sanitizedState = Array.isArray(cleanListings)
+    ? { ...nextState, listings: cleanListings }
+    : nextState;
+
+  MEMORY_STATE.set(k, sanitizedState);
   try {
-    localStorage.setItem(k, JSON.stringify(nextState));
-    if (Array.isArray(nextState.listings) && nextState.listings.length > 0) {
-      localStorage.setItem(LISTINGS_KEY, JSON.stringify(nextState.listings));
+    localStorage.setItem(k, JSON.stringify(sanitizedState));
+    if (Array.isArray(cleanListings)) {
+      localStorage.setItem(LISTINGS_KEY, JSON.stringify(cleanListings));
     }
   } catch {}
-  if (nextState.stats && typeof nextState.stats === "object") {
-    setCachedMarketplaceStats(nextState.stats);
+  if (sanitizedState.stats && typeof sanitizedState.stats === "object") {
+    setCachedMarketplaceStats(sanitizedState.stats);
   }
-  if (nextState.payment_gateway) {
-    setCachedGatewayInfo({ payment_gateway: nextState.payment_gateway });
+  if (sanitizedState.payment_gateway) {
+    setCachedGatewayInfo({ payment_gateway: sanitizedState.payment_gateway });
   }
 }
 
