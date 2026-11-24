@@ -142,11 +142,10 @@ function Detail({ pid }) {
 }
 
 export default function Projects() {
-  const { t } = useApp();
+  const { t, subscribe } = useApp();
   const { pid } = useParams();
   const [open, setOpen] = useState(false);
   const [list, setList] = useState(() => {
-    if (GLOBAL_PROJECTS_CACHE && Array.isArray(GLOBAL_PROJECTS_CACHE)) return GLOBAL_PROJECTS_CACHE;
     try {
       const cached = localStorage.getItem("circle_projects_cache");
       if (cached) {
@@ -157,20 +156,37 @@ export default function Projects() {
         }
       }
     } catch {}
+    if (GLOBAL_PROJECTS_CACHE && Array.isArray(GLOBAL_PROJECTS_CACHE)) return GLOBAL_PROJECTS_CACHE;
     return INITIAL_PROJECTS;
   });
   const navigate = useNavigate();
+  const fetchProjects = () => {
+    api.get("/projects").then((r) => {
+      if (Array.isArray(r.data)) {
+        setList(r.data);
+        GLOBAL_PROJECTS_CACHE = r.data;
+        try { localStorage.setItem("circle_projects_cache", JSON.stringify(r.data)); } catch {}
+      }
+    }).catch(() => {});
+  };
   useEffect(() => {
     if (!pid) {
-      api.get("/projects").then((r) => {
-        if (Array.isArray(r.data)) {
-          setList(r.data);
-          GLOBAL_PROJECTS_CACHE = r.data;
-          try { localStorage.setItem("circle_projects_cache", JSON.stringify(r.data)); } catch {}
-        }
-      }).catch(() => {});
+      fetchProjects();
     }
   }, [pid]); // eslint-disable-line
+  useEffect(() => {
+    if (!subscribe) return;
+    return subscribe((evt) => {
+      if (evt.type === "bootstrap:dashboard" && Array.isArray(evt.projects)) {
+        setList(evt.projects);
+        GLOBAL_PROJECTS_CACHE = evt.projects;
+        return;
+      }
+      if (evt.type === "boards:changed" || evt.type === "projects:changed" || evt.type === "tasks:changed") {
+        fetchProjects();
+      }
+    });
+  }, [subscribe]); // eslint-disable-line
   return (
     <div className="mx-auto w-full min-w-0 max-w-6xl overflow-x-clip px-3.5 py-4 sm:px-6 sm:py-6 lg:px-10 lg:py-10 animate-crossfade" data-testid="projects-page">
       {pid ? <Detail pid={pid} /> : <>

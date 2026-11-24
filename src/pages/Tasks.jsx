@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { api, errMsg, downloadFrom } from "../lib/api";
 import { playSound } from "../lib/sound";
 import { useApp } from "../context/AppContext";
-import { hasCompletedInitialHydrate } from "../lib/persistentMirror";
+import { hasCompletedInitialHydrate, recordDeletedTaskIds } from "../lib/persistentMirror";
 import { PageHeader, AccentButton, GhostButton, PRIORITY, fmtDate } from "../components/common";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 import { AppSelect } from "../components/ui/select";
@@ -35,7 +35,9 @@ export const DEFAULT_BOARDS = [
   { id: "brd_div_it", name: "IT", department: "IT", color: "#06B6D4" },
   { id: "brd_div_finance", name: "Finance", department: "Finance", color: "#14B8A6" },
   { id: "brd_div_legal", name: "Legal", department: "Legal", color: "#6366F1" },
-  { id: "brd_div_hrga", name: "HRGA", department: "HRGA", color: "#F97316" }
+  { id: "brd_div_hrga", name: "HRGA", department: "HRGA", color: "#F97316" },
+  { id: "brd_div_management", name: "Management", department: "Management", color: "#FF5364" },
+  { id: "brd_div_project", name: "Project", department: "Project", color: "#8B5CF6" }
 ];
 
 export const PRIMARY_SAVED_VIEWS = [
@@ -377,7 +379,10 @@ export function TaskWorkspace({ projectId, compactHeader }) {
         if (t.status === "done" || !t.deadline || new Date(t.deadline) >= new Date()) return false;
       }
     }
-    if (projectId && t.project_id !== projectId) return false;
+    if (projectId) {
+      const linkedBoard = boards.find((b) => b.project_id === projectId);
+      if (t.project_id !== projectId && (!linkedBoard || t.board_id !== linkedBoard.id)) return false;
+    }
     if (boardId) {
       if (t.board_id !== boardId) {
         const selectedBoard = boards.find((b) => b.id === boardId);
@@ -503,13 +508,19 @@ export function TaskWorkspace({ projectId, compactHeader }) {
   useEffect(() => { load(); }, [load]);
   useEffect(() => { api.get("/projects").then((r) => Array.isArray(r.data) && setProjects(Object.fromEntries(r.data.map((p) => [p.id, p])))).catch(() => {}); }, []);
   useEffect(() => subscribe((e) => {
-    if (e.type === "tasks:deleted" && e.id) {
-      setTasks((prev) => prev.filter((x) => x.id !== e.id));
+    if (e.type === "tasks:deleted" && (e.id || Array.isArray(e.ids))) {
+      const delList = e.id ? [e.id] : e.ids;
+      recordDeletedTaskIds(delList);
+      const delSet = new Set(delList.map(String));
+      setTasks((prev) => prev.filter((x) => !delSet.has(String(x.id))));
       return;
     }
     if (e.type !== "tasks:changed") return;
-    if (e.deleted_id) {
-      setTasks((prev) => prev.filter((x) => x.id !== e.deleted_id));
+    if (e.deleted_id || (Array.isArray(e.deleted_ids) && e.deleted_ids.length > 0)) {
+      const delList = e.deleted_id ? [e.deleted_id] : e.deleted_ids;
+      recordDeletedTaskIds(delList);
+      const delSet = new Set(delList.map(String));
+      setTasks((prev) => prev.filter((x) => !delSet.has(String(x.id))));
       return;
     }
     if (e.task?.id) {
@@ -693,7 +704,17 @@ export function TaskWorkspace({ projectId, compactHeader }) {
           onSaved={(b) => {
             loadBoards();
             load();
-            if (!b && editBoard.id === boardId) pickBoard("");
+            api.get("/projects").then((r) => {
+              if (Array.isArray(r.data)) {
+                setProjects(Object.fromEntries(r.data.map((p) => [p.id, p])));
+                try { localStorage.setItem("circle_projects_cache", JSON.stringify(r.data)); } catch {}
+              }
+            }).catch(() => {});
+            if (b?.id && !editBoard?.id) {
+              pickBoard(b.id);
+            } else if (!b && editBoard.id === boardId) {
+              pickBoard("");
+            }
           }}
         />
       )}
@@ -718,35 +739,50 @@ export function TaskWorkspace({ projectId, compactHeader }) {
           const displayedBoards = projectId
             ? boards.filter((b) => b.project_id === projectId || isBoardCollaborative(b))
             : boards;
+          const divisionBoards = displayedBoards.filter((b) => !isBoardCollaborative(b));
+          const projectBoards = displayedBoards.filter((b) => isBoardCollaborative(b));
           return (
             <div className="flex flex-wrap items-center gap-2 min-w-0 sm:contents">
               <AppSelect
                 value={boardId}
                 onChange={(e) => pickBoard(e.target.value)}
-                className="h-10 w-full sm:w-auto sm:max-w-[210px] rounded-full border bg-surface px-3.5 text-xs font-semibold text-ink shadow-xs hover:bg-surface2"
+                className="h-10 w-full sm:w-auto sm:max-w-[230px] rounded-full border bg-surface px-3.5 text-xs font-semibold text-ink shadow-xs hover:bg-surface2"
                 data-testid="board-dropdown-select"
               >
                 <option value="">{projectId ? t("tasks_all_project_boards", "Semua Board Proyek") : t("tasks_all_boards", "Semua Board")}</option>
-                {displayedBoards.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}{isBoardCollaborative(b) ? ` · ${t("board_collab_tag", "Kolaborasi")}` : ""} · {b.task_count || 0}
-                  </option>
-                ))}
+                {divisionBoards.length > 0 && (
+                  <optgroup label={t("board_group_divisi", "Board Divisi")}>
+                    {divisionBoards.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name} · {b.task_count || 0}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {projectBoards.length > 0 && (
+                  <optgroup label={t("board_group_proyek", "Proyek / Kolaborasi")}>
+                    {projectBoards.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name} · {t("board_project_tag", "Proyek")} · {b.task_count || 0}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </AppSelect>
 
               <button
                 type="button"
                 onClick={() =>
                   setEditBoard({
-                    is_collaborative: Boolean(projectId),
-                    board_type: projectId ? "collaborative" : "department",
+                    is_collaborative: true,
+                    board_type: "collaborative",
                     project_id: projectId || "",
-                    department: projectId ? "Semua Divisi" : (me?.department || "Marketing")
+                    department: "Semua Divisi"
                   })
                 }
                 className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border bg-surface text-brand shadow-xs hover:bg-brand/5 transition-all cursor-pointer"
-                title={t("board_create_btn_title", "Buat Board")}
-                aria-label={t("board_create_btn_title", "Buat Board")}
+                title={t("board_create_btn_title", "Buat Board Kolaborasi / Proyek")}
+                aria-label={t("board_create_btn_title", "Buat Board Kolaborasi / Proyek")}
                 data-testid="create-board-btn"
               >
                 <Plus size={16} className="shrink-0" />

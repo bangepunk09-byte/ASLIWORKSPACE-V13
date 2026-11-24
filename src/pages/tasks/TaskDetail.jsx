@@ -498,7 +498,7 @@ export default function TaskDetail({ id, onClose, onChanged }) {
                         >
                           <option value="">{tr("task_requestor_add_opt", "+ Tambah Requestor")}</option>
                           {Object.values(userMap || {})
-                            .filter((u) => u && !u.is_bot && u.role !== "assistant" && u.user_id !== "user_circle_assistant" && !reqIds.includes(u.user_id))
+                            .filter((u) => u && !u.is_bot && u.role !== "assistant" && u.user_id !== "user_circle_assistant" && members.includes(u.user_id) && !reqIds.includes(u.user_id))
                             .map((u) => (
                               <option key={u.user_id} value={u.user_id}>{u.name}</option>
                             ))}

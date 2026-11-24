@@ -404,8 +404,29 @@ export default function Dashboard() {
     ? tr("dash_greeting_evening", "Selamat Sore")
     : tr("dash_greeting_night", "Selamat Malam");
 
-  // Data for Column 1: Meetings
-  const displayMeetings = meetings.slice(0, 3);
+  // Data for Column 1: Meetings (strictly filter and sort the 3 nearest upcoming meetings)
+  const nowDate = new Date();
+  const todayIsoStr = format(nowDate, "yyyy-MM-dd");
+  const nowHhMmStr = format(nowDate, "HH:mm");
+
+  const upcomingMeetingsSorted = [...(Array.isArray(meetings) ? meetings : [])]
+    .filter((m) => {
+      if (!m || !m.date) return false;
+      const mDate = String(m.date).slice(0, 10);
+      if (mDate > todayIsoStr) return true;
+      if (mDate === todayIsoStr) {
+        const endT = String(m.end_time || m.start_time || "23:59").slice(0, 5);
+        return endT >= nowHhMmStr;
+      }
+      return false;
+    })
+    .sort((a, b) => {
+      const da = `${String(a.date || "").slice(0, 10)}T${String(a.start_time || "00:00").slice(0, 5)}`;
+      const db = `${String(b.date || "").slice(0, 10)}T${String(b.start_time || "00:00").slice(0, 5)}`;
+      return da.localeCompare(db);
+    });
+
+  const displayMeetings = upcomingMeetingsSorted.slice(0, 3);
 
   // Data for Column 2: Today's Priority Tasks (active non-archived tasks sorted by closest deadline)
   const todayTasks = (tasks || [])
@@ -466,15 +487,15 @@ export default function Dashboard() {
       <div className="min-w-0">
         {/* Header */}
         <div className={`flex items-center justify-between gap-2 min-w-0 border-b border-slate-100 dark:border-slate-800 ${densityStyles.cardHeader}`}>
-          <span className="inline-flex min-w-0 items-center gap-1.5 sm:gap-2 rounded-full border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 px-3 sm:px-3.5 py-1 text-xs font-bold text-emerald-700 dark:text-emerald-300 shadow-xs">
-            <Video size={14} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
-            <span className="truncate leading-snug py-0.5">{tr("dash_meetings_title", "Jadwal Rapat Mendatang")}</span>
+          <span className="inline-flex min-w-0 items-center gap-1.5 rounded-full border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 px-2.5 sm:px-3 py-1 text-[11px] sm:text-xs font-bold text-emerald-700 dark:text-emerald-300 shadow-xs">
+            <Video size={13} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <span className="leading-snug py-0.5">{tr("dash_meetings_title", "Jadwal Rapat Mendatang")}</span>
           </span>
           <Link
             to="/schedule"
-            className="inline-flex shrink-0 items-center gap-1 text-xs font-bold text-sky-600 hover:text-sky-700 dark:text-sky-400 transition-colors whitespace-nowrap"
+            className="inline-flex shrink-0 items-center gap-0.5 text-[11px] sm:text-xs font-bold text-sky-600 hover:text-sky-700 dark:text-sky-400 transition-colors whitespace-nowrap"
           >
-            {tr("dash_view_all", "Lihat Semua")} <ChevronRight size={14} />
+            {tr("dash_view_all", "Lihat Semua")} <ChevronRight size={13} />
           </Link>
         </div>
 
@@ -483,8 +504,8 @@ export default function Dashboard() {
           {displayMeetings.length === 0 ? (
             <div className="flex flex-col items-center justify-center p-6 text-center rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-dashed">
               <CalendarDays size={24} className="text-sub mb-2 opacity-50" />
-              <p className="text-xs font-semibold text-ink">{tr("dash_meetings_empty", "Tidak ada meeting hari ini")}</p>
-              <p className="text-[11px] text-sub mt-0.5">{tr("dash_meetings_empty_sub", "Jadwal baru akan muncul di sini")}</p>
+              <p className="text-xs font-semibold text-ink">{tr("dash_meetings_empty", "Belum ada jadwal rapat mendatang")}</p>
+              <p className="text-[11px] text-sub mt-0.5">{tr("dash_meetings_empty_sub", "Jadwal baru yang akan datang otomatis muncul di sini")}</p>
             </div>
           ) : (
             displayMeetings.map((m) => (
@@ -504,10 +525,10 @@ export default function Dashboard() {
                 </div>
 
                 {/* Title & Location */}
-                <h4 className="mt-2 text-base font-bold text-ink leading-normal line-clamp-1">
+                <h4 className="mt-2 text-base font-bold text-ink leading-snug break-words">
                   {m.title}
                 </h4>
-                <p className="mt-1.5 text-xs text-sub truncate">
+                <p className="mt-1.5 text-xs text-sub leading-relaxed break-words">
                   {m.location || "Google Calendar / Google Meet"}
                 </p>
 

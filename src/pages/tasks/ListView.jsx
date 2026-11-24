@@ -233,8 +233,9 @@ function Cell({ k, row, projects, boards = [], patch, onOpen }) {
           </PopoverTrigger>
           <PopoverContent className="w-64 bg-surface p-2 shadow-xl rounded-2xl border outline-none focus:outline-none" align="start">
             <p className="px-2 py-1 text-[11px] font-bold text-sub uppercase tracking-wider">{t("table_choose_requestor", "Pilih Requestor")} · {reqUids.length}</p>
+            <p className="px-2 pb-1 text-[10px] text-sub truncate">{assigneeScope.scopeLabel}</p>
             <div className="max-h-56 overflow-y-auto space-y-0.5">
-              {humanUsers.map((u) => {
+              {scopedAssignUsers.map((u) => {
                 const on = reqUids.includes(u.user_id);
                 return (
                   <button
@@ -950,8 +951,8 @@ export default function ListView({ tasks, projects, boards = [], projectId, onOp
               )}
               {!collapsed[key] && (
                 <>
-                  <div className="hidden overflow-hidden rounded-xl border bg-surface md:block print:block">
-                    <table className="w-full table-fixed border-collapse text-left" data-testid={`task-sheet-${key}`}>
+                  <div className="overflow-x-auto rounded-xl border bg-surface">
+                    <table className="w-full min-w-[780px] md:min-w-0 table-fixed border-collapse text-left" data-testid={`task-sheet-${key}`}>
                       <colgroup>
                         <col key={`${key}_col_num`} style={{ width: `${(4 / total) * 100}%` }} />
                         {visible.map(([k, , w], idx) => (
@@ -1009,31 +1010,6 @@ export default function ListView({ tasks, projects, boards = [], projectId, onOp
                         <AddRow span={visible.length} onAdd={(title) => addRow(key, title)} gkey={key} />
                       </tbody>
                     </table>
-                  </div>
-                  <div className="space-y-2 md:hidden print:hidden">
-                    {rows.slice(0, lim).map((row) => {
-                      const taskItem = row.task;
-                      return (
-                        <div key={`${row.rowKey}_${taskItem.updated_at || taskItem.created_at || "1"}`} className="flex items-start gap-2">
-                          <input type="checkbox" checked={selected.includes(taskItem.id)} onChange={() => toggleSel(taskItem.id)} className="mt-4 h-5 w-5 accent-[var(--c-accent)]" aria-label="Pilih tugas" />
-                          <div className="min-w-0 flex-1">
-                            {row.cp && (() => {
-                              const effPic = getEffectiveCheckpointAssignees(row.cp, taskItem)[0];
-                              return (
-                                <div className="mb-1 flex items-center gap-1.5 text-[11px] font-bold text-brand">
-                                  <span className="rounded-md bg-brand/10 px-2 py-0.5">
-                                    {t("table_stage_prefix", "Tahap")} {row.cpIndex + 1}/{row.cpTotal}: {row.cp.title}
-                                  </span>
-                                  {effPic && <span className="text-sub">PIC: {userMap[effPic]?.name}</span>}
-                                </div>
-                              );
-                            })()}
-                            <TaskCard t={taskItem} onOpen={onOpen} done={statuses.find((s) => s.key === taskItem.status)?.is_done} reload={reload} />
-                            {taskItem.item_type && <div className="mt-1 pl-1"><ItemChip name={taskItem.item_type} small /></div>}
-                          </div>
-                        </div>
-                      );
-                    })}
                   </div>
                   {rows.length > lim && <button onClick={() => setLimit({ ...limit, [key]: lim + 200 })} className="mt-2 text-sm font-semibold text-brand print:hidden">{t("table_show_more_prefix", "Tampilkan")} {rows.length - lim} {t("table_more_suffix", "lainnya")}</button>}
                 </>

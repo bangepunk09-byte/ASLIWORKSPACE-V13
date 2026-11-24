@@ -315,71 +315,107 @@ export const DEFAULT_CHECKPOINT_PRESETS = [
     id: "builtin_video",
     label: "🎬 Video Content",
     items: ["Pembuatan Script / Naskah", "Persiapan Aset Visual", "Shooting / Recording", "Editing & Post-Production"],
-    builtin: true,
   },
   {
     id: "builtin_design",
     label: "🎨 Graphic & Design",
     items: ["Brief & Riset Konsep", "Draft Desain Awal", "Review & Revisi", "Final Export Asset"],
-    builtin: true,
   },
   {
     id: "builtin_web",
     label: "💻 Web & Tech",
     items: ["Requirement & Wireframe", "UI/UX Design", "Frontend / Backend Dev", "QA & Final Testing"],
-    builtin: true,
+  },
+  {
+    id: "builtin_daily_content",
+    label: "Daily Content",
+    items: ["Ide & Brief Konten", "Copywriting & Caption", "Produksi Visual / Video", "Review & Approval", "Scheduling & Posting"],
+  },
+  {
+    id: "builtin_seasonal_menu",
+    label: "Seasonal Menu",
+    items: [
+      "Riset & Konsep Menu",
+      "R&D Resep & Trial Produk",
+      "Costing & HPP",
+      "Approval Direksi",
+      "Photoshoot & Key Visual",
+      "Desain Materi Promosi",
+      "Cetak & Distribusi POSM",
+      "Training Tim Outlet",
+      "Persiapan Bahan Baku",
+      "Teaser & Kampanye Sosmed",
+      "Launching & Evaluasi",
+    ],
   },
 ];
 
-const CP_TEMPLATES_STORAGE_KEY = "circle_checkpoint_templates";
+const CP_TEMPLATES_STORAGE_PREFIX = "circle_user_cp_templates_";
 
-function readCachedTemplates() {
+function getUserStorageKey(userId) {
+  return `${CP_TEMPLATES_STORAGE_PREFIX}${userId || "guest"}`;
+}
+
+function buildInitialUserTemplates(wsTemplates) {
+  const base = [...DEFAULT_CHECKPOINT_PRESETS];
+  const seenLabels = new Set(base.map((t) => String(t.label || "").trim().toLowerCase()));
+  if (Array.isArray(wsTemplates)) {
+    for (const t of wsTemplates) {
+      if (!t || !t.label || !Array.isArray(t.items)) continue;
+      const key = String(t.label).trim().toLowerCase();
+      if (!seenLabels.has(key)) {
+        seenLabels.add(key);
+        base.push({
+          id: t.id || `tpl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          label: t.label,
+          items: t.items,
+        });
+      }
+    }
+  }
+  return base;
+}
+
+function readCachedUserTemplates(userId, prefs, ws) {
+  if (Array.isArray(prefs?.user_checkpoint_templates)) {
+    return prefs.user_checkpoint_templates;
+  }
   try {
-    const raw = localStorage.getItem(CP_TEMPLATES_STORAGE_KEY);
+    const raw = localStorage.getItem(getUserStorageKey(userId));
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) return parsed;
     }
   } catch {}
-  return [];
+  return buildInitialUserTemplates(prefs?.checkpoint_templates || ws?.checkpoint_templates);
 }
 
 export function useCheckpointTemplates() {
-  const { ws, prefs, savePrefs, setSession, t: tr } = useApp();
-  const [customTemplates, setCustomTemplates] = useState(() => {
-    if (Array.isArray(ws?.checkpoint_templates) && ws.checkpoint_templates.length > 0) {
-      return ws.checkpoint_templates;
-    }
-    if (Array.isArray(prefs?.checkpoint_templates) && prefs.checkpoint_templates.length > 0) {
-      return prefs.checkpoint_templates;
-    }
-    return readCachedTemplates();
-  });
+  const { me, ws, prefs, savePrefs, t: tr } = useApp();
+  const userId = me?.user_id || "guest";
+
+  const [templates, setTemplates] = useState(() =>
+    readCachedUserTemplates(userId, prefs, ws)
+  );
 
   useEffect(() => {
-    const fromWs = Array.isArray(ws?.checkpoint_templates) ? ws.checkpoint_templates : null;
-    const fromPrefs = Array.isArray(prefs?.checkpoint_templates) ? prefs.checkpoint_templates : null;
-    const resolved = fromWs ?? fromPrefs ?? readCachedTemplates();
-    setCustomTemplates(resolved);
+    const resolved = readCachedUserTemplates(userId, prefs, ws);
+    setTemplates(resolved);
     try {
-      localStorage.setItem(CP_TEMPLATES_STORAGE_KEY, JSON.stringify(resolved));
+      localStorage.setItem(getUserStorageKey(userId), JSON.stringify(resolved));
     } catch {}
-  }, [ws?.checkpoint_templates, prefs?.checkpoint_templates]);
+  }, [userId, prefs?.user_checkpoint_templates]); // eslint-disable-line
 
   const persistTemplates = async (nextList) => {
-    setCustomTemplates(nextList);
+    setTemplates(nextList);
     try {
-      localStorage.setItem(CP_TEMPLATES_STORAGE_KEY, JSON.stringify(nextList));
+      localStorage.setItem(getUserStorageKey(userId), JSON.stringify(nextList));
     } catch {}
     try {
-      await savePrefs?.({ checkpoint_templates: nextList });
-    } catch {}
-    try {
-      const { data } = await api.patch("/workspace", { checkpoint_templates: nextList });
-      if (data && typeof data === "object") {
-        setSession?.((s) => (s ? { ...s, workspace: data } : s));
-      }
-      syncWorkspaceMirror(api, true).catch(() => {});
+      await savePrefs?.({
+        user_checkpoint_templates: nextList,
+        checkpoint_templates: nextList,
+      });
     } catch {}
   };
 
@@ -400,24 +436,23 @@ export function useCheckpointTemplates() {
       id: `tpl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       label: cleanLabel,
       items: cleanItems,
-      builtin: false,
     };
-    const next = [...customTemplates, newTpl];
+    const next = [...templates, newTpl];
     await persistTemplates(next);
     toast.success(`${tr("cp_tpl_saved_prefix", "Template")} "${cleanLabel}" ${tr("cp_tpl_saved_suffix", "berhasil disimpan!")}`);
     return newTpl;
   };
 
-  const removeTemplate = async (id) => {
-    const target = customTemplates.find((t) => t.id === id);
-    const next = customTemplates.filter((t) => t.id !== id);
+  const removeTemplate = async (id, label) => {
+    const target = templates.find((t) => (t.id && id ? t.id === id : t.label === label));
+    const next = templates.filter((t) => (t.id && id ? t.id !== id : t.label !== label));
     await persistTemplates(next);
     if (target) toast.success(`${tr("cp_tpl_saved_prefix", "Template")} "${target.label}" ${tr("cp_tpl_deleted_suffix", "dihapus")}`);
   };
 
   return {
-    allPresets: [...DEFAULT_CHECKPOINT_PRESETS, ...customTemplates],
-    customTemplates,
+    allPresets: templates,
+    customTemplates: templates,
     addTemplate,
     removeTemplate,
   };
@@ -508,26 +543,24 @@ export function CheckpointPresetBar({ onApply, currentCheckpoints = [], testidPr
             <button
               type="button"
               onClick={() => onApply(p.items)}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold hover:text-brand transition-colors cursor-pointer"
+              className="inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 text-xs font-semibold hover:text-brand transition-colors cursor-pointer"
               data-testid={`${testidPrefix}-${String(p.label).toLowerCase().replace(/[^a-z0-9]/g, "-")}`}
             >
               <span>{p.label}</span>
               <span className="text-[10px] text-sub font-normal">+{p.items.length} {tr("cp_stage_unit", "tahap")}</span>
             </button>
-            {!p.builtin && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  removeTemplate(p.id);
-                }}
-                title={tr("cp_delete_tpl_title", "Hapus template")}
-                className="pr-2 pl-0.5 text-sub hover:text-rose-500 transition-colors cursor-pointer"
-                data-testid={`delete-template-${p.id}`}
-              >
-                <X size={12} />
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                removeTemplate(p.id, p.label);
+              }}
+              title={tr("cp_delete_tpl_title", "Hapus template")}
+              className="pr-2 pl-0.5 text-sub hover:text-rose-500 transition-colors cursor-pointer"
+              data-testid={`delete-template-${p.id || p.label}`}
+            >
+              <X size={12} />
+            </button>
           </div>
         ))}
       </div>
@@ -1097,11 +1130,12 @@ export default function Checkpoints({ t, ro, patch, reload, members, emptyMessag
             type="button"
             onClick={add}
             disabled={!title.trim()}
-            className="btn-accent flex h-9 items-center gap-1 px-3 text-xs font-semibold disabled:opacity-40 shrink-0 cursor-pointer"
+            title={tr("cp_add_btn", "Tambah")}
+            aria-label={tr("cp_add_btn", "Tambah")}
+            className="btn-accent flex h-9 w-9 items-center justify-center p-0 text-xs font-semibold disabled:opacity-40 shrink-0 cursor-pointer"
             data-testid="checkpoint-add-btn"
           >
-            <Plus size={14} />
-            {tr("cp_add_btn", "Tambah")}
+            <Plus size={16} />
           </button>
         </div>
       )}

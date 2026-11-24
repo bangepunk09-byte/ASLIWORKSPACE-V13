@@ -328,6 +328,7 @@ async function startServer() {
     circle_notes: [],
     deleted_user_ids: [],
     deleted_user_emails: [],
+    deleted_task_ids: [],
     deleted_marketplace_listing_ids: [],
   };
 
@@ -1364,7 +1365,8 @@ async function startServer() {
     "IT",
     "Finance",
     "Legal",
-    "HRGA"
+    "HRGA",
+    "Project"
   ];
 
   const DEFAULT_ALIGNED_ORG_UNITS = [
@@ -1374,7 +1376,8 @@ async function startServer() {
     { id: "unit_it", name: "IT", division: "IT", description: "IT Infrastructure, Security & Internal Support", level: "Division", color: "#06B6D4", head_id: "user_admin1", parent_id: "unit_mgmt", order: 3 },
     { id: "unit_fin", name: "Finance", division: "Finance", description: "Financial Planning, Accounting & Treasury", level: "Division", color: "#14B8A6", head_id: null, parent_id: "unit_mgmt", order: 4 },
     { id: "unit_legal", name: "Legal", division: "Legal", description: "Corporate Legal, Compliance & Contracts", level: "Division", color: "#6366F1", head_id: null, parent_id: "unit_mgmt", order: 5 },
-    { id: "unit_hrga", name: "HRGA", division: "HRGA", description: "Human Resources, Talent & General Affairs", level: "Division", color: "#F97316", head_id: null, parent_id: "unit_mgmt", order: 6 }
+    { id: "unit_hrga", name: "HRGA", division: "HRGA", description: "Human Resources, Talent & General Affairs", level: "Division", color: "#F97316", head_id: null, parent_id: "unit_mgmt", order: 6 },
+    { id: "unit_project", name: "Project", division: "Project", description: "Project Management & Execution Division", level: "Division", color: "#8B5CF6", head_id: null, parent_id: "unit_mgmt", order: 7 }
   ];
 
   if (!Array.isArray(db.workspace.org_levels) || db.workspace.org_levels.length === 0) {
@@ -1643,7 +1646,8 @@ async function startServer() {
     IT: "#06B6D4",
     Finance: "#14B8A6",
     Legal: "#6366F1",
-    HRGA: "#F97316"
+    HRGA: "#F97316",
+    Project: "#8B5CF6"
   };
 
   function syncDivisionsToBoards(divisionsList?: string[]) {
@@ -1655,6 +1659,12 @@ async function startServer() {
           : DEFAULT_ALIGNED_DIVISIONS);
 
     const divisions: string[] = Array.from(new Set(baseDivs.map((d: any) => String(d || "").trim()).filter(Boolean)));
+    if (!divisions.some((d) => d.toLowerCase() === "project")) {
+      divisions.push("Project");
+      if (Array.isArray(db.workspace?.divisions) && !db.workspace.divisions.some((d: string) => String(d || "").trim().toLowerCase() === "project")) {
+        db.workspace.divisions.push("Project");
+      }
+    }
 
     // Ensure all official department groups from Groups are registered as division boards
     (db.groups || []).forEach((g: any) => {
@@ -1668,57 +1678,59 @@ async function startServer() {
 
     const activeDivSet = new Set(divisions.map((d) => d.toLowerCase()));
 
-    // Clean up boards whose department no longer exists in divisions
-    db.boards = db.boards.filter((b: any) => {
-      if (b.id === "brd_1") return false;
-      if (
-        !b.department ||
-        b.is_collaborative ||
-        b.board_type === "collaborative" ||
-        b.board_type === "project" ||
-        b.project_id ||
-        String(b.department).toLowerCase() === "semua divisi"
-      ) {
-        return true; // keep custom project & collaborative boards
-      }
-      return activeDivSet.has(b.department.toLowerCase());
-    });
+    // Official division board IDs (1 division = 1 board)
+    const officialDivBoardIds = new Set<string>();
 
     divisions.forEach((divName: string, idx: number) => {
       const cleanDiv = String(divName || "").trim();
       if (!cleanDiv) return;
       const lowerDiv = cleanDiv.toLowerCase();
+      if (lowerDiv === "kolaborasi" || lowerDiv === "semua divisi") return;
       const slug = lowerDiv.replace(/[^a-z0-9]+/g, "_");
-      const isProjectDiv = lowerDiv === "project" || lowerDiv === "kolaborasi";
+      const officialId = `brd_div_${slug}`;
+      officialDivBoardIds.add(officialId);
 
       let b = db.boards.find((x: any) =>
-        (x.department && x.department.toLowerCase() === lowerDiv && !x.project_id && x.board_type !== "collaborative") ||
-        (x.id === `brd_div_${slug}`) ||
-        (x.name && x.name.toLowerCase() === lowerDiv && !x.is_collaborative) ||
-        (x.name && x.name.toLowerCase() === `board ${lowerDiv}`)
+        x.id === officialId ||
+        (!String(x.id || "").startsWith("brd_div_") &&
+          x.name &&
+          String(x.name).trim().toLowerCase() === lowerDiv)
       );
 
       const color = DIVISION_BOARD_COLORS[cleanDiv] || ["#10B981", "#F59E0B", "#06B6D4", "#14B8A6", "#6366F1", "#F97316", "#3B82F6", "#8B5CF6"][idx % 8];
 
       if (b) {
-        b.id = `brd_div_${slug}`;
+        const oldId = b.id;
+        b.id = officialId;
         b.department = cleanDiv;
-        b.name = cleanDiv; // Matches group name (Marketing, Sales, IT, etc.)
+        b.name = cleanDiv;
         b.color = b.color || color;
-        b.board_type = b.board_type || (isProjectDiv ? "collaborative" : "department");
-        b.is_collaborative = b.is_collaborative !== undefined ? Boolean(b.is_collaborative) : isProjectDiv;
+        b.board_type = "department";
+        b.is_collaborative = false;
+        delete b.project_id;
         b.invited_member_ids = Array.isArray(b.invited_member_ids) ? b.invited_member_ids : [];
         b.member_ids = Array.isArray(b.member_ids) ? b.member_ids : [];
+        if (oldId && oldId !== officialId) {
+          (db.tasks || []).forEach((t: any) => {
+            if (t && t.board_id === oldId) {
+              t.board_id = officialId;
+              t.department = cleanDiv;
+            }
+          });
+          if (Array.isArray(db.projects)) {
+            db.projects = db.projects.filter(
+              (p: any) => p && p.board_id !== oldId && p.board_id !== officialId && String(p.name || "").trim().toLowerCase() !== lowerDiv
+            );
+          }
+        }
       } else {
         b = {
-          id: `brd_div_${slug}`,
+          id: officialId,
           name: cleanDiv,
-          description: isProjectDiv
-            ? "Board kolaborasi lintas divisi untuk proyek"
-            : `Official board untuk divisi ${cleanDiv}`,
+          description: `Official board untuk divisi ${cleanDiv}`,
           department: cleanDiv,
-          board_type: isProjectDiv ? "collaborative" : "department",
-          is_collaborative: isProjectDiv,
+          board_type: "department",
+          is_collaborative: false,
           color,
           invited_member_ids: [],
           member_ids: [],
@@ -1728,10 +1740,115 @@ async function startServer() {
       }
     });
 
+    // Clean up any accidental project entry linked to official division boards (e.g. "Project" division)
+    if (Array.isArray(db.projects)) {
+      db.projects = db.projects.filter((p: any) => {
+        if (!p) return false;
+        if (p.board_id && officialDivBoardIds.has(String(p.board_id))) return false;
+        if (String(p.id || "") === "prj_div_project" || String(p.name || "").trim().toLowerCase() === "project") return false;
+        return true;
+      });
+    }
+
+    // Keep official division boards for active divisions + all custom boards (which are always collaborative/project boards)
+    db.boards = db.boards.filter((b: any) => {
+      if (!b || b.id === "brd_1") return false;
+      if (String(b.id || "").startsWith("brd_div_")) {
+        return officialDivBoardIds.has(b.id);
+      }
+      // Every non-official board is a Collaborative / Project board
+      b.board_type = "collaborative";
+      b.is_collaborative = true;
+      b.department = "Semua Divisi";
+      return true;
+    });
+
+    // Bi-directionally sync custom collaborative boards with db.projects
+    if (!Array.isArray(db.projects)) db.projects = [];
+
+    // 1. Ensure every custom collaborative board has a linked project in db.projects
+    db.boards.forEach((b: any) => {
+      if (String(b.id || "").startsWith("brd_div_")) return;
+      let linkedPrj = db.projects.find(
+        (p: any) =>
+          p &&
+          ((b.project_id && p.id === b.project_id) ||
+            p.board_id === b.id ||
+            String(p.name || "").trim().toLowerCase() === String(b.name || "").trim().toLowerCase())
+      );
+      if (!linkedPrj) {
+        const newPrjId = b.project_id || `prj_${b.id.replace(/^brd_/, "")}`;
+        linkedPrj = {
+          id: newPrjId,
+          board_id: b.id,
+          name: b.name || "Proyek Kolaborasi",
+          description: b.description || "",
+          color: b.color || "#60A5FA",
+          status: "active",
+          progress: 0,
+          owner_id: b.created_by || "user_admin1",
+          member_ids: Array.isArray(b.member_ids) ? b.member_ids : [],
+          label_ids: [],
+          department: "Semua Divisi",
+          created_at: b.created_at || new Date().toISOString()
+        };
+        db.projects.push(linkedPrj);
+      } else {
+        linkedPrj.board_id = b.id;
+        if (b.color && !linkedPrj.color) linkedPrj.color = b.color;
+      }
+      b.project_id = linkedPrj.id;
+    });
+
+    // 2. Ensure every project in db.projects has a linked collaborative board in db.boards
+    db.projects.forEach((p: any) => {
+      if (!p || !p.id) return;
+      let linkedBoard = db.boards.find(
+        (b: any) =>
+          b &&
+          !String(b.id || "").startsWith("brd_div_") &&
+          (b.project_id === p.id ||
+            (p.board_id && b.id === p.board_id) ||
+            String(b.name || "").trim().toLowerCase() === String(p.name || "").trim().toLowerCase())
+      );
+      if (!linkedBoard) {
+        const newBoardId = p.board_id || `brd_${p.id.replace(/^prj_/, "")}`;
+        linkedBoard = {
+          id: newBoardId,
+          name: p.name || "Proyek Kolaborasi",
+          description: p.description || "",
+          color: p.color || "#60A5FA",
+          department: "Semua Divisi",
+          board_type: "collaborative",
+          is_collaborative: true,
+          all_workspace_members: true,
+          project_id: p.id,
+          invited_member_ids: Array.isArray(p.member_ids) ? p.member_ids : [],
+          member_ids: Array.isArray(p.member_ids) ? p.member_ids : [],
+          created_by: p.owner_id || "user_admin1",
+          created_at: p.created_at || new Date().toISOString()
+        };
+        db.boards.push(linkedBoard);
+      } else {
+        linkedBoard.project_id = p.id;
+        linkedBoard.board_type = "collaborative";
+        linkedBoard.is_collaborative = true;
+        linkedBoard.department = "Semua Divisi";
+      }
+      p.board_id = linkedBoard.id;
+    });
+
     // Remap legacy generic "brd_1" tasks to division boards and remove brd_1 completely
     const brd1Tasks = (db.tasks || []).filter((t: any) => t.board_id === "brd_1" || !t.board_id);
     if (brd1Tasks.length > 0) {
       brd1Tasks.forEach((t: any) => {
+        if (t.project_id) {
+          const prjBoard = db.boards.find((x: any) => x.project_id === t.project_id);
+          if (prjBoard) {
+            t.board_id = prjBoard.id;
+            return;
+          }
+        }
         const assignee = (db.users || []).find((u: any) => u.user_id === t.assignee_id);
         const dept = t.department || assignee?.department || "Marketing";
         const deptSlug = dept.toLowerCase().replace(/[^a-z0-9]+/g, "_");
@@ -1779,12 +1896,10 @@ async function startServer() {
           board.project_id ||
           !boardDept ||
           boardDept === "semua divisi" ||
-          boardDept === "all" ||
-          boardDept === "project" ||
-          board.id === "brd_div_project"
+          boardDept === "all"
         );
         if (isCollabBoard) {
-          if (board.all_workspace_members !== false || boardDept === "semua divisi" || boardDept === "project") return true;
+          if (board.all_workspace_members !== false || boardDept === "semua divisi") return true;
           if (Array.isArray(board.member_ids) && board.member_ids.includes(user.user_id)) return true;
         }
         // 1. Division member automatic access
@@ -2480,6 +2595,7 @@ async function startServer() {
       "marketplace_wishlists",
       "deleted_user_ids",
       "deleted_user_emails",
+      "deleted_task_ids",
       "deleted_marketplace_listing_ids",
     ];
 
@@ -2929,6 +3045,7 @@ async function startServer() {
       "marketplace_orders",
       "marketplace_reviews",
       "marketplace_vouchers",
+      "deleted_task_ids",
       "deleted_marketplace_listing_ids",
     ];
 
@@ -3076,12 +3193,21 @@ async function startServer() {
     db.deleted_marketplace_listing_ids = Array.from(new Set([...prevDelMktIds, ...nextDelMktIds].filter(Boolean)));
     const delMktSet = new Set<string>(db.deleted_marketplace_listing_ids.map((id: any) => String(id)));
 
+    const prevDelTaskIds = Array.isArray(db.deleted_task_ids) ? db.deleted_task_ids : [];
+    const nextDelTaskIds = Array.isArray(rawData.deleted_task_ids) ? rawData.deleted_task_ids : [];
+    db.deleted_task_ids = Array.from(new Set([...prevDelTaskIds, ...nextDelTaskIds].map((id: any) => String(id || "").trim()).filter(Boolean)));
+    const delTaskSet = new Set<string>(db.deleted_task_ids);
+
     for (const k of arrayKeys) {
       if (Array.isArray(rawData[k])) {
         if (k === "users") {
           const existingUsers = Array.isArray(db.users) ? [...db.users] : [];
           db.users = rawData.users.filter((u: any) => u && !isUserExplicitlyDeleted(u.user_id, u.email));
           mergeKnownAccountsIntoDb(existingUsers);
+        } else if (k === "tasks") {
+          db.tasks = rawData.tasks.filter(
+            (t: any) => t && !delTaskSet.has(String(t.id || t.task_id || "").trim())
+          );
         } else if (k === "marketplace_listings") {
           db.marketplace_listings = rawData.marketplace_listings.filter(
             (l: any) => l && !delMktSet.has(String(l.id))
@@ -3181,20 +3307,26 @@ async function startServer() {
   }
 
   function mergeTasksNonDestructive(existingTasks: any[], incomingTasks: any[]) {
-    const out = Array.isArray(existingTasks) ? [...existingTasks] : [];
+    const delTaskSet = new Set<string>(
+      (Array.isArray(db.deleted_task_ids) ? db.deleted_task_ids : []).map((id: any) => String(id || "").trim())
+    );
+    const out = (Array.isArray(existingTasks) ? [...existingTasks] : []).filter(
+      (t) => t && !delTaskSet.has(String(t.id || t.task_id || "").trim())
+    );
     const indexMap = new Map<string, number>();
     out.forEach((t, idx) => {
       const tid = t?.id || t?.task_id;
       if (tid) indexMap.set(String(tid), idx);
     });
-    let changed = false;
+    let changed = out.length !== (Array.isArray(existingTasks) ? existingTasks.length : 0);
 
     for (const rawInc of Array.isArray(incomingTasks) ? incomingTasks : []) {
       if (!rawInc || typeof rawInc !== "object") continue;
       const resolvedId = rawInc.id || rawInc.task_id;
       if (!resolvedId) continue;
-      const inc = rawInc.id ? rawInc : { ...rawInc, id: String(resolvedId) };
-      const tid = String(resolvedId);
+      const tid = String(resolvedId).trim();
+      if (!tid || delTaskSet.has(tid)) continue;
+      const inc = rawInc.id ? rawInc : { ...rawInc, id: tid };
       const existingIdx = indexMap.get(tid);
       if (existingIdx === undefined) {
         indexMap.set(tid, out.length);
@@ -3277,6 +3409,18 @@ async function startServer() {
     const prevDelMktIds = Array.isArray(db.deleted_marketplace_listing_ids) ? db.deleted_marketplace_listing_ids : [];
     const nextDelMktIds = Array.isArray(rawData.deleted_marketplace_listing_ids) ? rawData.deleted_marketplace_listing_ids : [];
     db.deleted_marketplace_listing_ids = Array.from(new Set([...prevDelMktIds, ...nextDelMktIds].filter(Boolean)));
+
+    const prevDelTaskIds = Array.isArray(db.deleted_task_ids) ? db.deleted_task_ids : [];
+    const nextDelTaskIds = Array.isArray(rawData.deleted_task_ids) ? rawData.deleted_task_ids : [];
+    db.deleted_task_ids = Array.from(
+      new Set([...prevDelTaskIds, ...nextDelTaskIds].map((id: any) => String(id || "").trim()).filter(Boolean))
+    );
+    if (db.deleted_task_ids.length > 0 && Array.isArray(db.tasks)) {
+      const delSet = new Set<string>(db.deleted_task_ids);
+      const beforeTaskLen = db.tasks.length;
+      db.tasks = db.tasks.filter((t: any) => t && !delSet.has(String(t.id || t.task_id || "").trim()));
+      if (db.tasks.length !== beforeTaskLen) anyChanged = true;
+    }
 
     // 2. Users
     if (Array.isArray(rawData.users) && rawData.users.length > 0) {
@@ -3464,6 +3608,7 @@ async function startServer() {
       template_ids: templateIds,
       deleted_user_ids: Array.isArray(db.deleted_user_ids) ? db.deleted_user_ids : [],
       deleted_user_emails: Array.isArray(db.deleted_user_emails) ? db.deleted_user_emails : [],
+      deleted_task_ids: Array.isArray(db.deleted_task_ids) ? db.deleted_task_ids : [],
       counts: {
         users: summary.users,
         tasks: summary.tasks,
@@ -6170,8 +6315,13 @@ async function startServer() {
     const userDept = curUser?.department || "Marketing";
     const userDivBoard = db.boards?.find((b: any) => b.department && b.department.toLowerCase() === userDept.toLowerCase());
     const explicitBoardId = req.body.board_id ? String(req.body.board_id).trim() : "";
-    const resolvedBoardId = explicitBoardId || assigneeDivBoard?.id || userDivBoard?.id || db.boards?.[0]?.id || "brd_div_marketing";
+    const explicitProjectId = req.body.project_id ? String(req.body.project_id).trim() : "";
+    const projectLinkedBoard = explicitProjectId
+      ? db.boards?.find((b: any) => b.project_id === explicitProjectId)
+      : null;
+    const resolvedBoardId = explicitBoardId || projectLinkedBoard?.id || assigneeDivBoard?.id || userDivBoard?.id || db.boards?.[0]?.id || "brd_div_marketing";
     const targetBoard = db.boards?.find((b: any) => b.id === resolvedBoardId);
+    const resolvedProjectId = explicitProjectId || targetBoard?.project_id || null;
     const resolvedDept = (explicitBoardId && targetBoard?.department)
       ? targetBoard.department
       : (req.body.department || targetBoard?.department || primaryAssigneeUser?.department || userDept || "Marketing");
@@ -6198,6 +6348,7 @@ async function startServer() {
       status: resolvedStatus,
       priority: req.body.priority || "medium",
       board_id: resolvedBoardId,
+      project_id: resolvedProjectId,
       department: resolvedDept,
       requestor_id: reqIds[0] || creatorId,
       requestor_ids: reqIds,
@@ -6595,6 +6746,10 @@ async function startServer() {
       return res.status(403).json({ detail: "Tidak ada tugas arsip yang dapat Anda hapus." });
     }
 
+    db.deleted_task_ids = Array.from(
+      new Set([...(Array.isArray(db.deleted_task_ids) ? db.deleted_task_ids : []), ...deletedIds.map(String)])
+    );
+
     db.audit_logs = db.audit_logs || [];
     db.audit_logs.unshift({
       id: `log_${Date.now()}`,
@@ -6605,7 +6760,7 @@ async function startServer() {
     });
 
     saveDbToFile(true);
-    broadcast({ type: "tasks:changed" });
+    broadcast({ type: "tasks:changed", deleted_ids: deletedIds });
     res.json({ success: true, deleted_count: deletedIds.length, deleted_ids: deletedIds });
   });
 
@@ -6762,13 +6917,20 @@ async function startServer() {
 
     if (approvedCount >= needed) {
       let deletedCount = 0;
+      const monthDeletedIds: string[] = [];
       db.tasks = (db.tasks || []).filter((t: any) => {
         if (t && t.archived === true && getTaskArchiveMonthKey(t) === reqObj.month) {
           deletedCount++;
+          if (t.id) monthDeletedIds.push(String(t.id));
           return false;
         }
         return true;
       });
+      if (monthDeletedIds.length > 0) {
+        db.deleted_task_ids = Array.from(
+          new Set([...(Array.isArray(db.deleted_task_ids) ? db.deleted_task_ids : []), ...monthDeletedIds])
+        );
+      }
       reqObj.status = "approved";
       reqObj.executed = true;
       reqObj.deleted_count = deletedCount;
@@ -6799,7 +6961,7 @@ async function startServer() {
 
       saveDbToFile(true);
       const enriched = enrichArchiveDeleteRequest(reqObj);
-      broadcast({ type: "tasks:changed" });
+      broadcast({ type: "tasks:changed", deleted_ids: monthDeletedIds });
       broadcast({ type: "archive_delete:changed", request: enriched });
       return res.json({
         success: true,
@@ -6808,6 +6970,7 @@ async function startServer() {
         approved_count: approvedCount,
         needed,
         deleted_count: deletedCount,
+        deleted_ids: monthDeletedIds,
         request: enriched,
       });
     }
@@ -7589,9 +7752,15 @@ async function startServer() {
     }
     const idx = db.tasks.findIndex((x: any) => x.id === req.params.id);
     const deleted = db.tasks.splice(idx, 1)[0];
+    const delId = String(req.params.id || "").trim();
+    if (delId) {
+      db.deleted_task_ids = Array.from(
+        new Set([...(Array.isArray(db.deleted_task_ids) ? db.deleted_task_ids : []), delId])
+      );
+    }
     saveDbToFile(true);
     broadcast({ type: "tasks:changed", deleted_id: req.params.id });
-    res.json({ success: true, task: deleted });
+    res.json({ success: true, task: deleted, deleted_id: req.params.id });
   });
 
   app.post("/api/tasks/:id/comments", (req, res) => {
@@ -7738,14 +7907,20 @@ async function startServer() {
 
 
   app.get("/api/projects", (req, res) => {
+    syncDivisionsToBoards();
     const list = db.projects.map((p: any) => {
-      const tasks = db.tasks.filter((t: any) => t.project_id === p.id);
+      const linkedBoard = (db.boards || []).find((b: any) => b.project_id === p.id || (p.board_id && b.id === p.board_id));
+      const boardId = p.board_id || linkedBoard?.id || null;
+      const tasks = (db.tasks || []).filter(
+        (t: any) => !t.archived && (t.project_id === p.id || (boardId && t.board_id === boardId))
+      );
       const task_done = tasks.filter((t: any) => t.status === "done").length;
       const task_total = tasks.length;
       const progress = task_total > 0 ? Math.round((task_done / task_total) * 100) : 0;
       return {
         ...p,
-        member_ids: p.member_ids || [],
+        board_id: boardId,
+        member_ids: p.member_ids || linkedBoard?.member_ids || [],
         label_ids: p.label_ids || [],
         status: p.status || "active",
         task_done,
@@ -7757,15 +7932,21 @@ async function startServer() {
   });
 
   app.get("/api/projects/:id", (req, res) => {
+    syncDivisionsToBoards();
     const p = db.projects.find((x: any) => x.id === req.params.id);
     if (!p) return res.status(404).json({ detail: "Project not found" });
-    const tasks = db.tasks.filter((t: any) => t.project_id === p.id);
+    const linkedBoard = (db.boards || []).find((b: any) => b.project_id === p.id || (p.board_id && b.id === p.board_id));
+    const boardId = p.board_id || linkedBoard?.id || null;
+    const tasks = (db.tasks || []).filter(
+      (t: any) => !t.archived && (t.project_id === p.id || (boardId && t.board_id === boardId))
+    );
     const task_done = tasks.filter((t: any) => t.status === "done").length;
     const task_total = tasks.length;
     const progress = task_total > 0 ? Math.round((task_done / task_total) * 100) : 0;
     res.json({
       ...p,
-      member_ids: p.member_ids || [],
+      board_id: boardId,
+      member_ids: p.member_ids || linkedBoard?.member_ids || [],
       label_ids: p.label_ids || [],
       status: p.status || "active",
       task_done,
@@ -7776,18 +7957,39 @@ async function startServer() {
 
   app.post("/api/projects", (req, res) => {
     const actor = getReqUser(req) || currentSessionUser;
-    const actorUid = actor?.user_id;
-    const p = {
+    const actorUid = actor?.user_id || "user_admin1";
+    const nowIso = new Date().toISOString();
+    const p: any = {
       id: `prj_${Date.now()}`,
       status: "active",
       progress: 0,
+      owner_id: actorUid,
       member_ids: req.body.member_ids || (actorUid ? [actorUid] : []),
       label_ids: req.body.label_ids || [],
       ...req.body,
-      created_at: new Date().toISOString()
+      created_at: nowIso
     };
+    const b: any = {
+      id: `brd_${Date.now()}`,
+      name: p.name,
+      description: p.description || "",
+      color: p.color || "#60A5FA",
+      department: "Semua Divisi",
+      board_type: "collaborative",
+      is_collaborative: true,
+      all_workspace_members: true,
+      project_id: p.id,
+      invited_member_ids: p.member_ids,
+      member_ids: p.member_ids,
+      created_by: actorUid,
+      created_at: nowIso
+    };
+    p.board_id = b.id;
     db.projects.push(p);
+    db.boards.push(b);
     saveDbToFile();
+    broadcast({ type: "boards:changed" });
+    broadcast({ type: "projects:changed" });
     res.json(p);
   });
 
@@ -7797,13 +7999,33 @@ async function startServer() {
     Object.assign(p, req.body);
     if (!Array.isArray(p.member_ids)) p.member_ids = [];
     if (!Array.isArray(p.label_ids)) p.label_ids = [];
+    const linkedBoard = (db.boards || []).find((b: any) => b.project_id === p.id || (p.board_id && b.id === p.board_id));
+    if (linkedBoard) {
+      if (p.name) linkedBoard.name = p.name;
+      if (p.description !== undefined) linkedBoard.description = p.description;
+      if (p.color) linkedBoard.color = p.color;
+      if (Array.isArray(req.body.member_ids)) {
+        linkedBoard.member_ids = p.member_ids;
+        linkedBoard.invited_member_ids = p.member_ids;
+      }
+    }
     saveDbToFile();
+    broadcast({ type: "boards:changed" });
+    broadcast({ type: "projects:changed" });
     res.json(p);
   });
 
   app.delete("/api/projects/:id", (req, res) => {
+    const target = db.projects.find((x: any) => x.id === req.params.id);
     db.projects = db.projects.filter((x: any) => x.id !== req.params.id);
+    if (target) {
+      db.boards = (db.boards || []).filter(
+        (b: any) => String(b.id || "").startsWith("brd_div_") || (b.project_id !== req.params.id && b.id !== target.board_id)
+      );
+    }
     saveDbToFile();
+    broadcast({ type: "boards:changed" });
+    broadcast({ type: "projects:changed" });
     res.json({ success: true });
   });
 
@@ -7833,9 +8055,7 @@ async function startServer() {
         !bd ||
         bd === "semua divisi" ||
         bd === "all" ||
-        bd === "kolaborasi" ||
-        bd === "project" ||
-        b.id === "brd_div_project"
+        bd === "kolaborasi"
       );
     };
 
@@ -7890,7 +8110,7 @@ async function startServer() {
     const cleanDeptLower = cleanDept.toLowerCase();
     const isSpecificDept =
       Boolean(cleanDeptLower) &&
-      !["semua divisi", "all", "kolaborasi", "project"].includes(cleanDeptLower);
+      !["semua divisi", "all", "kolaborasi"].includes(cleanDeptLower);
 
     const slug = (isSpecificDept ? cleanDeptLower : String(b.name || "").trim().toLowerCase()).replace(
       /[^a-z0-9]+/g,
@@ -7975,9 +8195,7 @@ async function startServer() {
       !cleanDept ||
       cleanDept === "semua divisi" ||
       cleanDept === "all" ||
-      cleanDept === "kolaborasi" ||
-      cleanDept === "project" ||
-      b.id === "brd_div_project"
+      cleanDept === "kolaborasi"
     );
 
     const { group, conv } = findBoardLinkedGroup(b, false);
@@ -8023,56 +8241,84 @@ async function startServer() {
 
   app.post("/api/boards", (req, res) => {
     const user = getReqUser(req) || currentSessionUser;
-    const isCollab = Boolean(
-      req.body.is_collaborative ||
-      req.body.board_type === "collaborative" ||
-      req.body.board_type === "project" ||
-      req.body.project_id ||
-      !req.body.department ||
-      String(req.body.department).trim().toLowerCase() === "semua divisi"
-    );
-    const b = {
+    const nowIso = new Date().toISOString();
+    const memberIds = Array.isArray(req.body.member_ids) && req.body.member_ids.length > 0
+      ? req.body.member_ids
+      : (user ? [user.user_id] : []);
+    const b: any = {
       id: `brd_${Date.now()}`,
-      department: isCollab ? (req.body.department || "Semua Divisi") : (req.body.department || user?.department || "Marketing"),
-      board_type: isCollab ? "collaborative" : "department",
-      is_collaborative: isCollab,
+      ...req.body,
+      department: "Semua Divisi",
+      board_type: "collaborative",
+      is_collaborative: true,
       all_workspace_members: req.body.all_workspace_members !== false,
-      project_id: req.body.project_id || null,
-      invited_member_ids: req.body.invited_member_ids || [],
-      member_ids: req.body.member_ids || (user ? [user.user_id] : []),
-      created_by: user?.user_id,
-      created_at: new Date().toISOString(),
-      ...req.body
+      invited_member_ids: req.body.invited_member_ids || memberIds,
+      member_ids: memberIds,
+      created_by: user?.user_id || "user_admin1",
+      created_at: nowIso
     };
-    b.board_type = isCollab ? "collaborative" : "department";
-    b.is_collaborative = isCollab;
+
+    // Always link or create a corresponding Project in db.projects
+    if (!Array.isArray(db.projects)) db.projects = [];
+    let linkedProject = b.project_id
+      ? db.projects.find((p: any) => p.id === b.project_id)
+      : null;
+    if (!linkedProject) {
+      linkedProject = {
+        id: `prj_${Date.now()}`,
+        board_id: b.id,
+        name: b.name || "Proyek Kolaborasi",
+        description: b.description || "",
+        color: b.color || "#60A5FA",
+        status: "active",
+        progress: 0,
+        owner_id: user?.user_id || "user_admin1",
+        member_ids: memberIds,
+        label_ids: [],
+        department: "Semua Divisi",
+        created_at: nowIso
+      };
+      db.projects.push(linkedProject);
+    } else {
+      linkedProject.board_id = b.id;
+      linkedProject.name = b.name || linkedProject.name;
+      if (b.description !== undefined) linkedProject.description = b.description;
+      if (b.color) linkedProject.color = b.color;
+      linkedProject.member_ids = Array.from(new Set([...(linkedProject.member_ids || []), ...memberIds]));
+    }
+    b.project_id = linkedProject.id;
+
     db.boards.push(b);
     saveDbToFile();
     broadcast({ type: "tasks:changed" });
     broadcast({ type: "boards:changed" });
+    broadcast({ type: "projects:changed" });
     res.json(b);
   });
 
   app.patch("/api/boards/:id", (req, res) => {
     const b = db.boards.find((x: any) => x.id === req.params.id);
     if (!b) return res.status(404).json({ detail: "Board not found" });
+    const isOfficialDiv = String(b.id || "").startsWith("brd_div_");
     Object.assign(b, req.body);
-    const bd = String(b.department || "").trim().toLowerCase();
-    const isCollab = Boolean(
-      b.is_collaborative ||
-      b.board_type === "collaborative" ||
-      b.board_type === "project" ||
-      b.project_id ||
-      !bd ||
-      bd === "semua divisi" ||
-      bd === "project" ||
-      b.id === "brd_div_project"
-    );
-    b.is_collaborative = isCollab;
-    b.board_type = isCollab ? "collaborative" : "department";
+    if (!isOfficialDiv) {
+      b.is_collaborative = true;
+      b.board_type = "collaborative";
+      b.department = "Semua Divisi";
+      const linkedPrj = (db.projects || []).find(
+        (p: any) => p.id === b.project_id || p.board_id === b.id
+      );
+      if (linkedPrj) {
+        if (b.name) linkedPrj.name = b.name;
+        if (b.description !== undefined) linkedPrj.description = b.description;
+        if (b.color) linkedPrj.color = b.color;
+        if (Array.isArray(b.member_ids)) linkedPrj.member_ids = b.member_ids;
+      }
+    }
     saveDbToFile();
     broadcast({ type: "tasks:changed" });
     broadcast({ type: "boards:changed" });
+    broadcast({ type: "projects:changed" });
     res.json(b);
   });
 
@@ -8202,9 +8448,17 @@ async function startServer() {
   });
 
   app.delete("/api/boards/:id", (req, res) => {
+    const target = db.boards.find((b: any) => b.id === req.params.id);
     db.boards = db.boards.filter((b: any) => b.id !== req.params.id);
+    if (target && !String(target.id || "").startsWith("brd_div_")) {
+      db.projects = (db.projects || []).filter(
+        (p: any) => p.id !== target.project_id && p.board_id !== target.id
+      );
+    }
     saveDbToFile();
     broadcast({ type: "tasks:changed" });
+    broadcast({ type: "boards:changed" });
+    broadcast({ type: "projects:changed" });
     res.json({ success: true });
   });
 
@@ -8348,9 +8602,7 @@ async function startServer() {
         !bd ||
         bd === "semua divisi" ||
         bd === "all" ||
-        bd === "kolaborasi" ||
-        bd === "project" ||
-        b.id === "brd_div_project"
+        bd === "kolaborasi"
       );
     };
 

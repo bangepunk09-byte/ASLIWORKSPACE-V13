@@ -121,8 +121,17 @@ export function mergeTwoSnapshotsNonDestructive(primarySnap: any, secondarySnap:
       ? secondarySnap.data
       : secondarySnap;
 
+  const pDelTaskIds = Array.isArray(pRoot.deleted_task_ids) ? pRoot.deleted_task_ids : [];
+  const sDelTaskIds = Array.isArray(sRoot.deleted_task_ids) ? sRoot.deleted_task_ids : [];
+  pRoot.deleted_task_ids = Array.from(
+    new Set([...pDelTaskIds, ...sDelTaskIds].map((id: any) => String(id || '').trim()).filter(Boolean))
+  );
+  const deletedTaskIdSet = new Set<string>(pRoot.deleted_task_ids);
+
   pRoot.users = mergeItemsById(pRoot.users || [], sRoot.users || [], 'user_id');
-  pRoot.tasks = mergeItemsById(pRoot.tasks || [], sRoot.tasks || [], 'task_id');
+  pRoot.tasks = mergeItemsById(pRoot.tasks || [], sRoot.tasks || [], 'task_id').filter(
+    (t: any) => !deletedTaskIdSet.has(getItemId(t, 'task_id'))
+  );
   pRoot.boards = mergeItemsById(pRoot.boards || [], sRoot.boards || [], 'board_id');
   pRoot.messages = mergeItemsById(pRoot.messages || [], sRoot.messages || []);
   pRoot.conversations = mergeItemsById(pRoot.conversations || [], sRoot.conversations || []);

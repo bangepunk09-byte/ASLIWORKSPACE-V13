@@ -314,24 +314,28 @@ function Panel({ conv, reload, onClose, onLeft }) {
         {tab === "tasks" && (conv.tasks?.length ? conv.tasks.map((t) => <button key={t.id} onClick={() => navigate(`/tasks?task=${t.id}`)} className="mb-1 flex w-full items-center gap-2 rounded-xl p-2 text-left text-sm hover:bg-surface2"><CheckSquare size={14} className="text-brand" /><span className="text-xs text-sub">T-{t.number}</span>{t.title}</button>) : <p className="p-2 text-sm text-sub">{tr("chat_tasks_empty", "Tugas yang dibuat dari obrolan ini akan muncul di sini.")}</p>)}
       </div>
       {conv.type === "dm" && (
-        <div className="flex gap-2 border-t p-3">
-          <button
-            type="button"
-            onClick={() => { playSound("click"); setConfirmDeleteDm(true); }}
-            className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-full border border-rose-200 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 cursor-pointer"
-            data-testid="delete-dm-btn"
-          >
-            <Trash2 size={13} />
-            {String(conv.id || "").startsWith("conv_circle_")
-              ? tr("messages_ctx_clear_chat", "Bersihkan Riwayat Chat")
-              : tr("chat_delete_dm_btn", "Hapus Chat")}
-          </button>
+        <div className="border-t bg-surface px-3 pt-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] sm:px-4">
+          <div className="flex h-[54px] items-center gap-2">
+            <button
+              type="button"
+              onClick={() => { playSound("click"); setConfirmDeleteDm(true); }}
+              className="flex h-10 flex-1 items-center justify-center gap-1.5 rounded-full border border-rose-200 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 cursor-pointer"
+              data-testid="delete-dm-btn"
+            >
+              <Trash2 size={13} />
+              {String(conv.id || "").startsWith("conv_circle_")
+                ? tr("messages_ctx_clear_chat", "Bersihkan Riwayat Chat")
+                : tr("chat_delete_dm_btn", "Hapus Chat")}
+            </button>
+          </div>
         </div>
       )}
       {conv.type === "group" && amAdmin && !conv.is_default && canDeleteOfficial && (
-        <div className="flex gap-2 border-t p-3">
-          <button onClick={run(() => api.patch(`/groups/${conv.id}`, { archived: !conv.archived }), conv.archived ? "Dipulihkan" : "Diarsipkan", "archive")} className="btn-ghost flex h-9 flex-1 items-center justify-center gap-1 border text-xs font-semibold" data-testid="archive-group-btn"><Archive size={13} />{conv.archived ? tr("chat_restore_btn", "Pulihkan") : tr("chat_archive_btn", "Arsipkan")}</button>
-          <button onClick={() => { playSound("click"); setConfirmDeleteGroup(true); }} className="flex h-9 flex-1 items-center justify-center gap-1 rounded-full border border-rose-200 text-xs font-semibold text-rose-600" data-testid="delete-group-btn"><Trash2 size={13} />{tr("chat_delete_group_btn", "Hapus")}</button>
+        <div className="border-t bg-surface px-3 pt-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] sm:px-4">
+          <div className="flex h-[54px] items-center gap-2">
+            <button onClick={run(() => api.patch(`/groups/${conv.id}`, { archived: !conv.archived }), conv.archived ? "Dipulihkan" : "Diarsipkan", "archive")} className="btn-ghost flex h-10 flex-1 items-center justify-center gap-1 border text-xs font-semibold" data-testid="archive-group-btn"><Archive size={13} />{conv.archived ? tr("chat_restore_btn", "Pulihkan") : tr("chat_archive_btn", "Arsipkan")}</button>
+            <button onClick={() => { playSound("click"); setConfirmDeleteGroup(true); }} className="flex h-10 flex-1 items-center justify-center gap-1 rounded-full border border-rose-200 text-xs font-semibold text-rose-600" data-testid="delete-group-btn"><Trash2 size={13} />{tr("chat_delete_group_btn", "Hapus")}</button>
+          </div>
         </div>
       )}
       <Dialog open={confirmDeleteDm} onOpenChange={setConfirmDeleteDm}>

@@ -11,35 +11,25 @@ const COLORS = ["#F87171", "#FB923C", "#FACC15", "#4ADE80", "#60A5FA", "#A78BFA"
 
 export default function BoardDialog({ board, onClose, onSaved }) {
   const { users, me, isAdmin, t } = useApp();
-  const initialCollab = Boolean(
-    board?.is_collaborative ||
-    board?.board_type === "collaborative" ||
-    board?.board_type === "project" ||
-    board?.project_id ||
-    board?.department === "Semua Divisi"
-  );
   const depts = [...new Set(users.filter((u) => !u.is_bot).map((u) => u.department).filter(Boolean))].sort();
-  const defaultDivDept =
-    board?.department && board.department !== "Semua Divisi"
-      ? board.department
-      : (me?.department || depts[0] || "Marketing");
 
   const [f, setF] = useState({
     name: board?.name || "",
     description: board?.description || "",
     color: board?.color || COLORS[4],
-    board_type: initialCollab ? "collaborative" : "department",
-    is_collaborative: initialCollab,
+    board_type: "collaborative",
+    is_collaborative: true,
     all_workspace_members: board?.all_workspace_members !== false,
     project_id: board?.project_id || "",
-    department: initialCollab ? (board?.department || "Semua Divisi") : defaultDivDept,
-    member_ids: Array.isArray(board?.member_ids) ? board.member_ids : (me?.user_id ? [me.user_id] : [])
+    department: "Semua Divisi",
+    member_ids: Array.isArray(board?.member_ids) && board.member_ids.length > 0
+      ? board.member_ids
+      : (me?.user_id ? [me.user_id] : [])
   });
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  const isCollab = f.is_collaborative || f.board_type === "collaborative";
   const toggle = (id) =>
     setF({
       ...f,
@@ -59,33 +49,21 @@ export default function BoardDialog({ board, onClose, onSaved }) {
         (u.department || "").toLowerCase().includes(q.toLowerCase()))
   );
 
-  const switchType = (nextCollab) => {
-    setF((prev) => ({
-      ...prev,
-      board_type: nextCollab ? "collaborative" : "department",
-      is_collaborative: nextCollab,
-      department: nextCollab
-        ? "Semua Divisi"
-        : (prev.department && prev.department !== "Semua Divisi" ? prev.department : defaultDivDept),
-      all_workspace_members: nextCollab ? true : false
-    }));
-  };
-
   const save = async () => {
     setBusy(true);
     try {
       const payload = {
         ...f,
-        board_type: isCollab ? "collaborative" : "department",
-        is_collaborative: isCollab,
-        department: isCollab ? "Semua Divisi" : (f.department || defaultDivDept),
-        project_id: isCollab ? (f.project_id || null) : null,
-        invited_member_ids: isCollab ? f.member_ids : []
+        board_type: "collaborative",
+        is_collaborative: true,
+        department: "Semua Divisi",
+        project_id: f.project_id || null,
+        invited_member_ids: f.member_ids
       };
       const { data } = board?.id
         ? await api.patch(`/boards/${board.id}`, payload)
         : await api.post("/boards", payload);
-      toast.success(t("board_saved_toast", "Board berhasil disimpan"));
+      toast.success(t("board_saved_toast", "Board proyek kolaborasi berhasil disimpan"));
       onSaved(data);
       onClose();
     } catch (e) {
@@ -114,112 +92,31 @@ export default function BoardDialog({ board, onClose, onSaved }) {
     <Dialog open onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-h-[90dvh] max-w-lg overflow-y-auto rounded-3xl bg-surface" data-testid="board-dialog">
         <DialogHeader>
-          <DialogTitle>{board?.id ? t("board_dialog_edit_title", "Atur Board") : t("board_dialog_new_title", "Buat Board Baru")}</DialogTitle>
+          <DialogTitle>{board?.id ? t("board_dialog_edit_title", "Atur Board Kolaborasi / Proyek") : t("board_dialog_new_title", "Buat Board Baru")}</DialogTitle>
+          <p className="text-xs text-sub flex items-center gap-1.5 pt-0.5">
+            <FolderKanban size={13} className="text-brand shrink-0" />
+            <span>Board baru khusus untuk kolaborasi lintas divisi & otomatis masuk ke daftar Proyek.</span>
+          </p>
         </DialogHeader>
 
         <div className="space-y-3">
-          {/* Board Type Switcher */}
           <div>
-            <label className="mb-1.5 block text-xs font-semibold text-sub">{t("board_type_label", "Tipe Board *")}</label>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => switchType(false)}
-                className={`flex items-start gap-2 rounded-2xl border p-2.5 text-left transition-all cursor-pointer ${
-                  !isCollab
-                    ? "border-brand bg-brand/5 ring-1 ring-brand/30"
-                    : "border-slate-200 dark:border-slate-800 hover:bg-surface2"
-                }`}
-                data-testid="board-type-department"
-              >
-                <Building2 size={16} className={`mt-0.5 shrink-0 ${!isCollab ? "text-brand" : "text-sub"}`} />
-                <div className="min-w-0">
-                  <span className="block text-xs font-bold text-ink">{t("board_type_div_title", "Board Divisi")}</span>
-                  <span className="block text-[10px] text-sub leading-tight mt-0.5">
-                    {t("board_type_div_desc", "Pilihan Assignee hanya akun dalam 1 divisi")}
-                  </span>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => switchType(true)}
-                className={`flex items-start gap-2 rounded-2xl border p-2.5 text-left transition-all cursor-pointer ${
-                  isCollab
-                    ? "border-brand bg-brand/5 ring-1 ring-brand/30"
-                    : "border-slate-200 dark:border-slate-800 hover:bg-surface2"
-                }`}
-                data-testid="board-type-collaborative"
-              >
-                <FolderKanban size={16} className={`mt-0.5 shrink-0 ${isCollab ? "text-brand" : "text-sub"}`} />
-                <div className="min-w-0">
-                  <span className="block text-xs font-bold text-ink">{t("board_type_collab_title", "Board Kolaborasi / Proyek")}</span>
-                  <span className="block text-[10px] text-sub leading-tight mt-0.5">
-                    {t("board_type_collab_desc", "Lintas divisi — bisa assign siapa saja di kolaborasi")}
-                  </span>
-                </div>
-              </button>
-            </div>
-          </div>
-
-          <div>
-            <label className="mb-1 block text-xs font-semibold text-sub">{t("board_name_label", "Nama Board *")}</label>
+            <label className="mb-1 block text-xs font-semibold text-sub">{t("board_name_label", "Nama Board / Proyek *")}</label>
             <input
               value={f.name}
               onChange={(e) => setF({ ...f, name: e.target.value })}
-              placeholder={isCollab ? t("board_name_collab_ph", "mis. Kolaborasi Launch Produk, Campaign Q4") : t("board_name_div_ph", "mis. Board Konten Marketing")}
+              placeholder={t("board_name_collab_ph", "mis. Kolaborasi Launch Produk, Campaign Q4")}
               className="h-11 w-full rounded-xl border bg-surface2 px-3 text-sm outline-none"
               data-testid="board-name-input"
             />
           </div>
-
-          {!isCollab ? (
-            <div>
-              <label className="mb-1 block text-xs font-semibold text-sub">{t("board_dept_label", "Divisi Board")}</label>
-              <AppSelect
-                value={f.department}
-                onChange={(e) => setF({ ...f, department: e.target.value })}
-                className="h-10 w-full rounded-xl border bg-surface2 px-3 text-sm font-medium text-ink"
-                data-testid="board-department-select"
-              >
-                {depts.map((d) => (
-                  <option key={d} value={d}>
-                    {t("board_dept_opt_prefix", "Divisi:")} {d}
-                  </option>
-                ))}
-              </AppSelect>
-              <p className="mt-1 text-[11px] text-sub">
-                {t("board_dept_hint_pre", "Pilihan Assignee di board ini otomatis dibatasi hanya untuk akun di divisi")} <b>{f.department}</b>.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-2.5">
-              <label className="flex items-start gap-2 rounded-xl border bg-surface2/60 p-2.5 text-xs cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={f.all_workspace_members !== false}
-                  onChange={(e) => setF({ ...f, all_workspace_members: e.target.checked })}
-                  className="mt-0.5 accent-brand"
-                  data-testid="board-collab-all-checkbox"
-                />
-                <span>
-                  <b className="text-ink">{t("board_collab_all_title", "Terbuka untuk seluruh anggota lintas divisi")}</b>
-                  <span className="block text-sub text-[11px] mt-0.5">
-                    {f.all_workspace_members !== false
-                      ? t("board_collab_all_desc_on", "Semua karyawan dari divisi manapun bisa dipilih saat assign tugas di board kolaborasi ini.")
-                      : t("board_collab_all_desc_off", "Hanya anggota yang Anda centang di bawah yang bisa ditugaskan di board ini.")}
-                  </span>
-                </span>
-              </label>
-            </div>
-          )}
 
           <div>
             <label className="mb-1 block text-xs font-semibold text-sub">{t("board_desc_label", "Deskripsi")}</label>
             <input
               value={f.description}
               onChange={(e) => setF({ ...f, description: e.target.value })}
-              placeholder={t("board_desc_ph", "Tujuan atau fokus pekerjaan board ini")}
+              placeholder={t("board_desc_ph", "Tujuan atau fokus pekerjaan board kolaborasi ini")}
               className="h-10 w-full rounded-xl border bg-surface2 px-3 text-sm outline-none"
               data-testid="board-description-input"
             />
@@ -244,8 +141,27 @@ export default function BoardDialog({ board, onClose, onSaved }) {
             </div>
           </div>
 
-          {isCollab && (
-            <div className="pt-2 border-t">
+          <div className="space-y-2.5">
+            <label className="flex items-start gap-2 rounded-xl border bg-surface2/60 p-2.5 text-xs cursor-pointer">
+              <input
+                type="checkbox"
+                checked={f.all_workspace_members !== false}
+                onChange={(e) => setF({ ...f, all_workspace_members: e.target.checked })}
+                className="mt-0.5 accent-brand"
+                data-testid="board-collab-all-checkbox"
+              />
+              <span>
+                <b className="text-ink">{t("board_collab_all_title", "Terbuka untuk seluruh anggota lintas divisi")}</b>
+                <span className="block text-sub text-[11px] mt-0.5">
+                  {f.all_workspace_members !== false
+                    ? t("board_collab_all_desc_on", "Semua karyawan dari divisi manapun bisa dipilih saat assign tugas di board kolaborasi ini.")
+                    : t("board_collab_all_desc_off", "Hanya anggota yang Anda centang di bawah yang bisa ditugaskan di board ini.")}
+                </span>
+              </span>
+            </label>
+          </div>
+
+          <div className="pt-2 border-t">
               <div className="flex items-center justify-between mb-1.5">
                 <p className="text-sm font-semibold flex items-center gap-1.5">
                   <Users size={14} className="text-brand" />
@@ -312,7 +228,6 @@ export default function BoardDialog({ board, onClose, onSaved }) {
                 })}
               </div>
             </div>
-          )}
         </div>
 
         <div className="mt-4 flex items-center justify-between gap-3 pt-4 border-t">

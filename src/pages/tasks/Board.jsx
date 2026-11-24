@@ -7,6 +7,7 @@ import { Avatar, AvatarStack, Labels, PriorityBadge, dueInfo, getTaskCompliance 
 import { playSound } from "../../lib/sound";
 import { ItemChip } from "./fields";
 import { isBoardCollaborative } from "./boardScope";
+import { recordDeletedTaskIds } from "../../lib/persistentMirror";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -96,6 +97,7 @@ export function TaskCard({ t, onOpen, done, draggable, onDragStart, onDragEnd, i
     try {
       playSound("trash");
       await api.delete(`/tasks/${t.id}`);
+      recordDeletedTaskIds([t.id]);
       toast.success(`Tugas "${t.title}" berhasil dihapus`);
       if (reload) await reload(true);
     } catch (err) {
@@ -388,53 +390,6 @@ export default function Board({ tasks, onOpen, onNew, reload, onMoveTask, board,
 
   return (
     <div className="w-full min-w-0 space-y-4">
-      {board && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border bg-surface px-4 py-3.5 sm:px-5 sm:py-4 shadow-2xs">
-          <div className="flex items-center gap-3 min-w-0">
-            <span
-              className="h-3.5 w-3.5 rounded-full shrink-0 shadow-2xs"
-              style={{ background: board.color || "#10B981" }}
-            />
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h2 className="text-sm sm:text-base font-bold text-ink truncate">
-                  {board.name}
-                </h2>
-                {isBoardCollaborative(board) ? (
-                  <span className="rounded-full bg-indigo-100 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300 px-2.5 py-0.5 text-[11px] font-bold">
-                    {tr("board_cross_division", "Kolaborasi Lintas Divisi")}
-                  </span>
-                ) : board.department ? (
-                  <span className="rounded-full bg-brand/10 text-brand px-2.5 py-0.5 text-[11px] font-bold">
-                    {tr("board_division_prefix", "Divisi")} {board.department}
-                  </span>
-                ) : null}
-                {board.invited_members_count > 0 && (
-                  <span className="rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 px-2 py-0.5 text-[10px] font-bold">
-                    +{board.invited_members_count} {tr("board_invited_suffix", "diundang")}
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {onInvite && (
-              <button
-                type="button"
-                onClick={onInvite}
-                className="inline-flex items-center gap-1.5 rounded-full border bg-surface2/80 hover:bg-surface2 px-3.5 py-2 text-xs font-semibold text-ink shadow-2xs transition-all hover:scale-[1.02] cursor-pointer"
-                title={tr("board_invite_title", "Invite anggota ke Board atau Group Chat")}
-                data-testid="board-invite-header-btn"
-              >
-                <Plus size={14} className="text-brand shrink-0" />
-                <span>Invite</span>
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* Mobile Status Quick-Jump Strip */}
       <div className="md:hidden flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
         {statuses.map((s, idx) => {

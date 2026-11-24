@@ -19,7 +19,7 @@ import {
 } from "../lib/workspaceCaches";
 import { setCachedDriveShortcuts } from "../data/initialDriveShortcuts";
 import { showSystemNotification, syncPushSubscription, syncAppBadge } from "../lib/systemNotifications";
-import { attemptAutoHydrateServer, syncWorkspaceMirror, scheduleRealtimeCloudSync, upsertAccountInVault, upsertAccountsListInVault, getKnownAccountsFromVault, hasCompletedInitialHydrate, rehydrateIfServerRestarted } from "../lib/persistentMirror";
+import { attemptAutoHydrateServer, syncWorkspaceMirror, scheduleRealtimeCloudSync, upsertAccountInVault, upsertAccountsListInVault, getKnownAccountsFromVault, hasCompletedInitialHydrate, rehydrateIfServerRestarted, recordDeletedTaskIds } from "../lib/persistentMirror";
 import { firebaseAuth, subscribeFirebaseAuth, getCloudSyncStatus, subscribeCloudSyncStatus } from "../lib/firestoreBackup";
 import { googleBasicSignIn } from "../lib/auth";
 import { prefetchMarketplaceState, reconcileMarketplaceEnabledCache } from "../pages/marketplace/marketplaceStore";
@@ -974,10 +974,13 @@ export function AppProvider({ children }) {
           setCachedDriveShortcuts(evt.data);
         }
         if (evt.type === "tasks:changed") {
-          if (evt.deleted_id) {
+          if (evt.deleted_id || (Array.isArray(evt.deleted_ids) && evt.deleted_ids.length > 0)) {
+            const delList = evt.deleted_id ? [evt.deleted_id] : evt.deleted_ids;
+            recordDeletedTaskIds(delList);
+            const delSet = new Set(delList.map(String));
             setTasks((prev) => {
               const list = Array.isArray(prev) ? prev : [];
-              const next = list.filter((x) => x.id !== evt.deleted_id);
+              const next = list.filter((x) => !delSet.has(String(x.id)));
               try {
                 localStorage.setItem("circle_tasks_cache", JSON.stringify(next));
                 localStorage.setItem("circle_cache_tasks", JSON.stringify(next));
@@ -1030,10 +1033,13 @@ export function AppProvider({ children }) {
             }).catch(() => {});
           }
         }
-        if (evt.type === "tasks:deleted" && evt.id) {
+        if (evt.type === "tasks:deleted" && (evt.id || Array.isArray(evt.ids))) {
+          const delList = evt.id ? [evt.id] : evt.ids;
+          recordDeletedTaskIds(delList);
+          const delSet = new Set(delList.map(String));
           setTasks((prev) => {
             const list = Array.isArray(prev) ? prev : [];
-            const next = list.filter((x) => x.id !== evt.id);
+            const next = list.filter((x) => !delSet.has(String(x.id)));
             try {
               localStorage.setItem("circle_tasks_cache", JSON.stringify(next));
               localStorage.setItem("circle_cache_tasks", JSON.stringify(next));

@@ -231,11 +231,12 @@ function CheckpointCreator({ checkpoints = [], onChange, members, emptyMessage, 
           type="button"
           onClick={add}
           disabled={!title.trim()}
-          className="btn-accent flex h-9 items-center gap-1 px-2.5 text-xs font-semibold disabled:opacity-40 shrink-0"
+          title={tr("cp_add_btn", "Tambah")}
+          aria-label={tr("cp_add_btn", "Tambah")}
+          className="btn-accent flex h-9 w-9 items-center justify-center p-0 text-xs font-semibold disabled:opacity-40 shrink-0 cursor-pointer"
           data-testid="task-create-checkpoint-add-btn"
         >
-          <Plus size={13} />
-          {tr("cp_add_btn", "Tambah")}
+          <Plus size={16} />
         </button>
       </div>
     </div>
@@ -294,10 +295,19 @@ export default function TaskCreate({ open, onOpenChange, preset, defaults, onCre
     if (nextAssignees.length === 0 && !defaults?.assignee_ids && !defaults?.assignee_id && me?.user_id && allowedSet.has(me.user_id)) {
       nextAssignees = [me.user_id];
     }
+    let nextRequestors = (initialObj.requestor_ids || []).filter((uid) => allowedSet.has(uid));
+    if (nextRequestors.length === 0) {
+      if (me?.user_id && allowedSet.has(me.user_id)) {
+        nextRequestors = [me.user_id];
+      } else if (scope.ids.length > 0) {
+        nextRequestors = [scope.ids[0]];
+      }
+    }
     return {
       ...initialObj,
       board_id: resolvedBoardId,
       department: resolvedDept,
+      requestor_ids: nextRequestors,
       assignee_ids: nextAssignees,
       assignee_id: nextAssignees[0] || null
     };
@@ -309,7 +319,7 @@ export default function TaskCreate({ open, onOpenChange, preset, defaults, onCre
       if ((!initial.assignee_ids || !initial.assignee_ids.length) && initial.assignee_id) {
         initial.assignee_ids = [initial.assignee_id];
       }
-      if (!initial.status) initial.status = statuses?.[0]?.key || "todo";
+      initial.status = preset?.status || defaults?.status || initial.status || statuses?.[0]?.key || "todo";
       setF(applyBoardDefaults(initial, boards));
       setMore(false);
       api.get("/boards").then((r) => {
@@ -319,7 +329,7 @@ export default function TaskCreate({ open, onOpenChange, preset, defaults, onCre
         setF((prev) => applyBoardDefaults(prev, list));
       }).catch(() => {});
     }
-  }, [open]); // eslint-disable-line
+  }, [open, defaults?.status, preset?.status]); // eslint-disable-line
 
   const assigneeScope = useMemo(
     () =>
@@ -399,28 +409,30 @@ export default function TaskCreate({ open, onOpenChange, preset, defaults, onCre
             <input autoFocus value={f.title} onChange={set("title")} placeholder={tr("task_create_title_ph", "Judul tugas...")} className="w-full bg-transparent text-xl sm:text-2xl font-bold outline-none placeholder:text-sub" data-testid="task-title-input" />
             <RichEditor value={f.description} onChange={set("description")} testid="task-description-editor" />
             
-            {/* Multiple Requestors */}
+            {/* Multiple Requestors — restricted to selected Board members + invited members */}
             <Row label={tr("task_field_requestor", "Requestor")}>
               <div className="flex flex-wrap gap-1.5" data-testid="task-requestor-list">
-                {humanUsers.map((u) => {
-                  const isSelected = (f.requestor_ids || []).includes(u.user_id);
-                  return (
-                    <button
-                      type="button"
-                      key={u.user_id}
-                      onClick={() => toggleRequestor(u.user_id)}
-                      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-all cursor-pointer ${
-                        isSelected
-                          ? "border-[var(--c-accent)] bg-brand text-white shadow-sm"
-                          : "border-slate-200 bg-surface hover:bg-surface2 text-slate-700 dark:text-slate-200"
-                      }`}
-                      data-testid={`requestor-toggle-${u.user_id}`}
-                    >
-                      <span>{u.name.split(" ")[0]}</span>
-                      {isSelected && <span>✓</span>}
-                    </button>
-                  );
-                })}
+                {humanUsers
+                  .filter((u) => members.includes(u.user_id))
+                  .map((u) => {
+                    const isSelected = (f.requestor_ids || []).includes(u.user_id);
+                    return (
+                      <button
+                        type="button"
+                        key={u.user_id}
+                        onClick={() => toggleRequestor(u.user_id)}
+                        className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-all cursor-pointer ${
+                          isSelected
+                            ? "border-[var(--c-accent)] bg-brand text-white shadow-sm"
+                            : "border-slate-200 bg-surface hover:bg-surface2 text-slate-700 dark:text-slate-200"
+                        }`}
+                        data-testid={`requestor-toggle-${u.user_id}`}
+                      >
+                        <span>{u.name.split(" ")[0]}</span>
+                        {isSelected && <span>✓</span>}
+                      </button>
+                    );
+                  })}
               </div>
             </Row>
 
@@ -431,17 +443,24 @@ export default function TaskCreate({ open, onOpenChange, preset, defaults, onCre
                   const bid = e.target.value;
                   const b = boards.find((x) => x.id === bid) || null;
                   const nextDept = b ? (b.department || "") : "";
+                  const nextProjectId = b?.project_id || "";
                   const nextScope = getBoardAssigneeScope({
                     board: b,
                     boards,
                     boardId: bid,
-                    projectId: f.project_id,
+                    projectId: nextProjectId || f.project_id,
                     department: nextDept,
                     users
                   });
                   const allowedSet = new Set(nextScope.ids);
                   setF((prev) => {
                     const filteredAssignees = (prev.assignee_ids || []).filter((uid) => allowedSet.has(uid));
+                    const filteredRequestors = (prev.requestor_ids || []).filter((uid) => allowedSet.has(uid));
+                    const nextRequestors = filteredRequestors.length > 0
+                      ? filteredRequestors
+                      : (me?.user_id && allowedSet.has(me.user_id)
+                          ? [me.user_id]
+                          : (nextScope.ids[0] ? [nextScope.ids[0]] : []));
                     const filteredCps = (prev.checkpoints || []).map((c) =>
                       c && c.assignee_id && !allowedSet.has(c.assignee_id)
                         ? { ...c, assignee_id: null }
@@ -450,7 +469,9 @@ export default function TaskCreate({ open, onOpenChange, preset, defaults, onCre
                     return {
                       ...prev,
                       board_id: bid,
+                      project_id: nextProjectId || (isBoardCollaborative(b) ? prev.project_id : ""),
                       department: nextDept,
+                      requestor_ids: nextRequestors,
                       assignee_ids: filteredAssignees,
                       assignee_id: filteredAssignees[0] || null,
                       checkpoints: filteredCps
@@ -463,22 +484,30 @@ export default function TaskCreate({ open, onOpenChange, preset, defaults, onCre
                 {(f.project_id || boards.length === 0) && (
                   <option value="">{tr("task_collab_project_mode", "Mode Proyek Kolaborasi")}</option>
                 )}
-                {boards.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}
-                    {isBoardCollaborative(b)
-                      ? ` · ${tr("board_collab_tag", "Kolaborasi")}`
-                      : b.department && b.department !== b.name
-                      ? ` · ${b.department}`
-                      : ""}
-                  </option>
-                ))}
+                {boards.filter((b) => !isBoardCollaborative(b)).length > 0 && (
+                  <optgroup label={tr("board_group_divisi", "Board Divisi")}>
+                    {boards.filter((b) => !isBoardCollaborative(b)).map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {boards.filter((b) => isBoardCollaborative(b)).length > 0 && (
+                  <optgroup label={tr("board_group_proyek", "Proyek / Kolaborasi")}>
+                    {boards.filter((b) => isBoardCollaborative(b)).map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name} · {tr("board_project_tag", "Proyek")}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </AppSelect>
             </Row>
 
             <Row label={tr("task_field_status", "Status")}>
               <StatusSelect
-                value={f.status || "todo"}
+                value={f.status || statuses?.[0]?.key || "todo"}
                 onChange={set("status")}
                 testid="task-status-select"
               />

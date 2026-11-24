@@ -15,9 +15,7 @@ export function isBoardCollaborative(board) {
     !deptLower ||
     deptLower === "semua divisi" ||
     deptLower === "all" ||
-    deptLower === "kolaborasi" ||
-    deptLower === "project" ||
-    board.id === "brd_div_project"
+    deptLower === "kolaborasi"
   );
 }
 
@@ -67,8 +65,16 @@ export function getBoardAssigneeScope({
   }
 
   if (cleanDept) {
+    const invitedSet = new Set([
+      ...(Array.isArray(activeBoard?.invited_member_ids) ? activeBoard.invited_member_ids : []),
+      ...(Array.isArray(activeBoard?.member_ids) ? activeBoard.member_ids : [])
+    ]);
     const deptIds = humanUsers
-      .filter((u) => String(u.department || "").trim().toLowerCase() === deptLower)
+      .filter(
+        (u) =>
+          String(u.department || "").trim().toLowerCase() === deptLower ||
+          invitedSet.has(u.user_id)
+      )
       .map((u) => u.user_id);
 
     return {
@@ -76,8 +82,8 @@ export function getBoardAssigneeScope({
       isCollaborative: false,
       activeBoard,
       divisionName: cleanDept,
-      scopeLabel: `Khusus anggota divisi ${cleanDept} · Gunakan Board Kolaborasi untuk lintas divisi`,
-      emptyMessage: `Belum ada akun di divisi ${cleanDept}.`
+      scopeLabel: `Khusus anggota divisi ${cleanDept} & yang di-invite ke board ini`,
+      emptyMessage: `Belum ada akun di board ${cleanDept}.`
     };
   }
 

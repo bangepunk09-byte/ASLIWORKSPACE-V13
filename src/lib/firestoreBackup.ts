@@ -451,6 +451,7 @@ function buildChunksFromBackup(backupPayload: any): PreparedChunk[] {
       marketplace_wishlists: data.marketplace_wishlists || {},
       deleted_user_ids: data.deleted_user_ids || [],
       deleted_user_emails: data.deleted_user_emails || [],
+      deleted_task_ids: data.deleted_task_ids || [],
     }) as Record<string, unknown>,
   });
 
@@ -1203,6 +1204,7 @@ async function loadBackupFromFirestoreOptional(backupId: string) {
     circle_notes: [],
     deleted_user_ids: [],
     deleted_user_emails: [],
+    deleted_task_ids: [],
     marketplace_listings: [],
     marketplace_orders: [],
     marketplace_reviews: [],

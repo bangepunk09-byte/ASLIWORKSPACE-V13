@@ -12,6 +12,7 @@ import { Avatar, Labels, PriorityBadge, PRIORITY } from "../../components/common
 import { AppSelect } from "../../components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../../components/ui/dialog";
 import { playSound } from "../../lib/sound";
+import { recordDeletedTaskIds } from "../../lib/persistentMirror";
 
 const MONTH_NAMES = {
   "01": "Januari", "02": "Februari", "03": "Maret", "04": "April",
@@ -158,6 +159,7 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
     setBusyDelete(true);
     try {
       await api.delete(`/tasks/${confirmSingleTask.id}`);
+      recordDeletedTaskIds([confirmSingleTask.id]);
       playSound("click");
       toast.success(`Tugas "${confirmSingleTask.title}" dihapus dari arsip.`);
       setSelectedIds((prev) => prev.filter((x) => x !== confirmSingleTask.id));
@@ -175,6 +177,7 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
     setBusyDelete(true);
     try {
       const { data } = await api.post("/tasks/archive/bulk-delete", { ids: selectedIds });
+      recordDeletedTaskIds(Array.isArray(data?.deleted_ids) ? data.deleted_ids : selectedIds);
       playSound("click");
       toast.success(`${data?.deleted_count || selectedIds.length} tugas arsip berhasil dihapus.`);
       setSelectedIds([]);
@@ -217,6 +220,9 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
       if (data?.status === "rejected") {
         toast.info("Permintaan hapus arsip bulan ditolak.");
       } else if (data?.executed) {
+        if (Array.isArray(data.deleted_ids) && data.deleted_ids.length > 0) {
+          recordDeletedTaskIds(data.deleted_ids);
+        }
         toast.success(`Persetujuan 2/2 lengkap! ${data.deleted_count || 0} tugas arsip bulan tersebut berhasil dihapus.`);
         reload?.();
       } else {

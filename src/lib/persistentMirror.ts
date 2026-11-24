@@ -16,6 +16,7 @@ const IDB_STORE = 'snapshots';
 const MIRROR_KEY = 'latest_workspace_mirror';
 const RICHEST_MIRROR_KEY = 'richest_workspace_mirror';
 const VAULT_STORAGE_KEY = 'circle_account_vault_v1';
+const DELETED_TASK_IDS_KEY = 'circle_deleted_task_ids_v1';
 
 export interface PersistentMirrorEnvelope {
   snapshot: any;
@@ -136,6 +137,78 @@ export function pruneDeletedAccountsFromVault(
       localStorage.setItem(VAULT_STORAGE_KEY, JSON.stringify(filtered));
     }
   } catch {}
+}
+
+export function getLocalDeletedTaskIds(): string[] {
+  try {
+    const raw = localStorage.getItem(DELETED_TASK_IDS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.map((id) => String(id || '').trim()).filter(Boolean)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export function recordDeletedTaskIds(ids: string[] = []): void {
+  const cleanIds = (Array.isArray(ids) ? ids : [ids])
+    .map((x) => String(x || '').trim())
+    .filter(Boolean);
+  if (cleanIds.length === 0) return;
+
+  const existing = getLocalDeletedTaskIds();
+  const merged = Array.from(new Set([...existing, ...cleanIds]));
+  const delSet = new Set(merged);
+
+  try {
+    localStorage.setItem(DELETED_TASK_IDS_KEY, JSON.stringify(merged));
+    for (const cacheKey of ['circle_tasks_cache', 'circle_cache_tasks']) {
+      const raw = localStorage.getItem(cacheKey);
+      if (!raw) continue;
+      const list = JSON.parse(raw);
+      if (Array.isArray(list)) {
+        const next = list.filter((t) => !delSet.has(getItemId(t, 'task_id')));
+        if (next.length !== list.length) {
+          localStorage.setItem(cacheKey, JSON.stringify(next));
+        }
+      }
+    }
+  } catch {}
+
+  if (cachedBootHarvest && Array.isArray(cachedBootHarvest.tasks)) {
+    cachedBootHarvest.tasks = cachedBootHarvest.tasks.filter(
+      (t) => !delSet.has(getItemId(t, 'task_id'))
+    );
+  }
+
+  // Also purge deleted tasks from IndexedDB mirror snapshots immediately
+  void (async () => {
+    try {
+      const db = await openMirrorDb();
+      if (!db) return;
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      const store = tx.objectStore(IDB_STORE);
+      for (const key of [MIRROR_KEY, RICHEST_MIRROR_KEY]) {
+        const req = store.get(key);
+        req.onsuccess = () => {
+          const env = req.result as PersistentMirrorEnvelope | undefined;
+          if (!env?.snapshot) return;
+          const root =
+            env.snapshot.data && typeof env.snapshot.data === 'object'
+              ? env.snapshot.data
+              : env.snapshot;
+          const prevDel = Array.isArray(root.deleted_task_ids) ? root.deleted_task_ids : [];
+          root.deleted_task_ids = Array.from(new Set([...prevDel, ...merged]));
+          if (Array.isArray(root.tasks)) {
+            root.tasks = root.tasks.filter((t: any) => !delSet.has(getItemId(t, 'task_id')));
+          }
+          store.put(env, key);
+        };
+      }
+    } catch {}
+  })();
 }
 
 export function upsertAccountInVault(account: any): void {
@@ -279,11 +352,13 @@ function harvestAllLocalStorageCaches(): LocalCacheHarvest {
     'user_id'
   );
 
+  const localDelTaskSet = new Set(getLocalDeletedTaskIds());
+
   harvest.tasks = mergeItemsById(
     readJsonArray('circle_tasks_cache'),
     readJsonArray('circle_cache_tasks'),
     'task_id'
-  );
+  ).filter((t) => !localDelTaskSet.has(getItemId(t, 'task_id')));
 
   harvest.boards = readJsonArray('circle_boards_cache').filter((b) => b && b.id !== 'brd_1');
   harvest.templates = readJsonArray('circle_checkpoint_templates');
@@ -342,7 +417,9 @@ function harvestAllLocalStorageCaches(): LocalCacheHarvest {
             }
           }
           if (extractedTasks.length > 0) {
-            harvest.tasks = mergeItemsById(harvest.tasks, extractedTasks, 'task_id');
+            harvest.tasks = mergeItemsById(harvest.tasks, extractedTasks, 'task_id').filter(
+              (t) => !localDelTaskSet.has(getItemId(t, 'task_id'))
+            );
           }
         }
       } else if (key === 'circle_convs_cache' || key.startsWith('circle_convs_cache_')) {
@@ -409,11 +486,20 @@ function mergeHarvestIntoSnapshotPayload(basePayload: any, harvest: LocalCacheHa
     : { app: 'CIRCLE Workspace', version: 2, data: {} };
   const root = clone.data && typeof clone.data === 'object' ? clone.data : clone;
 
+  const localDelTaskIds = getLocalDeletedTaskIds();
+  const existingDelTaskIds = Array.isArray(root.deleted_task_ids) ? root.deleted_task_ids : [];
+  root.deleted_task_ids = Array.from(
+    new Set([...existingDelTaskIds, ...localDelTaskIds].map((id: any) => String(id || '').trim()).filter(Boolean))
+  );
+  const delTaskSet = new Set<string>(root.deleted_task_ids);
+
   if (harvest.users.length > 0) {
     root.users = mergeItemsById(root.users || [], harvest.users, 'user_id');
   }
-  if (harvest.tasks.length > 0) {
-    root.tasks = mergeItemsById(root.tasks || [], harvest.tasks, 'task_id');
+  if (harvest.tasks.length > 0 || Array.isArray(root.tasks)) {
+    root.tasks = mergeItemsById(root.tasks || [], harvest.tasks, 'task_id').filter(
+      (t: any) => !delTaskSet.has(getItemId(t, 'task_id'))
+    );
   }
   if (harvest.boards.length > 0) {
     root.boards = mergeItemsById(root.boards || [], harvest.boards, 'board_id');
@@ -469,7 +555,12 @@ export async function saveMirrorSnapshot(envelope: PersistentMirrorEnvelope): Pr
     const snapUsers = envelope.snapshot?.data?.users || envelope.snapshot?.users;
     const delIds = envelope.snapshot?.data?.deleted_user_ids || [];
     const delEmails = envelope.snapshot?.data?.deleted_user_emails || [];
+    const delTaskIds =
+      envelope.snapshot?.data?.deleted_task_ids || envelope.snapshot?.deleted_task_ids || [];
     pruneDeletedAccountsFromVault(delIds, delEmails);
+    if (Array.isArray(delTaskIds) && delTaskIds.length > 0) {
+      recordDeletedTaskIds(delTaskIds);
+    }
     if (Array.isArray(snapUsers)) {
       upsertAccountsListInVault(snapUsers);
     }
@@ -515,17 +606,32 @@ export async function saveMirrorSnapshot(envelope: PersistentMirrorEnvelope): Pr
     );
   }
 
+  const mergedData = mergedSnapshot?.data || mergedSnapshot || {};
+  const allDeletedTaskIds = Array.from(
+    new Set([
+      ...(Array.isArray(mergedData.deleted_task_ids) ? mergedData.deleted_task_ids : []),
+      ...getLocalDeletedTaskIds(),
+    ])
+  );
+  mergedData.deleted_task_ids = allDeletedTaskIds;
+  if (Array.isArray(mergedData.tasks) && allDeletedTaskIds.length > 0) {
+    const delSet = new Set(allDeletedTaskIds);
+    mergedData.tasks = mergedData.tasks.filter((t: any) => !delSet.has(getItemId(t, 'task_id')));
+  }
+
   const finalEnvelope: PersistentMirrorEnvelope = {
     ...envelope,
     snapshot: mergedSnapshot,
   };
 
-  const mergedData = mergedSnapshot?.data || mergedSnapshot || {};
   const mergedTasksCount = Array.isArray(mergedData.tasks) ? mergedData.tasks.length : 0;
   const richestData =
     existingPair.richest?.snapshot?.data || existingPair.richest?.snapshot || {};
   const richestTasksCount = Array.isArray(richestData.tasks) ? richestData.tasks.length : 0;
-  const shouldUpdateRichest = !existingPair.richest || mergedTasksCount >= richestTasksCount;
+  const shouldUpdateRichest =
+    !existingPair.richest ||
+    mergedTasksCount >= richestTasksCount ||
+    allDeletedTaskIds.length > 0;
 
   await new Promise<void>((resolve) => {
     try {
@@ -570,9 +676,22 @@ export async function loadMirrorSnapshot(): Promise<PersistentMirrorEnvelope | n
           };
         }
         try {
-          const snapUsers = env?.snapshot?.data?.users || env?.snapshot?.users;
-          const delIds = env?.snapshot?.data?.deleted_user_ids || [];
-          const delEmails = env?.snapshot?.data?.deleted_user_emails || [];
+          const snapData = env?.snapshot?.data || env?.snapshot;
+          const snapUsers = snapData?.users;
+          const delIds = snapData?.deleted_user_ids || [];
+          const delEmails = snapData?.deleted_user_emails || [];
+          const delTaskIds = Array.from(
+            new Set([...(snapData?.deleted_task_ids || []), ...getLocalDeletedTaskIds()])
+          );
+          if (snapData && delTaskIds.length > 0) {
+            snapData.deleted_task_ids = delTaskIds;
+            if (Array.isArray(snapData.tasks)) {
+              const delSet = new Set(delTaskIds);
+              snapData.tasks = snapData.tasks.filter(
+                (t: any) => !delSet.has(getItemId(t, 'task_id'))
+              );
+            }
+          }
           pruneDeletedAccountsFromVault(delIds, delEmails);
           if (Array.isArray(snapUsers)) {
             upsertAccountsListInVault(snapUsers);
@@ -776,6 +895,18 @@ export async function attemptAutoHydrateServer(api: any): Promise<boolean> {
           : []
       );
 
+      const deletedTaskIdsList = Array.isArray(status?.deleted_task_ids)
+        ? status.deleted_task_ids
+        : [];
+      if (deletedTaskIdsList.length > 0) {
+        recordDeletedTaskIds(deletedTaskIdsList);
+      }
+      const deletedTaskIds = new Set(
+        [...deletedTaskIdsList, ...getLocalDeletedTaskIds()]
+          .map((id: string) => String(id || '').trim())
+          .filter(Boolean)
+      );
+
       const deletedIds = new Set(deletedIdsList.map((id: string) => String(id || '').trim()));
       const deletedEmails = new Set(
         deletedEmailsList.map((e: string) => String(e || '').toLowerCase().trim())
@@ -793,7 +924,9 @@ export async function attemptAutoHydrateServer(api: any): Promise<boolean> {
             !deletedIds.has(String(u.user_id || '').trim()) &&
             !deletedEmails.has(String(u.email).toLowerCase().trim())
         ),
-        tasks: mergeItemsById(bootHarvest.tasks, liveHarvest.tasks, 'task_id'),
+        tasks: mergeItemsById(bootHarvest.tasks, liveHarvest.tasks, 'task_id').filter(
+          (t) => !deletedTaskIds.has(getItemId(t, 'task_id'))
+        ),
         boards: mergeItemsById(bootHarvest.boards, liveHarvest.boards, 'board_id'),
         templates: mergeItemsById(bootHarvest.templates, liveHarvest.templates),
         messages: mergeItemsById(bootHarvest.messages, liveHarvest.messages),
@@ -833,7 +966,9 @@ export async function attemptAutoHydrateServer(api: any): Promise<boolean> {
 
       const snapData = idbEnv?.snapshot?.data || idbEnv?.snapshot || {};
       const snapUsers = Array.isArray(snapData.users) ? snapData.users : [];
-      const snapTasks = Array.isArray(snapData.tasks) ? snapData.tasks : [];
+      const snapTasks = (Array.isArray(snapData.tasks) ? snapData.tasks : []).filter(
+        (t: any) => !deletedTaskIds.has(getItemId(t, 'task_id'))
+      );
       const snapBoards = Array.isArray(snapData.boards) ? snapData.boards : [];
       const snapPosts = Array.isArray(snapData.posts) ? snapData.posts : [];
       const snapNotes = Array.isArray(snapData.circle_notes) ? snapData.circle_notes : [];
@@ -939,7 +1074,9 @@ export async function attemptAutoHydrateServer(api: any): Promise<boolean> {
       }
 
       const cloudData = cloudSync?.payload?.data || cloudSync?.payload || {};
-      const cloudTasks = Array.isArray(cloudData.tasks) ? cloudData.tasks : [];
+      const cloudTasks = (Array.isArray(cloudData.tasks) ? cloudData.tasks : []).filter(
+        (t: any) => !deletedTaskIds.has(getItemId(t, 'task_id'))
+      );
       const cloudBoards = Array.isArray(cloudData.boards) ? cloudData.boards : [];
       const cloudPosts = Array.isArray(cloudData.posts) ? cloudData.posts : [];
       const cloudNotes = Array.isArray(cloudData.circle_notes) ? cloudData.circle_notes : [];
@@ -1082,6 +1219,18 @@ export async function syncWorkspaceMirror(
       const statusCounts = status?.counts || {};
       const currentUploadSig = `${rev}|${status?.last_mutated_at || ''}|${Number(statusCounts.tasks || 0)}|${Number(statusCounts.messages || 0)}|${Number(statusCounts.posts || 0)}|${Number(statusCounts.users || 0)}`;
 
+      const serverDeletedTaskIds = Array.isArray(status?.deleted_task_ids)
+        ? status.deleted_task_ids
+        : [];
+      if (serverDeletedTaskIds.length > 0) {
+        recordDeletedTaskIds(serverDeletedTaskIds);
+      }
+      const deletedTaskIdSet = new Set(
+        [...serverDeletedTaskIds, ...getLocalDeletedTaskIds()]
+          .map((id: string) => String(id || '').trim())
+          .filter(Boolean)
+      );
+
       const serverTaskIds = new Set(
         Array.isArray(status?.task_ids)
           ? status.task_ids.map((id: string) => String(id || '').trim())
@@ -1092,14 +1241,14 @@ export async function syncWorkspaceMirror(
       const bootHarvest = getBootHarvest();
       const hasLocalTasksMissingOnServer =
         (Array.isArray(idbTasks) &&
-          idbTasks.some(
-            (t: any) =>
-              getItemId(t, 'task_id') && !serverTaskIds.has(getItemId(t, 'task_id'))
-          )) ||
-        bootHarvest.tasks.some(
-          (t: any) =>
-            getItemId(t, 'task_id') && !serverTaskIds.has(getItemId(t, 'task_id'))
-        );
+          idbTasks.some((t: any) => {
+            const tid = getItemId(t, 'task_id');
+            return tid && !deletedTaskIdSet.has(tid) && !serverTaskIds.has(tid);
+          })) ||
+        bootHarvest.tasks.some((t: any) => {
+          const tid = getItemId(t, 'task_id');
+          return tid && !deletedTaskIdSet.has(tid) && !serverTaskIds.has(tid);
+        });
 
       if (hasLocalTasksMissingOnServer) {
         await attemptAutoHydrateServer(api).catch(() => false);
