@@ -216,6 +216,7 @@ async function startServer() {
       const p = String(req.path || '');
       return (
         p.startsWith('/files/') ||
+        p === '/instagram-tracker/media' ||
         p === '/presence/online' ||
         p === '/health' ||
         p === '/workspace/persistence-status'
@@ -14171,6 +14172,36 @@ async function startServer() {
     return { username, shortcode, postUrl };
   }
 
+  function decodeHtmlEntities(input: string) {
+    return String(input || "")
+      .replace(/&#(\d+);/g, (_m, dec) => String.fromCharCode(Number(dec)))
+      .replace(/&#x([0-9a-f]+);/gi, (_m, hex) => String.fromCharCode(parseInt(hex, 16)))
+      .replace(/&amp;/g, "&")
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;|&#039;/g, "'")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&nbsp;/g, " ");
+  }
+
+  function cleanRssHtmlCaption(html: string, fallbackTitle = "") {
+    const rawHtml = String(html || "");
+    if (!rawHtml) return decodeHtmlEntities(fallbackTitle).trim();
+    const strippedMedia = rawHtml
+      .replace(/<video[\s\S]*?<\/video>/gi, " ")
+      .replace(/<a[^>]*>\s*<img[^>]*>\s*<\/a>/gi, " ")
+      .replace(/<img[^>]*>/gi, " ")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/p>/gi, "\n")
+      .replace(/<[^>]+>/g, " ");
+    const decoded = decodeHtmlEntities(strippedMedia)
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+    if (decoded) return decoded.slice(0, 320);
+    return decodeHtmlEntities(String(fallbackTitle || "").replace(/^▶\s*/, "")).trim().slice(0, 320);
+  }
+
   async function fetchInstagramPublicMeta(username: string, postUrl?: string, shortcode?: string) {
     const result: {
       display_name?: string;
@@ -14180,45 +14211,120 @@ async function startServer() {
       latest_caption?: string;
       latest_thumb?: string;
       latest_posted_at?: string;
+      latest_media_count?: number;
+      latest_is_video?: boolean;
       followers_text?: string;
     } = {};
 
-    const headers = {
+    const browserHeaders = {
       "User-Agent":
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+      Accept: "application/json,text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
     };
 
+    // 1. Primary Latest-Post Resolver via RSS-Bridge JSON Feed (retrieves real latest post URL, media & caption)
+    if (username && !shortcode) {
+      const bridgeBases = [
+        "https://rss-bridge.org/bridge01/",
+        "https://wtf.roflcopter.fr/rss-bridge/",
+      ];
+      for (const base of bridgeBases) {
+        if (result.latest_shortcode) break;
+        try {
+          const bridgeUrl = `${base}?action=display&bridge=InstagramBridge&context=Username&u=${encodeURIComponent(username)}&media_type=all&format=Json`;
+          const resp = await fetch(bridgeUrl, {
+            headers: browserHeaders,
+            signal: AbortSignal.timeout(7000),
+          });
+          if (!resp.ok) continue;
+          const json: any = await resp.json();
+          const items = Array.isArray(json?.items) ? json.items : [];
+          if (items.length > 0) {
+            const latest = items[0];
+            const itemUrl = String(latest?.url || latest?.id || "").trim();
+            const scMatch = itemUrl.match(/instagram\.com\/(?:[^/]+\/)?(?:p|reel|tv)\/([A-Za-z0-9_-]+)/i);
+            if (scMatch && scMatch[1]) {
+              result.latest_shortcode = scMatch[1];
+              result.latest_post_url = itemUrl.includes("instagram.com/")
+                ? itemUrl
+                : `https://www.instagram.com/p/${scMatch[1]}/`;
+            }
+            const attachments = Array.isArray(latest?.attachments) ? latest.attachments : [];
+            const imageAtt = attachments.find(
+              (a: any) =>
+                a?.url &&
+                (String(a?.mime_type || "").startsWith("image/") ||
+                  String(a.url).includes("cdninstagram") ||
+                  String(a.url).includes("/media"))
+            );
+            const htmlImgMatch = String(latest?.content_html || "").match(/<img[^>]+src="([^"]+)"/i);
+            const thumbCandidate =
+              latest?._rssbridge?.thumbnail ||
+              latest?.image ||
+              imageAtt?.url ||
+              (htmlImgMatch ? decodeHtmlEntities(htmlImgMatch[1]) : "");
+            if (thumbCandidate) {
+              result.latest_thumb = String(thumbCandidate);
+            }
+            const isVideo = Boolean(
+              String(latest?.content_html || "").includes("<video") ||
+                String(latest?.title || "").trim().startsWith("▶") ||
+                itemUrl.includes("/reel/")
+            );
+            result.latest_is_video = isVideo;
+            result.latest_media_count = Math.max(1, attachments.length || 1);
+            const cleanedCaption = cleanRssHtmlCaption(latest?.content_html || "", latest?.title || "");
+            if (cleanedCaption) {
+              result.latest_caption = cleanedCaption;
+            }
+            if (latest?.date_modified || latest?.date_published) {
+              result.latest_posted_at = String(latest.date_modified || latest.date_published);
+            }
+            if (latest?.author?.name && !result.display_name) {
+              const authName = String(latest.author.name).trim();
+              if (authName && authName.toLowerCase() !== username.toLowerCase()) {
+                result.display_name = authName;
+              }
+            }
+          }
+        } catch {}
+      }
+    }
+
+    // 2. Opportunistic direct Instagram web_profile_info (may return 429 on shared IPs, safe fallback)
     try {
-      if (username) {
+      if (username && (!result.latest_shortcode || !result.avatar_url || !result.display_name)) {
         const apiResp = await fetch(
           `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`,
           {
             headers: {
-              ...headers,
+              ...browserHeaders,
               "x-ig-app-id": "936619743392459",
               Referer: `https://www.instagram.com/${username}/`,
             },
-            signal: AbortSignal.timeout(4500),
+            signal: AbortSignal.timeout(3500),
           }
         );
         if (apiResp.ok) {
           const json: any = await apiResp.json();
           const user = json?.data?.user;
           if (user) {
-            result.display_name = user.full_name || username;
-            result.avatar_url = user.profile_pic_url_hd || user.profile_pic_url || "";
+            if (!result.display_name && user.full_name) result.display_name = user.full_name;
+            if (!result.avatar_url) {
+              result.avatar_url = user.profile_pic_url_hd || user.profile_pic_url || "";
+            }
             const edges = user.edge_owner_to_timeline_media?.edges;
-            if (Array.isArray(edges) && edges.length > 0) {
+            if (!result.latest_shortcode && Array.isArray(edges) && edges.length > 0) {
               const latestNode = edges[0]?.node;
               if (latestNode?.shortcode) {
                 result.latest_shortcode = latestNode.shortcode;
                 result.latest_post_url = `https://www.instagram.com/p/${latestNode.shortcode}/`;
-                result.latest_thumb = latestNode.display_url || latestNode.thumbnail_src || "";
+                result.latest_thumb = latestNode.display_url || latestNode.thumbnail_src || result.latest_thumb || "";
+                result.latest_is_video = Boolean(latestNode.is_video);
                 const capEdges = latestNode.edge_media_to_caption?.edges;
                 if (Array.isArray(capEdges) && capEdges[0]?.node?.text) {
-                  result.latest_caption = String(capEdges[0].node.text).slice(0, 220);
+                  result.latest_caption = String(capEdges[0].node.text).slice(0, 320);
                 }
                 if (latestNode.taken_at_timestamp) {
                   result.latest_posted_at = new Date(Number(latestNode.taken_at_timestamp) * 1000).toISOString();
@@ -14230,26 +14336,30 @@ async function startServer() {
       }
     } catch {}
 
-    try {
-      const targetUrl =
-        postUrl ||
-        (shortcode ? `https://www.instagram.com/p/${shortcode}/` : "") ||
-        (username ? `https://www.instagram.com/${username}/` : "");
-      if (targetUrl && (!result.latest_caption || !result.display_name)) {
-        const htmlResp = await fetch(targetUrl, {
-          headers,
-          signal: AbortSignal.timeout(4500),
-        });
-        if (htmlResp.ok) {
-          const html = await htmlResp.text();
+    const finalShortcode = shortcode || result.latest_shortcode || "";
+
+    // 3. Profile OG metadata via Pinterestbot/Twitterbot (retrieves display_name & profile avatar)
+    if (username && (!result.display_name || !result.avatar_url)) {
+      for (const botUa of ["Pinterestbot/1.0", "Twitterbot/1.0"]) {
+        if (result.display_name && result.avatar_url) break;
+        try {
+          const profResp = await fetch(`https://www.instagram.com/${encodeURIComponent(username)}/`, {
+            headers: {
+              "User-Agent": botUa,
+              Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            },
+            signal: AbortSignal.timeout(4500),
+          });
+          if (!profResp.ok) continue;
+          const html = await profResp.text();
           const extractMeta = (prop: string) => {
             const m =
               html.match(new RegExp(`<meta[^>]+(?:property|name)=["']${prop}["'][^>]+content=["']([^"']+)["']`, "i")) ||
               html.match(new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']${prop}["']`, "i"));
-            return m ? m[1] : "";
+            return m ? decodeHtmlEntities(m[1]) : "";
           };
-          const ogTitle = extractMeta("og:title");
-          const ogDesc = extractMeta("og:description");
+          const ogTitle = extractMeta("og:title") || extractMeta("twitter:title");
+          const ogDesc = extractMeta("og:description") || extractMeta("description");
           const ogImage = extractMeta("og:image");
           if (ogTitle && !result.display_name) {
             const cleanName = ogTitle.split("(@")[0]?.replace(/•.*$/, "")?.trim();
@@ -14257,15 +14367,78 @@ async function startServer() {
               result.display_name = cleanName;
             }
           }
-          if (ogImage && !result.latest_thumb) {
+          if (ogImage && !result.avatar_url && !ogImage.includes("static.cdninstagram.com/rsrc.php")) {
+            result.avatar_url = ogImage;
+          }
+          if (ogDesc && !result.followers_text) {
+            const fMatch = ogDesc.match(/^([^-]+Followers[^-]*)/i);
+            if (fMatch) result.followers_text = fMatch[1].trim();
+          }
+        } catch {}
+      }
+    }
+
+    // 4. Post-level OG metadata (reliably returns full account display_name & exact publish date!)
+    if (finalShortcode && (!result.display_name || !result.latest_caption || !result.latest_posted_at)) {
+      try {
+        const postTargetUrl = postUrl && /\/(?:p|reel|tv)\//i.test(postUrl)
+          ? postUrl
+          : `https://www.instagram.com/p/${finalShortcode}/`;
+        const postResp = await fetch(postTargetUrl, {
+          headers: {
+            "User-Agent": "Twitterbot/1.0",
+            Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          },
+          signal: AbortSignal.timeout(4500),
+        });
+        if (postResp.ok) {
+          const html = await postResp.text();
+          const extractMeta = (prop: string) => {
+            const m =
+              html.match(new RegExp(`<meta[^>]+(?:property|name)=["']${prop}["'][^>]+content=["']([^"']+)["']`, "i")) ||
+              html.match(new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']${prop}["']`, "i"));
+            return m ? decodeHtmlEntities(m[1]) : "";
+          };
+          const twTitle = extractMeta("twitter:title");
+          const ogTitle = extractMeta("og:title");
+          const ogDesc = extractMeta("og:description") || extractMeta("description");
+          const ogImage = extractMeta("og:image");
+
+          if (!result.display_name) {
+            const fromTw = twTitle ? twTitle.split("(@")[0]?.replace(/•.*$/, "")?.trim() : "";
+            const fromOg = ogTitle && ogTitle.includes(" on Instagram:")
+              ? ogTitle.split(" on Instagram:")[0]?.trim()
+              : "";
+            const picked = fromTw || fromOg;
+            if (picked && !picked.toLowerCase().includes("instagram")) {
+              result.display_name = picked;
+            }
+          }
+          if (ogImage && !result.latest_thumb && !ogImage.includes("static.cdninstagram.com/rsrc.php")) {
             result.latest_thumb = ogImage;
           }
-          if (ogDesc && !result.latest_caption) {
-            result.latest_caption = ogDesc.slice(0, 220);
+          if (ogDesc) {
+            if (!result.latest_posted_at) {
+              const dateMatch = ogDesc.match(/\son\s([A-Z][a-z]+\s+\d{1,2},\s+\d{4}):/i);
+              if (dateMatch && dateMatch[1]) {
+                const parsedDate = new Date(dateMatch[1]);
+                if (!Number.isNaN(parsedDate.getTime())) {
+                  result.latest_posted_at = parsedDate.toISOString();
+                }
+              }
+            }
+            if (!result.latest_caption) {
+              const quoteMatch = ogDesc.match(/:\s*"([\s\S]+)"\.?\s*$/);
+              result.latest_caption = (quoteMatch ? quoteMatch[1] : ogDesc).trim().slice(0, 320);
+            }
           }
         }
-      }
-    } catch {}
+      } catch {}
+    }
+
+    if (finalShortcode && !result.latest_thumb) {
+      result.latest_thumb = `https://www.instagram.com/p/${finalShortcode}/media/?size=l`;
+    }
 
     return result;
   }
@@ -14284,46 +14457,175 @@ async function startServer() {
       const nowIso = new Date().toISOString();
       db.workspace.instagram_accounts = [
         {
+          id: "ig_acc_bankabdi",
+          username: "bank.abdi",
+          display_name: "Bank Abdi",
+          profile_url: "https://www.instagram.com/bank.abdi/",
+          latest_post_url: "",
+          latest_shortcode: "",
+          latest_caption: "",
+          latest_thumb: "",
+          latest_posted_at: "",
+          last_checked_at: "",
+        },
+        {
           id: "ig_acc_asliri",
           username: "asli.ri",
           display_name: "ASLI RI Official",
-          category: "Brand Utama",
           profile_url: "https://www.instagram.com/asli.ri/",
           latest_post_url: "",
           latest_shortcode: "",
-          latest_caption: "Monitoring jadwal tayang konten harian & campaign terbaru.",
-          latest_posted_at: nowIso,
-          is_live_today: true,
-          target_frequency: "Daily",
-          last_checked_at: nowIso,
-          notes: "Konten feed & reels utama",
+          latest_caption: "",
+          latest_thumb: "",
+          latest_posted_at: "",
+          last_checked_at: "",
         },
         {
-          id: "ig_acc_marketing",
-          username: "instagram",
-          display_name: "Creative & Campaign Reference",
-          category: "Campaign / Kolaborasi",
-          profile_url: "https://www.instagram.com/instagram/",
+          id: "ig_acc_tomydfondy",
+          username: "tomydfondy",
+          display_name: "Tomy Dfondy",
+          profile_url: "https://www.instagram.com/tomydfondy/",
           latest_post_url: "",
           latest_shortcode: "",
-          latest_caption: "Pantau update konten terbaru langsung dari embed profil.",
-          latest_posted_at: nowIso,
-          is_live_today: false,
-          target_frequency: "Daily",
-          last_checked_at: nowIso,
-          notes: "Cek status tayang reels hari ini",
+          latest_caption: "",
+          latest_thumb: "",
+          latest_posted_at: "",
+          last_checked_at: "",
         },
       ].filter((a) => !delSet.has(a.id));
     } else {
-      db.workspace.instagram_accounts = db.workspace.instagram_accounts.filter(
-        (a: any) => a && a.id && !delSet.has(String(a.id))
-      );
+      db.workspace.instagram_accounts = db.workspace.instagram_accounts
+        .filter((a: any) => a && a.id && !delSet.has(String(a.id)))
+        .map((a: any) => {
+          // Upgrade legacy default seed "bankabdi" (missing dot) -> "bank.abdi" if unpopulated
+          if (a.id === "ig_acc_bankabdi" && a.username === "bankabdi" && !a.latest_shortcode) {
+            return {
+              ...a,
+              username: "bank.abdi",
+              profile_url: "https://www.instagram.com/bank.abdi/",
+              last_checked_at: "",
+            };
+          }
+          return a;
+        });
     }
     return db.workspace.instagram_accounts;
   }
 
-  app.get("/api/instagram-tracker", (_req, res) => {
+  function applyInstagramMetaToAccount(target: any, meta: Awaited<ReturnType<typeof fetchInstagramPublicMeta>>, nowIso: string) {
+    if (meta.display_name) {
+      target.display_name = meta.display_name;
+    }
+    if (meta.avatar_url) target.avatar_url = meta.avatar_url;
+    if (meta.followers_text) target.followers_text = meta.followers_text;
+    if (meta.latest_shortcode) {
+      const isNewPost = target.latest_shortcode !== meta.latest_shortcode;
+      target.latest_shortcode = meta.latest_shortcode;
+      target.latest_post_url = meta.latest_post_url || `https://www.instagram.com/p/${meta.latest_shortcode}/`;
+      if (isNewPost) {
+        target.is_live_today = true;
+      }
+    } else if (target.latest_post_url && !/\/(?:p|reel|tv)\//i.test(target.latest_post_url)) {
+      target.latest_post_url = "";
+    }
+    if (meta.latest_caption) target.latest_caption = meta.latest_caption;
+    if (meta.latest_thumb) target.latest_thumb = meta.latest_thumb;
+    if (typeof meta.latest_media_count === "number") target.latest_media_count = meta.latest_media_count;
+    if (typeof meta.latest_is_video === "boolean") target.latest_is_video = meta.latest_is_video;
+    if (meta.latest_posted_at) {
+      target.latest_posted_at = meta.latest_posted_at;
+    }
+    target.last_checked_at = nowIso;
+  }
+
+  const igHydrationAttempts = new Map<string, number>();
+
+  function isAllowedInstagramMediaUrl(rawUrl: string): boolean {
+    try {
+      const u = new URL(rawUrl);
+      if (u.protocol !== "https:") return false;
+      const host = u.hostname.toLowerCase();
+      if (host.endsWith(".cdninstagram.com") || host.endsWith(".fbcdn.net")) {
+        return true;
+      }
+      if ((host === "www.instagram.com" || host === "instagram.com") && /^\/(?:p|reel|tv)\/[A-Za-z0-9_-]+\/media\/?$/i.test(u.pathname)) {
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  // Domain-allowlisted Instagram media proxy so images bypass CORP same-origin blocks cleanly
+  app.get("/api/instagram-tracker/media", async (req, res) => {
+    const shortcode = String(req.query.shortcode || "").replace(/[^A-Za-z0-9_-]/g, "");
+    const rawUrl = String(req.query.url || "").trim();
+    const targetUrl =
+      rawUrl && isAllowedInstagramMediaUrl(rawUrl)
+        ? rawUrl
+        : shortcode
+        ? `https://www.instagram.com/p/${shortcode}/media/?size=l`
+        : "";
+
+    if (!targetUrl) {
+      return res.status(400).json({ detail: "Invalid Instagram media source" });
+    }
+
+    try {
+      const upstream = await fetch(targetUrl, {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+          Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        },
+        redirect: "follow",
+        signal: AbortSignal.timeout(8000),
+      });
+      const contentType = upstream.headers.get("content-type") || "";
+      if (!upstream.ok || !contentType.startsWith("image/")) {
+        return res.status(404).end();
+      }
+      const buf = Buffer.from(await upstream.arrayBuffer());
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400");
+      res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+      return res.send(buf);
+    } catch {
+      return res.status(502).end();
+    }
+  });
+
+  app.get("/api/instagram-tracker", async (_req, res) => {
     const accounts = ensureInstagramTrackedAccounts();
+    const now = Date.now();
+    const candidates = accounts
+      .filter((acc: any) => {
+        if (!acc?.username) return false;
+        const lastTry = igHydrationAttempts.get(acc.id) || 0;
+        if (now - lastTry < 60_000) return false;
+        const lastCheckedMs = acc.last_checked_at ? new Date(acc.last_checked_at).getTime() : 0;
+        const missingNameOrAvatar =
+          !acc.display_name ||
+          acc.display_name.startsWith("@") ||
+          acc.display_name.toLowerCase() === String(acc.username).toLowerCase() ||
+          !acc.avatar_url;
+        return !acc.latest_shortcode || missingNameOrAvatar || now - lastCheckedMs > 15 * 60_000;
+      })
+      .slice(0, 6);
+
+    if (candidates.length > 0) {
+      const nowIso = new Date().toISOString();
+      candidates.forEach((acc: any) => igHydrationAttempts.set(acc.id, now));
+      await Promise.allSettled(
+        candidates.map(async (acc: any) => {
+          const meta = await fetchInstagramPublicMeta(acc.username, acc.latest_post_url, acc.latest_shortcode);
+          applyInstagramMetaToAccount(acc, meta, nowIso);
+        })
+      );
+      saveDbToFile(true);
+    }
+
     res.json({ accounts });
   });
 
@@ -14347,27 +14649,45 @@ async function startServer() {
     const resolvedPostUrl = postParsed.postUrl || parsed.postUrl || (shortcode ? `https://www.instagram.com/p/${shortcode}/` : "");
 
     if (!cleanUsername && !shortcode) {
-      return res.status(400).json({ detail: "Masukkan username Instagram (contoh: @namaakun) atau link postingan/reel Instagram." });
+      return res.status(400).json({ detail: "Tempel link profil Instagram (contoh: https://www.instagram.com/bank.abdi/) atau username." });
     }
 
     const meta = await fetchInstagramPublicMeta(cleanUsername, resolvedPostUrl, shortcode);
     const nowIso = new Date().toISOString();
     const finalUsername = cleanUsername || "instagram_post";
     const finalShortcode = shortcode || meta.latest_shortcode || "";
-    const finalPostUrl = resolvedPostUrl || meta.latest_post_url || "";
-    const finalPostedAt = meta.latest_posted_at || nowIso;
+    const finalPostUrl = resolvedPostUrl || meta.latest_post_url || (finalShortcode ? `https://www.instagram.com/p/${finalShortcode}/` : "");
+    const finalPostedAt = meta.latest_posted_at || "";
+
+    // If same username already exists (and no manual post link override), refresh it in place
+    const existing = !shortcode
+      ? accounts.find((a: any) => a && String(a.username || "").toLowerCase() === finalUsername.toLowerCase())
+      : null;
+
+    if (existing) {
+      applyInstagramMetaToAccount(existing, meta, nowIso);
+      if (display_name) existing.display_name = String(display_name).trim();
+      existing.updated_by_name = reqUser?.name || existing.updated_by_name || "Member";
+      igHydrationAttempts.set(existing.id, Date.now());
+      saveDbToFile(true);
+      broadcast({ type: "instagram_tracker:changed", accounts });
+      return res.json({ account: existing, accounts, updated: true });
+    }
 
     const newAcc = {
       id: `ig_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       username: finalUsername,
       display_name: String(display_name || meta.display_name || `@${finalUsername}`).trim(),
-      category: String(category || "Brand / Divisi").trim(),
+      category: String(category || "").trim(),
       avatar_url: meta.avatar_url || "",
+      followers_text: meta.followers_text || "",
       profile_url: `https://www.instagram.com/${finalUsername}/`,
       latest_post_url: finalPostUrl,
       latest_shortcode: finalShortcode,
-      latest_caption: String(latest_caption || meta.latest_caption || "Konten terbaru sedang dipantau.").trim(),
+      latest_caption: String(latest_caption || meta.latest_caption || "").trim(),
       latest_thumb: meta.latest_thumb || "",
+      latest_media_count: meta.latest_media_count || 1,
+      latest_is_video: Boolean(meta.latest_is_video),
       latest_posted_at: finalPostedAt,
       is_live_today:
         typeof is_live_today === "boolean"
@@ -14378,6 +14698,7 @@ async function startServer() {
       notes: String(notes || "").trim(),
     };
 
+    igHydrationAttempts.set(newAcc.id, Date.now());
     accounts.unshift(newAcc);
     db.workspace.instagram_accounts = accounts;
     saveDbToFile(true);
@@ -14385,12 +14706,33 @@ async function startServer() {
     res.json({ account: newAcc, accounts });
   });
 
+  app.patch("/api/instagram-tracker/reorder", (req, res) => {
+    const accounts = ensureInstagramTrackedAccounts();
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : [];
+    if (ids.length === 0) {
+      return res.json({ accounts });
+    }
+    const byId = new Map(accounts.map((a: any) => [String(a.id), a]));
+    const ordered: any[] = [];
+    for (const id of ids) {
+      const item = byId.get(id);
+      if (item) {
+        ordered.push(item);
+        byId.delete(id);
+      }
+    }
+    for (const rest of byId.values()) {
+      ordered.push(rest);
+    }
+    db.workspace.instagram_accounts = ordered;
+    saveDbToFile(true);
+    broadcast({ type: "instagram_tracker:changed", accounts: ordered });
+    res.json({ accounts: ordered });
+  });
+
   app.patch("/api/instagram-tracker/:id", async (req, res) => {
     const reqUser = getReqUser(req) || currentSessionUser;
     const accounts = ensureInstagramTrackedAccounts();
-    const target = accounts.find((a: any) => a && a.id === req.params.id);
-    if (!target) return res.status(404).json({ detail: "Akun Instagram tidak ditemukan." });
-
     const {
       username,
       display_name,
@@ -14402,14 +14744,76 @@ async function startServer() {
       latest_posted_at,
     } = req.body || {};
 
-    if (username !== undefined) {
-      const parsed = parseInstagramInput(username);
-      if (parsed.username) {
-        target.username = parsed.username;
-        target.profile_url = `https://www.instagram.com/${parsed.username}/`;
+    const parsedInput = username ? parseInstagramInput(username) : { username: "", shortcode: "", postUrl: "" };
+    const cleanInputUser = (
+      parsedInput.username ||
+      String(username || "").replace(/^@/, "").trim().toLowerCase()
+    ).replace(/[^a-z0-9._]/g, "");
+
+    let target =
+      accounts.find((a: any) => a && a.id === req.params.id) ||
+      (cleanInputUser
+        ? accounts.find((a: any) => a && String(a.username || "").toLowerCase() === cleanInputUser)
+        : null);
+
+    if (!target) {
+      if (!cleanInputUser && !parsedInput.shortcode) {
+        return res.status(400).json({ detail: "Tempel link profil Instagram (contoh: https://www.instagram.com/bank.abdi/)." });
       }
+      const finalUsername = cleanInputUser || "instagram_post";
+      const nowIso = new Date().toISOString();
+      const postParsed = latest_post_url ? parseInstagramInput(latest_post_url) : { username: "", shortcode: "", postUrl: "" };
+      const initShortcode = postParsed.shortcode || parsedInput.shortcode || "";
+      const initPostUrl = postParsed.postUrl || parsedInput.postUrl || "";
+      const meta = await fetchInstagramPublicMeta(finalUsername, initPostUrl, initShortcode);
+
+      target = {
+        id: String(req.params.id || `ig_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`),
+        username: finalUsername,
+        display_name: String(display_name || meta.display_name || `@${finalUsername}`).trim(),
+        category: String(category || "").trim(),
+        avatar_url: meta.avatar_url || "",
+        followers_text: meta.followers_text || "",
+        profile_url: `https://www.instagram.com/${finalUsername}/`,
+        latest_post_url: initPostUrl || meta.latest_post_url || "",
+        latest_shortcode: initShortcode || meta.latest_shortcode || "",
+        latest_caption: String(latest_caption || meta.latest_caption || "").trim(),
+        latest_thumb: meta.latest_thumb || "",
+        latest_media_count: meta.latest_media_count || 1,
+        latest_is_video: Boolean(meta.latest_is_video),
+        latest_posted_at: meta.latest_posted_at || "",
+        is_live_today: Boolean(initShortcode || meta.latest_shortcode),
+        last_checked_at: nowIso,
+        updated_by_name: reqUser?.name || "Member",
+        notes: String(notes || "").trim(),
+      };
+      db.workspace.deleted_instagram_account_ids = (db.workspace.deleted_instagram_account_ids || []).filter(
+        (d: any) => String(d) !== target.id
+      );
+      accounts.unshift(target);
+      db.workspace.instagram_accounts = accounts;
+      igHydrationAttempts.set(target.id, Date.now());
+      saveDbToFile(true);
+      broadcast({ type: "instagram_tracker:changed", accounts });
+      return res.json({ account: target, accounts });
     }
-    if (display_name !== undefined) target.display_name = String(display_name).trim();
+
+    let usernameChanged = false;
+    if (username !== undefined && cleanInputUser && cleanInputUser !== target.username) {
+      usernameChanged = true;
+      target.username = cleanInputUser;
+      target.profile_url = `https://www.instagram.com/${cleanInputUser}/`;
+      target.display_name = `@${cleanInputUser}`;
+      target.avatar_url = "";
+      target.latest_thumb = "";
+      target.latest_caption = "";
+      target.latest_posted_at = "";
+      target.latest_post_url = parsedInput.postUrl || "";
+      target.latest_shortcode = parsedInput.shortcode || "";
+    }
+    if (display_name !== undefined && String(display_name).trim()) {
+      target.display_name = String(display_name).trim();
+    }
     if (category !== undefined) target.category = String(category).trim();
     if (notes !== undefined) target.notes = String(notes).trim();
     if (latest_caption !== undefined) target.latest_caption = String(latest_caption).trim();
@@ -14421,29 +14825,36 @@ async function startServer() {
     }
     if (latest_posted_at !== undefined) target.latest_posted_at = latest_posted_at;
 
-    if (latest_post_url !== undefined) {
-      const rawUrl = String(latest_post_url || "").trim();
-      if (!rawUrl) {
+    const nowIso = new Date().toISOString();
+    const rawPostOverride = latest_post_url !== undefined ? String(latest_post_url || "").trim() : undefined;
+    const parsedOverride = rawPostOverride ? parseInstagramInput(rawPostOverride) : { username: "", shortcode: "", postUrl: "" };
+
+    if (rawPostOverride !== undefined && parsedOverride.shortcode) {
+      target.latest_shortcode = parsedOverride.shortcode;
+      target.latest_post_url = parsedOverride.postUrl;
+      target.is_live_today = true;
+      const meta = await fetchInstagramPublicMeta(target.username, parsedOverride.postUrl, parsedOverride.shortcode);
+      applyInstagramMetaToAccount(target, meta, nowIso);
+    } else if (usernameChanged || (rawPostOverride !== undefined && !parsedOverride.shortcode)) {
+      if (rawPostOverride !== undefined && !parsedOverride.shortcode) {
         target.latest_post_url = "";
         target.latest_shortcode = "";
-      } else {
-        const parsedPost = parseInstagramInput(rawUrl);
-        if (parsedPost.shortcode) {
-          target.latest_shortcode = parsedPost.shortcode;
-          target.latest_post_url = parsedPost.postUrl;
-          target.is_live_today = true;
-          target.latest_posted_at = new Date().toISOString();
-          const meta = await fetchInstagramPublicMeta(target.username, parsedPost.postUrl, parsedPost.shortcode);
-          if (meta.latest_caption && !latest_caption) target.latest_caption = meta.latest_caption;
-          if (meta.latest_thumb) target.latest_thumb = meta.latest_thumb;
-        } else {
-          target.latest_post_url = rawUrl;
-        }
+        target.latest_thumb = "";
       }
+      const meta = await fetchInstagramPublicMeta(target.username, target.latest_post_url, target.latest_shortcode);
+      applyInstagramMetaToAccount(target, meta, nowIso);
     }
 
-    target.last_checked_at = new Date().toISOString();
+    if (display_name !== undefined && String(display_name).trim()) {
+      target.display_name = String(display_name).trim();
+    }
+    if (latest_caption !== undefined && String(latest_caption).trim()) {
+      target.latest_caption = String(latest_caption).trim();
+    }
+
+    target.last_checked_at = nowIso;
     target.updated_by_name = reqUser?.name || target.updated_by_name || "Member";
+    igHydrationAttempts.set(target.id, Date.now());
 
     saveDbToFile(true);
     broadcast({ type: "instagram_tracker:changed", accounts });
@@ -14452,32 +14863,55 @@ async function startServer() {
 
   app.post("/api/instagram-tracker/:id/refresh", async (req, res) => {
     const accounts = ensureInstagramTrackedAccounts();
-    const target = accounts.find((a: any) => a && a.id === req.params.id);
-    if (!target) return res.status(404).json({ detail: "Akun Instagram tidak ditemukan." });
+    const rawUser = String(req.body?.username || req.body?.profile_url || "").trim();
+    const parsed = rawUser ? parseInstagramInput(rawUser) : { username: "", shortcode: "", postUrl: "" };
+    const cleanUser = (parsed.username || rawUser.replace(/^@/, "").trim().toLowerCase()).replace(/[^a-z0-9._]/g, "");
 
-    const meta = await fetchInstagramPublicMeta(target.username, target.latest_post_url, target.latest_shortcode);
+    let target =
+      accounts.find((a: any) => a && a.id === req.params.id) ||
+      (cleanUser ? accounts.find((a: any) => a && String(a.username || "").toLowerCase() === cleanUser) : null);
+
+    if (!target) {
+      if (!cleanUser) {
+        return res.status(404).json({ detail: "Akun Instagram tidak ditemukan." });
+      }
+      const nowIso = new Date().toISOString();
+      const meta = await fetchInstagramPublicMeta(cleanUser);
+      target = {
+        id: String(req.params.id || `ig_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`),
+        username: cleanUser,
+        display_name: meta.display_name || `@${cleanUser}`,
+        category: "",
+        avatar_url: meta.avatar_url || "",
+        followers_text: meta.followers_text || "",
+        profile_url: `https://www.instagram.com/${cleanUser}/`,
+        latest_post_url: meta.latest_post_url || "",
+        latest_shortcode: meta.latest_shortcode || "",
+        latest_caption: meta.latest_caption || "",
+        latest_thumb: meta.latest_thumb || "",
+        latest_media_count: meta.latest_media_count || 1,
+        latest_is_video: Boolean(meta.latest_is_video),
+        latest_posted_at: meta.latest_posted_at || "",
+        is_live_today: Boolean(meta.latest_shortcode),
+        last_checked_at: nowIso,
+        updated_by_name: "Member",
+        notes: "",
+      };
+      db.workspace.deleted_instagram_account_ids = (db.workspace.deleted_instagram_account_ids || []).filter(
+        (d: any) => String(d) !== target.id
+      );
+      accounts.unshift(target);
+      db.workspace.instagram_accounts = accounts;
+      igHydrationAttempts.set(target.id, Date.now());
+      saveDbToFile(true);
+      broadcast({ type: "instagram_tracker:changed", accounts });
+      return res.json({ account: target, accounts });
+    }
+
+    const meta = await fetchInstagramPublicMeta(target.username);
     const nowIso = new Date().toISOString();
-    if (meta.display_name && (!target.display_name || target.display_name.startsWith("@"))) {
-      target.display_name = meta.display_name;
-    }
-    if (meta.avatar_url) target.avatar_url = meta.avatar_url;
-    if (meta.latest_shortcode) {
-      const isNewPost = target.latest_shortcode !== meta.latest_shortcode;
-      target.latest_shortcode = meta.latest_shortcode;
-      target.latest_post_url = meta.latest_post_url || `https://www.instagram.com/p/${meta.latest_shortcode}/`;
-      if (isNewPost) {
-        target.is_live_today = true;
-      }
-    }
-    if (meta.latest_caption) target.latest_caption = meta.latest_caption;
-    if (meta.latest_thumb) target.latest_thumb = meta.latest_thumb;
-    if (meta.latest_posted_at) {
-      target.latest_posted_at = meta.latest_posted_at;
-      if (meta.latest_posted_at.slice(0, 10) === nowIso.slice(0, 10)) {
-        target.is_live_today = true;
-      }
-    }
-    target.last_checked_at = nowIso;
+    applyInstagramMetaToAccount(target, meta, nowIso);
+    igHydrationAttempts.set(target.id, Date.now());
 
     saveDbToFile(true);
     broadcast({ type: "instagram_tracker:changed", accounts });

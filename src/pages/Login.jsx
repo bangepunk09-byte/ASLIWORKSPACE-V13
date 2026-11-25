@@ -883,7 +883,7 @@ export default function Login() {
                       value={signupForm.department}
                       onChange={(e) => setSignupForm({ ...signupForm, department: e.target.value })}
                       style={{ paddingLeft: "2.35rem" }}
-                      className="h-10 w-full rounded-2xl border bg-surface pr-3 text-xs font-medium text-ink"
+                      className="h-10 w-full rounded-xl border border-border bg-surface2/75 pr-3 text-xs sm:text-sm font-semibold text-ink"
                       data-testid="signup-dept-select"
                     >
                       {availableDivisions.map((d) => (
@@ -1055,7 +1055,7 @@ export default function Login() {
                 <AppSelect
                   value={googleForm.department}
                   onChange={(e) => setGoogleForm({ ...googleForm, department: e.target.value })}
-                  className="h-10 w-full rounded-xl border bg-surface2 px-3 text-xs font-medium text-ink"
+                  className="h-10 w-full rounded-xl border border-border bg-surface2/75 px-3.5 text-xs sm:text-sm font-semibold text-ink"
                 >
                   {availableDivisions.map((d) => (
                     <option key={d} value={d}>{d}</option>

@@ -6,7 +6,7 @@ import { Logo } from "../components/common";
 import { AppSelect } from "../components/ui/select";
 import { DatePicker } from "../components/ui/date-picker";
 
-const inp = "mt-1 h-11 w-full rounded-xl border bg-surface2 px-3 text-sm outline-none focus:border-[var(--c-accent)]";
+const inp = "mt-1 h-11 w-full rounded-xl border border-border bg-surface2/75 px-3.5 text-sm outline-none focus:border-[var(--c-accent)]";
 const Field = ({ label, req, children }) => <div className="block text-xs font-semibold text-sub">{label}{req && <span className="text-rose-500"> *</span>}{children}</div>;
 
 export default function Onboarding() {

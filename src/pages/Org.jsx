@@ -133,7 +133,7 @@ function UnitDialog({ state, setState, units, levels, humanUsers, divisions, onD
     }
   };
 
-  const inp = "h-10 w-full rounded-xl border bg-surface2 px-3 text-sm outline-none focus:border-brand";
+  const inp = "h-10 w-full rounded-xl border border-border bg-surface2/75 px-3.5 text-sm outline-none focus:border-brand";
   const allDivisionOptions = Array.from(
     new Set([...(divisions || []), f.division, f.name].filter(Boolean))
   );

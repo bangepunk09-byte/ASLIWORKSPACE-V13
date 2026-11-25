@@ -29,7 +29,7 @@ import {
   resolveMarketplaceBannerOverlay,
 } from "../marketplace/catalogAssets";
 
-const inp = "h-10 rounded-xl border bg-surface2 px-3 text-sm outline-none";
+const inp = "h-10 rounded-xl border border-border bg-surface2/75 px-3.5 text-sm outline-none";
 const run = async (fn, msg) => { try { await fn(); if (msg) toast.success(msg); return true; } catch (e) { toast.error(errMsg(e)); return false; } };
 export const Card = ({ title, children, testid }) => <section className="card p-4 sm:p-5" data-testid={testid}><h3 className="mb-3.5 sm:mb-4 font-bold">{title}</h3>{children}</section>;
 

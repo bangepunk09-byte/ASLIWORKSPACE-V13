@@ -8,7 +8,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/pop
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem, AppSelect } from "../../components/ui/select";
 
 export const CARD_COLORS = ["#FF5364", "#F59E0B", "#EAB308", "#22C55E", "#0EA5A4", "#2F7DE1", "#8B5CF6", "#EC4899", "#64748B"];
-export const inp = "h-10 w-full rounded-xl border bg-surface2 px-3 text-sm outline-none";
+export const inp = "h-10 w-full rounded-xl border border-border bg-surface2/75 px-3.5 text-sm outline-none";
 
 export function UserSelect({ value, onChange, placeholder, testid, ids, emptyMessage, className }) {
   const { users, t: tr } = useApp();
@@ -242,7 +242,7 @@ export function PrioritySelect({ value, onChange, testid }) {
   const current = PRIORITY[currentKey] || PRIORITY.medium;
   return (
     <Select value={currentKey} onValueChange={onChange}>
-      <SelectTrigger className="w-full bg-surface2 border-slate-200 dark:border-slate-800 rounded-xl" data-testid={testid}>
+      <SelectTrigger className="w-full" data-testid={testid}>
         <SelectValue>{tr(`common_priority_${currentKey}`, current.name)}</SelectValue>
       </SelectTrigger>
       <SelectContent>
@@ -262,7 +262,7 @@ export function StatusSelect({ value, onChange, testid }) {
   const current = list.find((s) => s.key === value) || list[0];
   return (
     <Select value={value || list[0]?.key || "todo"} onValueChange={onChange}>
-      <SelectTrigger className="w-full bg-surface2 border-slate-200 dark:border-slate-800 rounded-xl" data-testid={testid}>
+      <SelectTrigger className="w-full" data-testid={testid}>
         <SelectValue>{current?.name || value}</SelectValue>
       </SelectTrigger>
       <SelectContent>
@@ -687,7 +687,7 @@ export function ColorPicker({ value, onChange, style, onStyle }) {
       {onStyle && (
         <div className="w-36 ml-1">
           <Select value={style || "accent"} onValueChange={onStyle}>
-            <SelectTrigger className="h-9 w-full bg-surface2 border-slate-200 dark:border-slate-800 rounded-xl text-xs" data-testid="card-style-select">
+            <SelectTrigger className="h-9 w-full text-xs" data-testid="card-style-select">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

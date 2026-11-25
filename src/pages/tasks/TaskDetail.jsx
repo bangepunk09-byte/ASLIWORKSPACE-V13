@@ -424,7 +424,7 @@ export default function TaskDetail({ id, onClose, onChanged }) {
                 <Row label={tr("task_field_status", "Status")}>
                   <div className="space-y-1.5 w-full">
                     <Select value={t.status} disabled={ro} onValueChange={(val) => patch({ status: val })}>
-                      <SelectTrigger className="w-full bg-surface2 border-slate-200 dark:border-slate-800 rounded-xl" data-testid="task-detail-status">
+                      <SelectTrigger className="w-full" data-testid="task-detail-status">
                         <SelectValue placeholder={tr("task_status_ph", "Pilih status...")} />
                       </SelectTrigger>
                       <SelectContent>
@@ -495,7 +495,7 @@ export default function TaskDetail({ id, onClose, onChanged }) {
                               patch({ requestor_ids: next, reviewer_ids: next }, tr("task_requestor_added", "Requestor ditambah"));
                             }
                           }}
-                          className="h-7 rounded-full border bg-surface px-2.5 text-xs font-medium"
+                          className="h-8 rounded-xl border border-border bg-surface2/75 px-2.5 text-xs font-semibold"
                         >
                           <option value="">{tr("task_requestor_add_opt", "+ Tambah Requestor")}</option>
                           {Object.values(userMap || {})
@@ -556,7 +556,7 @@ export default function TaskDetail({ id, onClose, onChanged }) {
                       }, tr("task_board_updated", "Board tugas diperbarui"));
                     }}
                   >
-                    <SelectTrigger className="w-full bg-surface2 border-slate-200 dark:border-slate-800 rounded-xl" data-testid="task-detail-board">
+                    <SelectTrigger className="w-full" data-testid="task-detail-board">
                       <SelectValue placeholder={tr("task_board_ph", "Pilih board...")} />
                     </SelectTrigger>
                     <SelectContent>

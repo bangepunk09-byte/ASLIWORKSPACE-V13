@@ -272,7 +272,7 @@ export default function AutomationDialog({ open, onClose, onGenerated }) {
               <AppSelect
                 value={dayOfWeek}
                 onChange={(e) => setDayOfWeek(e.target.value)}
-                className="h-10 w-full rounded-xl border bg-surface px-3 text-sm font-medium"
+                className="h-10 w-full"
               >
                 {DAYS.map((d) => (
                   <option key={d.val} value={d.val}>{t(d.key, d.label)}</option>
@@ -295,7 +295,7 @@ export default function AutomationDialog({ open, onClose, onGenerated }) {
             <AppSelect
               value={boardId}
               onChange={(e) => setBoardId(e.target.value)}
-              className="h-10 w-full rounded-xl border bg-surface px-3 text-sm font-medium"
+              className="h-10 w-full"
             >
               {boards.map((b) => (
                 <option key={b.id} value={b.id}>{b.name}</option>

@@ -973,7 +973,7 @@ export default function BackupRestorePanel() {
                   value={String(autoConfig.retention_days ?? 30)}
                   disabled={savingAutoCfg}
                   onChange={(e) => handleUpdateAutoConfig({ retention_days: Number(e.target.value) })}
-                  className="h-9 rounded-xl border bg-surface px-3 text-xs font-semibold text-ink"
+                  className="h-9 text-xs"
                   title="Batas simpan folder harian"
                   data-testid="auto-backup-retention-select"
                 >

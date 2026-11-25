@@ -1271,7 +1271,7 @@ export default function Checkpoints({ t, ro, patch, reload, members, emptyMessag
                       emptyMessage={emptyMessage}
                       onChange={(v) => edit(c.id, { assignee_id: v, unassigned: !v })}
                       placeholder={tr("cp_pic_ph", "PIC")}
-                      className="h-7 w-full rounded-lg border bg-surface2 pl-2 pr-5 text-[11px] font-semibold outline-none truncate"
+                      className="h-7 w-full rounded-xl border border-border bg-surface2/75 px-2.5 text-[11px] font-semibold outline-none"
                       testid={`checkpoint-pic-${c.id}`}
                     />
                   )}
@@ -1355,7 +1355,7 @@ export default function Checkpoints({ t, ro, patch, reload, members, emptyMessag
               emptyMessage={emptyMessage}
               onChange={setPic}
               placeholder={tr("cp_pic_ph", "PIC")}
-              className="h-9 w-full rounded-xl border bg-surface2 pl-2.5 pr-5 text-xs font-semibold outline-none truncate"
+              className="h-9 w-full rounded-xl border border-border bg-surface2/75 px-3 text-xs font-semibold outline-none"
               testid="checkpoint-new-pic"
             />
           </div>

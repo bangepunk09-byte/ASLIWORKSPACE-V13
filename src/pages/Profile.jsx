@@ -46,7 +46,7 @@ const COVER_POSITIONS = [
 function Field({ label, children }) {
   return <div className="block text-xs font-semibold text-sub">{label}<div className="mt-1 text-sm font-normal text-ink">{children}</div></div>;
 }
-const inp = "h-10 w-full rounded-xl border bg-surface2 px-3 text-sm outline-none";
+const inp = "h-10 w-full rounded-xl border border-border bg-surface2/75 px-3.5 text-sm outline-none";
 
 function CustomInput({ f, value, onChange }) {
   if (f.type === "long_text") return <textarea value={value || ""} onChange={(e) => onChange(e.target.value)} className={`${inp} h-20 py-2`} />;
@@ -925,7 +925,25 @@ export default function Profile() {
           <section className="card min-w-0 overflow-hidden p-4 sm:p-5"><h3 className="mb-3 text-sm font-bold">{tr("profile_about_title", "Tentang")}</h3><p className="text-sm text-sub break-words">{p.bio || tr("profile_no_bio", "Belum ada biodata.")}</p>
             {p.skills?.length > 0 && <div className="mt-4 flex flex-wrap gap-1.5">{p.skills.map((s) => <span key={s} className="rounded-full bg-soft-purple px-2.5 py-1 text-xs font-medium">{s}</span>)}</div>}</section>
 
-          {/* Statistik & Jadwal Meeting Card (Right below Tentang) */}
+          <section className="card min-w-0 overflow-hidden space-y-3 p-4 sm:p-5" data-testid="profile-contact-info">
+            {info.map(([I, l, v]) => <div key={l} className="flex items-center gap-2.5 sm:gap-3 text-sm min-w-0"><I size={15} className="text-sub shrink-0" /><span className="w-24 sm:w-28 shrink-0 text-sub">{l}</span><span className="min-w-0 flex-1 truncate font-medium">{v}</span></div>)}
+            {mgr && <button onClick={() => navigate(`/people/${mgr.user_id}`)} className="flex w-full min-w-0 items-center gap-3 rounded-xl bg-surface2 p-2 text-left text-sm"><Avatar user={mgr} size={28} showStatus={false} /><span className="min-w-0"><span className="block text-[11px] text-sub">{tr("profile_reports_to", "Melapor ke")}</span><span className="block truncate font-semibold">{mgr.name}</span></span></button>}
+            {(ws.profile_fields || [])
+              .filter((cf) => canSeeField(cf.visibility) && (p.custom?.[cf.key] ?? p.custom_fields?.[cf.key]) !== undefined && (p.custom?.[cf.key] ?? p.custom_fields?.[cf.key]) !== "")
+              .map((cf) => {
+                const rawVal = p.custom?.[cf.key] ?? p.custom_fields?.[cf.key];
+                const displayVal = typeof rawVal === "boolean" ? (rawVal ? "Ya" : "Tidak") : Array.isArray(rawVal) ? rawVal.join(", ") : String(rawVal);
+                return (
+                  <div key={cf.key} className="flex items-center gap-2.5 sm:gap-3 text-sm min-w-0">
+                    <Link2 size={15} className="text-sub shrink-0" />
+                    <span className="w-24 sm:w-28 shrink-0 text-sub">{cf.name}</span>
+                    <span className="min-w-0 flex-1 truncate font-medium">{displayVal}</span>
+                  </div>
+                );
+              })}
+          </section>
+
+          {/* Statistik & Jadwal Meeting Card */}
           <section
             className="card min-w-0 overflow-hidden p-4 sm:p-5"
             data-testid="profile-meeting-stats-card"
@@ -1099,23 +1117,6 @@ export default function Profile() {
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 inline-block" />
               <span>Terkoneksi otomatis dengan Google Calendar</span>
             </p>
-          </section>
-          <section className="card min-w-0 overflow-hidden space-y-3 p-4 sm:p-5" data-testid="profile-contact-info">
-            {info.map(([I, l, v]) => <div key={l} className="flex items-center gap-2.5 sm:gap-3 text-sm min-w-0"><I size={15} className="text-sub shrink-0" /><span className="w-24 sm:w-28 shrink-0 text-sub">{l}</span><span className="min-w-0 flex-1 truncate font-medium">{v}</span></div>)}
-            {mgr && <button onClick={() => navigate(`/people/${mgr.user_id}`)} className="flex w-full min-w-0 items-center gap-3 rounded-xl bg-surface2 p-2 text-left text-sm"><Avatar user={mgr} size={28} showStatus={false} /><span className="min-w-0"><span className="block text-[11px] text-sub">{tr("profile_reports_to", "Melapor ke")}</span><span className="block truncate font-semibold">{mgr.name}</span></span></button>}
-            {(ws.profile_fields || [])
-              .filter((cf) => canSeeField(cf.visibility) && (p.custom?.[cf.key] ?? p.custom_fields?.[cf.key]) !== undefined && (p.custom?.[cf.key] ?? p.custom_fields?.[cf.key]) !== "")
-              .map((cf) => {
-                const rawVal = p.custom?.[cf.key] ?? p.custom_fields?.[cf.key];
-                const displayVal = typeof rawVal === "boolean" ? (rawVal ? "Ya" : "Tidak") : Array.isArray(rawVal) ? rawVal.join(", ") : String(rawVal);
-                return (
-                  <div key={cf.key} className="flex items-center gap-2.5 sm:gap-3 text-sm min-w-0">
-                    <Link2 size={15} className="text-sub shrink-0" />
-                    <span className="w-24 sm:w-28 shrink-0 text-sub">{cf.name}</span>
-                    <span className="min-w-0 flex-1 truncate font-medium">{displayVal}</span>
-                  </div>
-                );
-              })}
           </section>
         </div>
         <section className="card min-w-0 overflow-hidden p-4 sm:p-5 lg:col-span-2" data-testid="profile-feed-history">

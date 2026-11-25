@@ -12,11 +12,14 @@ const SelectGroup = SelectPrimitive.Group
 
 const SelectValue = SelectPrimitive.Value
 
+const UNIFIED_DROPDOWN_TRIGGER_CLASS =
+  "group inline-flex h-10 w-full items-center justify-between gap-2 whitespace-nowrap rounded-xl border border-border bg-surface2/75 px-3.5 py-0 text-xs sm:text-sm font-semibold leading-normal text-ink shadow-xs transition-colors duration-100 ease-out hover:bg-surface2 focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand disabled:cursor-not-allowed disabled:opacity-50 [&>span]:inline-flex [&>span]:items-center [&>span]:truncate [&>span]:leading-normal cursor-pointer"
+
 const SelectTrigger = React.forwardRef(({ className, children, ...props }, ref) => (
   <SelectPrimitive.Trigger
     ref={ref}
     className={cn(
-      "group inline-flex h-10 w-full items-center justify-between gap-2 whitespace-nowrap rounded-full border border-border bg-surface px-4 py-0 text-xs sm:text-sm font-semibold leading-normal text-ink shadow-xs transition-colors duration-100 ease-out hover:bg-surface2 focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand disabled:cursor-not-allowed disabled:opacity-50 [&>span]:inline-flex [&>span]:items-center [&>span]:truncate [&>span]:leading-normal cursor-pointer",
+      UNIFIED_DROPDOWN_TRIGGER_CLASS,
       className
     )}
     {...props}>
@@ -55,7 +58,7 @@ const SelectContent = React.forwardRef(({ className, children, position = "poppe
       ref={ref}
       sideOffset={sideOffset}
       className={cn(
-        "pointer-events-auto relative z-[300] min-w-[10rem] overflow-hidden rounded-2xl border border-border bg-surface text-ink shadow-2xl shadow-slate-900/12 dark:shadow-black/50 animate-popover-enter",
+        "pointer-events-auto relative z-[300] min-w-[10rem] overflow-hidden rounded-2xl border border-border bg-surface text-ink shadow-xl shadow-slate-900/12 dark:shadow-black/45 animate-popover-enter",
         className
       )}
       position={position}

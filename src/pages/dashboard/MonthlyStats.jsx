@@ -300,7 +300,7 @@ function BoardScopeDropdown({ scopeLabel, boardColor, activeMode, availableScope
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className="inline-flex h-9 items-center gap-2 rounded-xl border bg-surface2/80 px-2.5 sm:px-3.5 text-xs sm:text-sm font-semibold text-ink hover:bg-surface2 transition-colors whitespace-nowrap cursor-pointer shadow-xs"
+          className="group inline-flex h-9 items-center gap-2 rounded-xl border border-border bg-surface2/75 px-3 text-xs sm:text-sm font-semibold text-ink hover:bg-surface2 focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand transition-colors whitespace-nowrap cursor-pointer shadow-xs"
           data-testid={testId}
         >
           <span
@@ -308,7 +308,7 @@ function BoardScopeDropdown({ scopeLabel, boardColor, activeMode, availableScope
             style={{ background: activeMode === "all" ? "var(--c-sub, #64748B)" : (boardColor || "var(--c-brand, #3B82F6)") }}
           />
           <span>{scopeLabel}</span>
-          <ChevronDown size={14} className="text-sub shrink-0" />
+          <ChevronDown size={14} className="text-sub opacity-75 shrink-0 transition-transform duration-150 ease-out group-data-[state=open]:rotate-180" />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-56">
@@ -318,7 +318,7 @@ function BoardScopeDropdown({ scopeLabel, boardColor, activeMode, availableScope
             <DropdownMenuItem
               key={sc.board_id}
               onClick={() => onSelectBoard(sc.board_id)}
-              className={isActive ? "bg-surface2 font-bold" : ""}
+              className={isActive ? "bg-brand/10 text-brand font-semibold hover:bg-brand/15 data-[highlighted]:bg-brand/15 data-[highlighted]:text-brand" : ""}
               data-testid={`${testId}-option-${sc.board_id}`}
             >
               <span
@@ -326,7 +326,7 @@ function BoardScopeDropdown({ scopeLabel, boardColor, activeMode, availableScope
                 style={{ background: sc.color || "#3B82F6" }}
               />
               <span className="flex-1 truncate">{sc.name}</span>
-              <span className="text-[11px] font-bold text-sub tabular-nums">{sc.task_count ?? 0}</span>
+              <span className="text-[11px] font-bold opacity-75 tabular-nums">{sc.task_count ?? 0}</span>
               {isActive && <Check size={14} className="text-brand shrink-0" />}
             </DropdownMenuItem>
           );
@@ -336,7 +336,7 @@ function BoardScopeDropdown({ scopeLabel, boardColor, activeMode, availableScope
             <DropdownMenuSeparator />
             <DropdownMenuItem
               onClick={() => onSelectBoard("all")}
-              className={activeMode === "all" ? "bg-surface2 font-bold" : ""}
+              className={activeMode === "all" ? "bg-brand/10 text-brand font-semibold hover:bg-brand/15 data-[highlighted]:bg-brand/15 data-[highlighted]:text-brand" : ""}
               data-testid={`${testId}-option-all`}
             >
               <span className="h-2 w-2 rounded-full shrink-0 bg-slate-400" />

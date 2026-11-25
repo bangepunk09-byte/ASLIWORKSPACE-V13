@@ -724,7 +724,7 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
               <AppSelect
                 value={emptyMonthTarget}
                 onChange={(e) => setEmptyMonthTarget(e.target.value)}
-                className="h-10 w-full rounded-xl border bg-surface px-3 text-xs font-semibold"
+                className="h-10 w-full"
                 data-testid="empty-modal-month-select"
               >
                 {allMonths.map((m) => (

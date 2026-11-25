@@ -36,7 +36,7 @@ const DropdownMenuSubContent = React.forwardRef(({ className, ...props }, ref) =
   <DropdownMenuPrimitive.SubContent
     ref={ref}
     className={cn(
-      "pointer-events-auto z-[300] min-w-[9rem] overflow-hidden rounded-2xl border border-slate-200/90 dark:border-slate-800 bg-surface p-1.5 text-ink shadow-xl shadow-slate-900/10 dark:shadow-black/40 animate-popover-enter",
+      "pointer-events-auto z-[300] min-w-[9rem] overflow-hidden rounded-2xl border border-border bg-surface p-1.5 text-ink shadow-xl shadow-slate-900/12 dark:shadow-black/45 animate-popover-enter",
       className
     )}
     {...props} />
@@ -50,7 +50,7 @@ const DropdownMenuContent = React.forwardRef(({ className, sideOffset = 6, ...pr
       ref={ref}
       sideOffset={sideOffset}
       className={cn(
-        "pointer-events-auto z-[300] max-h-[var(--radix-dropdown-menu-content-available-height)] min-w-[10rem] overflow-y-auto overflow-x-hidden overscroll-contain rounded-2xl border border-slate-200/90 dark:border-slate-800 bg-surface p-1.5 text-ink shadow-xl shadow-slate-900/10 dark:shadow-black/40 space-y-0.5 animate-popover-enter",
+        "pointer-events-auto z-[300] max-h-[var(--radix-dropdown-menu-content-available-height)] min-w-[10rem] overflow-y-auto overflow-x-hidden overscroll-contain rounded-2xl border border-border bg-surface p-1.5 text-ink shadow-xl shadow-slate-900/12 dark:shadow-black/45 space-y-0.5 animate-popover-enter",
         className
       )}
       {...props} />

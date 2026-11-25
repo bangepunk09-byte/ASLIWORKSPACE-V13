@@ -606,11 +606,15 @@ export function TaskWorkspace({ projectId, compactHeader }) {
                 {isSuperAdmin && (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <GhostButton className="h-10 shrink-0 whitespace-nowrap rounded-full px-4 text-xs sm:text-sm font-semibold" data-testid="export-menu-btn">
-                        <Download size={14} />
+                      <button
+                        type="button"
+                        className="group inline-flex h-10 shrink-0 whitespace-nowrap items-center gap-2 rounded-xl border border-border bg-surface2/75 px-3.5 text-xs sm:text-sm font-semibold text-ink shadow-xs transition-colors hover:bg-surface2 focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand cursor-pointer"
+                        data-testid="export-menu-btn"
+                      >
+                        <Download size={14} className="text-sub" />
                         <span>{t("tasks_export_import", "Ekspor / Impor")}</span>
-                        <ChevronDown size={12} className="opacity-60 ml-0.5" />
-                      </GhostButton>
+                        <ChevronDown size={14} className="text-sub opacity-75 shrink-0 transition-transform duration-150 ease-out group-data-[state=open]:rotate-180" />
+                      </button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent className="bg-surface min-w-[220px]" align="end">
                       <DropdownMenuItem onClick={() => exp("csv")} data-testid="export-csv-btn">
@@ -746,7 +750,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
               <AppSelect
                 value={boardId}
                 onChange={(e) => pickBoard(e.target.value)}
-                className="h-10 w-full sm:w-auto sm:max-w-[230px] rounded-full border bg-surface px-3.5 text-xs font-semibold text-ink shadow-xs hover:bg-surface2"
+                className="h-10 w-full sm:w-auto sm:max-w-[230px] rounded-xl border border-border bg-surface2/75 px-3.5 text-xs sm:text-sm font-semibold text-ink shadow-xs hover:bg-surface2"
                 data-testid="board-dropdown-select"
               >
                 <option value="">{projectId ? t("tasks_all_project_boards", "Semua Board Proyek") : t("tasks_all_boards", "Semua Board")}</option>
@@ -938,7 +942,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
           <AppSelect
             value={saved}
             onChange={(e) => { setSaved(e.target.value); setSelected([]); }}
-            className="h-9 rounded-xl border bg-surface2 px-3 text-xs font-semibold text-ink hover:bg-surface"
+            className="h-9 rounded-xl border border-border bg-surface2/75 px-3 text-xs sm:text-sm font-semibold text-ink hover:bg-surface2"
             data-testid="filter-saved-view"
           >
             <optgroup label={t("tasks_saved_primary_group", "Tampilan Utama")}>
@@ -951,7 +955,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
           <AppSelect
             value={f.label}
             onChange={(e) => setF({ ...f, label: e.target.value })}
-            className="h-9 rounded-xl border bg-surface2 px-3 text-xs font-semibold text-ink hover:bg-surface"
+            className="h-9 rounded-xl border border-border bg-surface2/75 px-3 text-xs sm:text-sm font-semibold text-ink hover:bg-surface2"
             data-testid="filter-label"
           >
             <option value="">{t("tasks_all_brands", "Semua Brand")}</option>
@@ -960,7 +964,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
           <AppSelect
             value={f.assignee_id}
             onChange={(e) => setAssigneeFilter(e.target.value)}
-            className="h-9 rounded-xl border bg-surface2 px-3 text-xs font-semibold text-ink hover:bg-surface"
+            className="h-9 rounded-xl border border-border bg-surface2/75 px-3 text-xs sm:text-sm font-semibold text-ink hover:bg-surface2"
             data-testid="filter-assignee"
           >
             <option value="">{t("tasks_all_assignees", "Semua Assignee")}</option>
@@ -969,7 +973,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
           <AppSelect
             value={f.priority}
             onChange={(e) => setF({ ...f, priority: e.target.value })}
-            className="h-9 rounded-xl border bg-surface2 px-3 text-xs font-semibold text-ink hover:bg-surface"
+            className="h-9 rounded-xl border border-border bg-surface2/75 px-3 text-xs sm:text-sm font-semibold text-ink hover:bg-surface2"
             data-testid="filter-priority"
           >
             <option value="">{t("tasks_all_priorities", "Semua Prioritas")}</option>
@@ -978,7 +982,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
           <AppSelect
             value={f.department}
             onChange={(e) => setF({ ...f, department: e.target.value })}
-            className="h-9 rounded-xl border bg-surface2 px-3 text-xs font-semibold text-ink hover:bg-surface"
+            className="h-9 rounded-xl border border-border bg-surface2/75 px-3 text-xs sm:text-sm font-semibold text-ink hover:bg-surface2"
             data-testid="filter-task-department"
           >
             <option value="">{t("tasks_all_divisions", "Semua Divisi")}</option>
@@ -987,7 +991,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
           <AppSelect
             value={f.item_type}
             onChange={(e) => setF({ ...f, item_type: e.target.value })}
-            className="h-9 rounded-xl border bg-surface2 px-3 text-xs font-semibold text-ink hover:bg-surface"
+            className="h-9 rounded-xl border border-border bg-surface2/75 px-3 text-xs sm:text-sm font-semibold text-ink hover:bg-surface2"
             data-testid="filter-task-item-type"
           >
             <option value="">{t("tasks_all_item_types", "Semua Jenis Item")}</option>
@@ -999,7 +1003,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
             <AppSelect
               value={groupBy}
               onChange={(e) => setGroupBy(e.target.value)}
-              className="h-9 rounded-xl border bg-surface2 px-3 text-xs font-semibold text-ink hover:bg-surface"
+              className="h-9 rounded-xl border border-border bg-surface2/75 px-3 text-xs sm:text-sm font-semibold text-ink hover:bg-surface2"
               data-testid="group-by-select"
             >
               <option value="status">{t("tasks_group_status", "Grup: Status")}</option>
@@ -1049,9 +1053,9 @@ export function TaskWorkspace({ projectId, compactHeader }) {
       {selected.length > 0 && (
         <div className="sticky top-14 md:top-2 z-30 mb-4 flex flex-wrap items-center gap-2 rounded-2xl border bg-surface p-2.5 shadow-lg print:hidden" data-testid="bulk-actions-bar">
           <span className="px-2 text-sm font-semibold">{selected.length} {t("tasks_bulk_selected_suffix", "dipilih")}</span>
-          <AppSelect onChange={(e) => e.target.value && bulk({ status: e.target.value })} value="" className="h-10 rounded-full border bg-surface2 px-4 text-sm font-medium" data-testid="bulk-status"><option value="">{t("tasks_bulk_set_status", "Atur status…")}</option>{statuses.map((s) => <option key={s.key} value={s.key}>{s.name}</option>)}</AppSelect>
-          <AppSelect onChange={(e) => e.target.value && bulk({ priority: e.target.value })} value="" className="h-10 rounded-full border bg-surface2 px-4 text-sm font-medium" data-testid="bulk-priority"><option value="">{t("tasks_bulk_set_priority", "Atur prioritas…")}</option>{Object.entries(PRIORITY).map(([k, p]) => <option key={k} value={k}>{p.name}</option>)}</AppSelect>
-          <AppSelect onChange={(e) => e.target.value && bulk({ assignee_id: e.target.value, assignee_ids: [e.target.value] })} value="" className="h-10 rounded-full border bg-surface2 px-4 text-sm font-medium" data-testid={`bulk-assignee`}>
+          <AppSelect onChange={(e) => e.target.value && bulk({ status: e.target.value })} value="" className="h-10 rounded-xl border border-border bg-surface2/75 px-3.5 text-xs sm:text-sm font-semibold" data-testid="bulk-status"><option value="">{t("tasks_bulk_set_status", "Atur status…")}</option>{statuses.map((s) => <option key={s.key} value={s.key}>{s.name}</option>)}</AppSelect>
+          <AppSelect onChange={(e) => e.target.value && bulk({ priority: e.target.value })} value="" className="h-10 rounded-xl border border-border bg-surface2/75 px-3.5 text-xs sm:text-sm font-semibold" data-testid="bulk-priority"><option value="">{t("tasks_bulk_set_priority", "Atur prioritas…")}</option>{Object.entries(PRIORITY).map(([k, p]) => <option key={k} value={k}>{p.name}</option>)}</AppSelect>
+          <AppSelect onChange={(e) => e.target.value && bulk({ assignee_id: e.target.value, assignee_ids: [e.target.value] })} value="" className="h-10 rounded-xl border border-border bg-surface2/75 px-3.5 text-xs sm:text-sm font-semibold" data-testid={`bulk-assignee`}>
             <option value="">{t("tasks_bulk_assign_to", "Tugaskan ke…")}</option>
             {(() => {
               const scope = getBoardAssigneeScope({ boards, boardId, projectId, users });
@@ -1105,7 +1109,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
               <AppSelect
                 value={importTargetBoardId}
                 onChange={(e) => setImportTargetBoardId(e.target.value)}
-                className="h-10 w-full rounded-xl border bg-surface2 px-3 text-sm font-medium text-ink"
+                className="h-10 w-full rounded-xl border border-border bg-surface2/75 px-3.5 text-xs sm:text-sm font-semibold text-ink"
                 data-testid="import-target-board-select"
               >
                 <option value="">{t("tasks_import_auto_option", "Otomatis sesuai kolom di file")}</option>

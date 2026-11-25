@@ -741,7 +741,7 @@ export default function Marketplace() {
             <div className="flex items-center gap-2 shrink-0">
               <SlidersHorizontal size={15} className="text-sub hidden sm:block" />
               <Select value={sortBy} onValueChange={setSortBy}>
-                <SelectTrigger className="h-10 w-full sm:w-[175px] rounded-xl bg-surface text-xs font-semibold">
+                <SelectTrigger className="h-10 w-full sm:w-[175px] text-xs sm:text-sm font-semibold">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

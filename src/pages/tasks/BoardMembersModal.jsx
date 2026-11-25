@@ -268,7 +268,7 @@ export default function BoardMembersModal({ board, boards = [], onSwitchBoard, o
               <AppSelect
                 value={inviteUserId}
                 onChange={(e) => setInviteUserId(e.target.value)}
-                className="h-10 w-full min-w-0 flex-1 rounded-xl border bg-surface px-3 text-xs sm:text-sm font-medium text-ink truncate"
+                className="h-10 w-full min-w-0 flex-1"
                 data-testid="invite-user-select"
               >
                 <option value="">{t("board_members_invite_ph", "Pilih rekan kerja untuk diundang...")}</option>

@@ -345,7 +345,7 @@ export function DriveShortcutDialog({
               <AppSelect
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
-                className="h-10 w-full rounded-xl border bg-surface px-3 text-sm font-medium"
+                className="h-10 w-full"
                 data-testid="shortcut-category-select"
               >
                 {allCategories.map((c) => (
@@ -373,7 +373,7 @@ export function DriveShortcutDialog({
                 <AppSelect
                   value={cardStyle}
                   onChange={(e) => setCardStyle(e.target.value)}
-                  className="h-10 w-full rounded-xl border bg-surface px-3 text-sm font-medium"
+                  className="h-10 w-full"
                 >
                   <option value="accent_top">{tr("directory_style_accent_top", "Garis Aksen Atas")}</option>
                   <option value="soft_tint">{tr("directory_style_soft_tint", "Latar Berwarna Lembut")}</option>
