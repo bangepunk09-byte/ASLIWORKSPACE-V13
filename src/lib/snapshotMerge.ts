@@ -126,39 +126,170 @@ export function mergeTwoSnapshotsNonDestructive(primarySnap: any, secondarySnap:
   pRoot.deleted_task_ids = Array.from(
     new Set([...pDelTaskIds, ...sDelTaskIds].map((id: any) => String(id || '').trim()).filter(Boolean))
   );
-  const deletedTaskIdSet = new Set<string>(pRoot.deleted_task_ids);
+
+  const pDelNoteIds = Array.isArray(pRoot.deleted_note_ids) ? pRoot.deleted_note_ids : [];
+  const sDelNoteIds = Array.isArray(sRoot.deleted_note_ids) ? sRoot.deleted_note_ids : [];
+  pRoot.deleted_note_ids = Array.from(
+    new Set([...pDelNoteIds, ...sDelNoteIds].map((id: any) => String(id || '').trim()).filter(Boolean))
+  );
+
+  const pDelMeetingIds = Array.isArray(pRoot.deleted_meeting_ids) ? pRoot.deleted_meeting_ids : [];
+  const sDelMeetingIds = Array.isArray(sRoot.deleted_meeting_ids) ? sRoot.deleted_meeting_ids : [];
+  pRoot.deleted_meeting_ids = Array.from(
+    new Set([...pDelMeetingIds, ...sDelMeetingIds].map((id: any) => String(id || '').trim()).filter(Boolean))
+  );
+
+  const pDelGcalIds = Array.isArray(pRoot.deleted_gcal_ids) ? pRoot.deleted_gcal_ids : [];
+  const sDelGcalIds = Array.isArray(sRoot.deleted_gcal_ids) ? sRoot.deleted_gcal_ids : [];
+  pRoot.deleted_gcal_ids = Array.from(
+    new Set([...pDelGcalIds, ...sDelGcalIds].map((id: any) => String(id || '').trim()).filter(Boolean))
+  );
+
+  const pDelEntityIds = Array.isArray(pRoot.deleted_entity_ids) ? pRoot.deleted_entity_ids : [];
+  const sDelEntityIds = Array.isArray(sRoot.deleted_entity_ids) ? sRoot.deleted_entity_ids : [];
+  pRoot.deleted_entity_ids = Array.from(
+    new Set(
+      [
+        ...pDelEntityIds,
+        ...sDelEntityIds,
+        ...pRoot.deleted_task_ids,
+        ...pRoot.deleted_note_ids,
+        ...pRoot.deleted_meeting_ids,
+      ]
+        .map((id: any) => String(id || '').trim())
+        .filter(Boolean)
+    )
+  );
+
+  const deletedEntityIdSet = new Set<string>(pRoot.deleted_entity_ids);
+  const deletedGcalIdSet = new Set<string>(pRoot.deleted_gcal_ids);
+
+  const notDeleted = (altKey?: string) => (item: any) => {
+    const id = getItemId(item, altKey);
+    if (!id) return false;
+    return !deletedEntityIdSet.has(id);
+  };
 
   pRoot.users = mergeItemsById(pRoot.users || [], sRoot.users || [], 'user_id');
   pRoot.tasks = mergeItemsById(pRoot.tasks || [], sRoot.tasks || [], 'task_id').filter(
-    (t: any) => !deletedTaskIdSet.has(getItemId(t, 'task_id'))
+    notDeleted('task_id')
   );
-  pRoot.boards = mergeItemsById(pRoot.boards || [], sRoot.boards || [], 'board_id');
-  pRoot.messages = mergeItemsById(pRoot.messages || [], sRoot.messages || []);
-  pRoot.conversations = mergeItemsById(pRoot.conversations || [], sRoot.conversations || []);
-  pRoot.groups = mergeItemsById(pRoot.groups || [], sRoot.groups || []);
-  pRoot.posts = mergeItemsById(pRoot.posts || [], sRoot.posts || [], 'post_id');
-  pRoot.circle_notes = mergeItemsById(pRoot.circle_notes || [], sRoot.circle_notes || [], 'note_id');
-  pRoot.meetings = mergeItemsById(pRoot.meetings || [], sRoot.meetings || []);
-  pRoot.projects = mergeItemsById(pRoot.projects || [], sRoot.projects || []);
-  pRoot.org_units = mergeItemsById(pRoot.org_units || [], sRoot.org_units || []);
-  pRoot.drive_shortcuts = mergeItemsById(pRoot.drive_shortcuts || [], sRoot.drive_shortcuts || []);
-  pRoot.labels = mergeItemsById(pRoot.labels || [], sRoot.labels || []);
+  pRoot.boards = mergeItemsById(pRoot.boards || [], sRoot.boards || [], 'board_id').filter(
+    notDeleted('board_id')
+  );
+  pRoot.messages = mergeItemsById(pRoot.messages || [], sRoot.messages || []).filter(notDeleted());
+  pRoot.conversations = mergeItemsById(pRoot.conversations || [], sRoot.conversations || []).filter(
+    notDeleted()
+  );
+  pRoot.groups = mergeItemsById(pRoot.groups || [], sRoot.groups || []).filter(notDeleted());
+  pRoot.posts = mergeItemsById(pRoot.posts || [], sRoot.posts || [], 'post_id').filter(
+    notDeleted('post_id')
+  );
+  pRoot.circle_notes = mergeItemsById(
+    pRoot.circle_notes || [],
+    sRoot.circle_notes || [],
+    'note_id'
+  ).filter(notDeleted('note_id'));
+  pRoot.meetings = mergeItemsById(pRoot.meetings || [], sRoot.meetings || []).filter((m: any) => {
+    const id = getItemId(m);
+    if (!id || deletedEntityIdSet.has(id)) return false;
+    const gcalId = String(m?.gcal_event_id || '').trim();
+    if (gcalId && (deletedGcalIdSet.has(gcalId) || deletedEntityIdSet.has(`gcal_${gcalId}`))) {
+      return false;
+    }
+    return true;
+  });
+  pRoot.projects = mergeItemsById(pRoot.projects || [], sRoot.projects || []).filter(notDeleted());
+  pRoot.org_units = mergeItemsById(pRoot.org_units || [], sRoot.org_units || []).filter(
+    notDeleted()
+  );
+  pRoot.drive_shortcuts = mergeItemsById(
+    pRoot.drive_shortcuts || [],
+    sRoot.drive_shortcuts || []
+  ).filter(notDeleted());
+  pRoot.labels = mergeItemsById(pRoot.labels || [], sRoot.labels || []).filter(notDeleted());
   pRoot.notifications = mergeItemsById(pRoot.notifications || [], sRoot.notifications || []);
   pRoot.activity = mergeItemsById(pRoot.activity || [], sRoot.activity || []);
-  pRoot.reminders = mergeItemsById(pRoot.reminders || [], sRoot.reminders || []);
-  pRoot.polls = mergeItemsById(pRoot.polls || [], sRoot.polls || []);
-  pRoot.task_automations = mergeItemsById(pRoot.task_automations || [], sRoot.task_automations || []);
-  pRoot.invitations = mergeItemsById(pRoot.invitations || [], sRoot.invitations || []);
-  pRoot.access_requests = mergeItemsById(pRoot.access_requests || [], sRoot.access_requests || []);
-  pRoot.sticker_packs = mergeItemsById(pRoot.sticker_packs || [], sRoot.sticker_packs || []);
-  pRoot.stickers = mergeItemsById(pRoot.stickers || [], sRoot.stickers || []);
+  pRoot.reminders = mergeItemsById(pRoot.reminders || [], sRoot.reminders || []).filter(
+    notDeleted()
+  );
+  pRoot.polls = mergeItemsById(pRoot.polls || [], sRoot.polls || []).filter(notDeleted());
+  pRoot.task_automations = mergeItemsById(
+    pRoot.task_automations || [],
+    sRoot.task_automations || []
+  ).filter(notDeleted());
+  pRoot.invitations = mergeItemsById(pRoot.invitations || [], sRoot.invitations || []).filter(
+    notDeleted()
+  );
+  pRoot.access_requests = mergeItemsById(
+    pRoot.access_requests || [],
+    sRoot.access_requests || []
+  ).filter(notDeleted());
+  pRoot.sticker_packs = mergeItemsById(
+    pRoot.sticker_packs || [],
+    sRoot.sticker_packs || []
+  ).filter(notDeleted());
+  pRoot.stickers = mergeItemsById(pRoot.stickers || [], sRoot.stickers || []).filter(notDeleted());
 
-  if (sRoot.workspace?.checkpoint_templates || pRoot.workspace?.checkpoint_templates) {
+  const pDelTplIds = [
+    ...(Array.isArray(pRoot.deleted_checkpoint_template_ids) ? pRoot.deleted_checkpoint_template_ids : []),
+    ...(Array.isArray(pRoot.workspace?.deleted_checkpoint_template_ids)
+      ? pRoot.workspace.deleted_checkpoint_template_ids
+      : []),
+  ];
+  const sDelTplIds = [
+    ...(Array.isArray(sRoot.deleted_checkpoint_template_ids) ? sRoot.deleted_checkpoint_template_ids : []),
+    ...(Array.isArray(sRoot.workspace?.deleted_checkpoint_template_ids)
+      ? sRoot.workspace.deleted_checkpoint_template_ids
+      : []),
+  ];
+  const mergedDelTplIds = Array.from(
+    new Set([...pDelTplIds, ...sDelTplIds].map((id: any) => String(id || '').trim()).filter(Boolean))
+  );
+  pRoot.deleted_checkpoint_template_ids = mergedDelTplIds;
+  const deletedTplIdSet = new Set<string>(mergedDelTplIds);
+
+  if (
+    sRoot.workspace?.checkpoint_templates ||
+    pRoot.workspace?.checkpoint_templates ||
+    mergedDelTplIds.length > 0
+  ) {
     pRoot.workspace = pRoot.workspace && typeof pRoot.workspace === 'object' ? pRoot.workspace : {};
+    pRoot.workspace.deleted_checkpoint_template_ids = mergedDelTplIds;
     pRoot.workspace.checkpoint_templates = mergeItemsById(
       pRoot.workspace.checkpoint_templates || [],
       sRoot.workspace?.checkpoint_templates || []
-    );
+    ).filter((tpl: any) => !deletedTplIdSet.has(getItemId(tpl)));
+    if (sRoot.workspace?.checkpoint_templates_initialized || pRoot.workspace?.checkpoint_templates_initialized) {
+      pRoot.workspace.checkpoint_templates_initialized = true;
+    }
+  }
+
+  const pDelIgIds = [
+    ...(Array.isArray(pRoot.workspace?.deleted_instagram_account_ids)
+      ? pRoot.workspace.deleted_instagram_account_ids
+      : []),
+  ];
+  const sDelIgIds = [
+    ...(Array.isArray(sRoot.workspace?.deleted_instagram_account_ids)
+      ? sRoot.workspace.deleted_instagram_account_ids
+      : []),
+  ];
+  const mergedDelIgIds = Array.from(
+    new Set([...pDelIgIds, ...sDelIgIds].map((id: any) => String(id || '').trim()).filter(Boolean))
+  );
+  const deletedIgIdSet = new Set<string>([...mergedDelIgIds, ...pRoot.deleted_entity_ids]);
+  if (
+    sRoot.workspace?.instagram_accounts ||
+    pRoot.workspace?.instagram_accounts ||
+    mergedDelIgIds.length > 0
+  ) {
+    pRoot.workspace = pRoot.workspace && typeof pRoot.workspace === 'object' ? pRoot.workspace : {};
+    pRoot.workspace.deleted_instagram_account_ids = mergedDelIgIds;
+    pRoot.workspace.instagram_accounts = mergeItemsById(
+      pRoot.workspace.instagram_accounts || [],
+      sRoot.workspace?.instagram_accounts || []
+    ).filter((ig: any) => !deletedIgIdSet.has(getItemId(ig)));
   }
   if (Array.isArray(sRoot.workspace?.divisions) && sRoot.workspace.divisions.length > 0) {
     pRoot.workspace = pRoot.workspace && typeof pRoot.workspace === 'object' ? pRoot.workspace : {};

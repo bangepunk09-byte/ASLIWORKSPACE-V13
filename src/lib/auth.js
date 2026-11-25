@@ -29,49 +29,89 @@ gmailProvider.addScope('https://www.googleapis.com/auth/gmail.send');
 gmailProvider.setCustomParameters({ prompt: 'consent select_account' });
 
 let isSigningIn = false;
-let cachedAccessToken = null;
+const calendarAuthByUid = new Map();
 let cachedGmailAccessToken = null;
-let hasCalendarScope = false;
 let hasGmailScope = false;
-let manualConnectedUser = null;
+
+function getActiveWorkspaceUserId() {
+  try {
+    const raw =
+      sessionStorage.getItem('circle_tab_session_cache') ||
+      localStorage.getItem('circle_session_cache');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed?.user?.user_id) return String(parsed.user.user_id);
+    }
+  } catch {}
+  return 'default';
+}
+
+function getScopedCalendarRecord(uid = getActiveWorkspaceUserId()) {
+  if (calendarAuthByUid.has(uid)) {
+    return calendarAuthByUid.get(uid);
+  }
+  try {
+    const raw = sessionStorage.getItem(`circle_gcal_auth_${uid}`) || localStorage.getItem(`circle_gcal_auth_${uid}`);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.accessToken) {
+        calendarAuthByUid.set(uid, parsed);
+        return parsed;
+      }
+    }
+  } catch {}
+  return null;
+}
+
+function setScopedCalendarRecord(uid, record) {
+  if (!uid) return;
+  if (!record) {
+    calendarAuthByUid.delete(uid);
+    try {
+      sessionStorage.removeItem(`circle_gcal_auth_${uid}`);
+      localStorage.removeItem(`circle_gcal_auth_${uid}`);
+    } catch {}
+    return;
+  }
+  calendarAuthByUid.set(uid, record);
+  try {
+    const serialized = JSON.stringify(record);
+    sessionStorage.setItem(`circle_gcal_auth_${uid}`, serialized);
+    localStorage.setItem(`circle_gcal_auth_${uid}`, serialized);
+  } catch {}
+}
 
 export const initAuth = (onAuthSuccess, onAuthFailure) => {
   return onAuthStateChanged(auth, async (user) => {
-    if (user && cachedAccessToken && hasCalendarScope) {
-      if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
+    const rec = getScopedCalendarRecord();
+    if (rec?.accessToken) {
+      if (onAuthSuccess) onAuthSuccess({ email: rec.email || user?.email || '' }, rec.accessToken);
     } else if (!isSigningIn) {
-      if (!user) {
-        cachedAccessToken = null;
-        cachedGmailAccessToken = null;
-        hasCalendarScope = false;
-        hasGmailScope = false;
-      }
       if (onAuthFailure) onAuthFailure();
     }
   });
 };
 
 export const setManualGoogleAuth = (userObj = {}, token = null) => {
+  const uid = userObj.user_id || getActiveWorkspaceUserId();
   const realToken =
     typeof token === 'string' && token.trim() && !token.startsWith('gcal_workspace_sync_')
       ? token.trim()
       : null;
-  if (realToken) {
-    cachedAccessToken = realToken;
-    hasCalendarScope = true;
-  }
-  manualConnectedUser = {
-    email: userObj.email || 'be.creativestudio21@gmail.com',
+  const userRecord = {
+    email: userObj.email || '',
     displayName: userObj.name || userObj.displayName || 'Workspace User',
     photoURL: userObj.picture || userObj.avatar || '',
+    accessToken: realToken,
   };
-  return { user: manualConnectedUser, accessToken: realToken };
+  if (realToken) {
+    setScopedCalendarRecord(uid, userRecord);
+  }
+  return { user: userRecord, accessToken: realToken };
 };
 
-export const clearCalendarAuth = () => {
-  cachedAccessToken = null;
-  hasCalendarScope = false;
-  manualConnectedUser = null;
+export const clearCalendarAuth = (uid = getActiveWorkspaceUserId()) => {
+  setScopedCalendarRecord(uid, null);
   try {
     localStorage.removeItem('circle_google_access_token');
     localStorage.removeItem('circle_google_user');
@@ -82,6 +122,7 @@ export const clearCalendarAuth = () => {
 async function runPopupSignIn(targetProvider, { withCalendarScope = false, withGmailScope = false } = {}) {
   try {
     isSigningIn = true;
+    const uid = getActiveWorkspaceUserId();
     const result = await signInWithPopup(auth, targetProvider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
     const realToken = credential?.accessToken || null;
@@ -89,8 +130,13 @@ async function runPopupSignIn(targetProvider, { withCalendarScope = false, withG
       if (!realToken) {
         throw new Error('Token akses Google Calendar tidak diterima dari popup OAuth.');
       }
-      cachedAccessToken = realToken;
-      hasCalendarScope = true;
+      setScopedCalendarRecord(uid, {
+        accessToken: realToken,
+        email: result.user?.email || '',
+        displayName: result.user?.displayName || '',
+        photoURL: result.user?.photoURL || '',
+        connectedAt: new Date().toISOString(),
+      });
     }
     if (withGmailScope) {
       if (!realToken) {
@@ -99,11 +145,6 @@ async function runPopupSignIn(targetProvider, { withCalendarScope = false, withG
       cachedGmailAccessToken = realToken;
       hasGmailScope = true;
     }
-    manualConnectedUser = {
-      email: result.user?.email || '',
-      displayName: result.user?.displayName || '',
-      photoURL: result.user?.photoURL || '',
-    };
     return {
       user: result.user,
       accessToken: realToken,
@@ -125,9 +166,9 @@ export const googleCalendarOAuthSignIn = () => runPopupSignIn(provider, { withCa
 
 export const googleGmailOAuthSignIn = () => runPopupSignIn(gmailProvider, { withGmailScope: true });
 
-export const getAccessToken = async () => {
-  if (cachedAccessToken && hasCalendarScope) return cachedAccessToken;
-  return null;
+export const getAccessToken = async (uid = getActiveWorkspaceUserId()) => {
+  const rec = getScopedCalendarRecord(uid);
+  return rec?.accessToken || null;
 };
 
 export const getGmailAccessToken = async () => {
@@ -140,14 +181,20 @@ export const clearGmailAuth = () => {
   hasGmailScope = false;
 };
 
-export const hasAccessToken = () => Boolean(cachedAccessToken && hasCalendarScope);
+export const hasAccessToken = (uid = getActiveWorkspaceUserId()) => {
+  const rec = getScopedCalendarRecord(uid);
+  return Boolean(rec?.accessToken);
+};
 
-export const getConnectedCalendarEmail = () =>
-  (hasCalendarScope ? (auth.currentUser?.email || manualConnectedUser?.email || '') : '');
+export const getConnectedCalendarEmail = (uid = getActiveWorkspaceUserId()) => {
+  const rec = getScopedCalendarRecord(uid);
+  return rec?.email || '';
+};
 
 export const logout = async () => {
-  try { await auth.signOut(); } catch {}
+  const uid = getActiveWorkspaceUserId();
   cachedGmailAccessToken = null;
   hasGmailScope = false;
-  clearCalendarAuth();
+  clearCalendarAuth(uid);
 };
+

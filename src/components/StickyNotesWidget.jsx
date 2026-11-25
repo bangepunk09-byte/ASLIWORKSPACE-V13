@@ -18,7 +18,13 @@ import { toast } from "sonner";
 import { useApp } from "../context/AppContext";
 import { api, errMsg } from "../lib/api";
 import { playSound } from "../lib/sound";
-import { hasCompletedInitialHydrate, rehydrateIfServerRestarted } from "../lib/persistentMirror";
+import {
+  getLocalDeletedEntityIds,
+  hasCompletedInitialHydrate,
+  recordDeletedEntityIds,
+  rehydrateIfServerRestarted,
+  syncWorkspaceMirror,
+} from "../lib/persistentMirror";
 import {
   Dialog,
   DialogContent,
@@ -77,10 +83,13 @@ function notesCacheKey(uid) {
 
 function readCachedNotes(uid) {
   try {
+    const delSet = new Set(getLocalDeletedEntityIds());
     const raw = localStorage.getItem(notesCacheKey(uid));
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed;
+      if (Array.isArray(parsed)) {
+        return parsed.filter((n) => n && n.id && !delSet.has(String(n.id)));
+      }
     }
   } catch {}
   return [];
@@ -88,7 +97,11 @@ function readCachedNotes(uid) {
 
 function writeCachedNotes(uid, list) {
   try {
-    localStorage.setItem(notesCacheKey(uid), JSON.stringify(list));
+    const delSet = new Set(getLocalDeletedEntityIds());
+    const clean = (Array.isArray(list) ? list : []).filter(
+      (n) => n && n.id && !delSet.has(String(n.id))
+    );
+    localStorage.setItem(notesCacheKey(uid), JSON.stringify(clean));
   } catch {}
 }
 
@@ -143,12 +156,14 @@ export default function StickyNotesWidget({ densityStyles }) {
     try {
       const { data } = await api.get("/notes");
       if (Array.isArray(data)) {
+        const delSet = new Set(getLocalDeletedEntityIds());
+        const cleanData = data.filter((n) => n && n.id && !delSet.has(String(n.id)));
         const cached = readCachedNotes(uid);
-        if (data.length === 0 && cached.length > 0 && !hasCompletedInitialHydrate()) {
+        if (cleanData.length === 0 && cached.length > 0 && delSet.size === 0 && !hasCompletedInitialHydrate()) {
           rehydrateIfServerRestarted(api).catch(() => {});
           return;
         }
-        commitNotes(data);
+        commitNotes(cleanData);
       }
     } catch {}
   }, [uid, commitNotes]);
@@ -162,15 +177,19 @@ export default function StickyNotesWidget({ densityStyles }) {
     return subscribe((evt) => {
       if (evt.type === "bootstrap:dashboard") {
         if (Array.isArray(evt.notes)) {
-          commitNotes(evt.notes);
+          const delSet = new Set(getLocalDeletedEntityIds());
+          commitNotes(evt.notes.filter((n) => n && n.id && !delSet.has(String(n.id))));
         }
         return;
       }
       if (evt.type !== "notes:changed") return;
       if (evt.user_id && uid && evt.user_id !== uid) return;
       if (evt.action === "delete" && evt.deleted_id) {
+        recordDeletedEntityIds([evt.deleted_id]);
         commitNotes((prev) => prev.filter((n) => n.id !== evt.deleted_id));
       } else if (evt.action === "upsert" && evt.note) {
+        const delSet = new Set(getLocalDeletedEntityIds());
+        if (delSet.has(String(evt.note.id))) return;
         commitNotes((prev) => {
           const exists = prev.some((n) => n.id === evt.note.id);
           const next = exists
@@ -401,16 +420,17 @@ export default function StickyNotesWidget({ densityStyles }) {
   };
 
   const handleDeleteNote = async (noteId) => {
-    const backup = notes;
     setConfirmDeleteId(null);
     playSound("trash");
+    recordDeletedEntityIds([noteId]);
     commitNotes((prev) => prev.filter((n) => n.id !== noteId));
     toast.success("Sticky note dihapus");
     try {
       await api.delete(`/notes/${noteId}`);
+      void syncWorkspaceMirror(api, true);
     } catch (err) {
-      commitNotes(backup);
       toast.error(errMsg(err, "Gagal menghapus sticky note"));
+      loadNotes();
     }
   };
 

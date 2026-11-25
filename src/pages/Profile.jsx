@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { MessageCircle, Mail, MapPin, Briefcase, Users2, Pencil, Calendar, IdCard, Link2, Phone, Newspaper, CornerDownRight, Heart, BarChart3, Paperclip, Hash, ArrowUpRight, BadgeCheck, Sparkles, Palette, ImagePlus, RotateCcw, Check, Trash2 } from "lucide-react";
+import { MessageCircle, Mail, MapPin, Briefcase, Users2, Pencil, Calendar, IdCard, Link2, Phone, Newspaper, CornerDownRight, Heart, BarChart3, Paperclip, Hash, ArrowUpRight, BadgeCheck, Sparkles, Palette, ImagePlus, RotateCcw, Check, Trash2, Clock, Video, Plus, ExternalLink, CalendarPlus } from "lucide-react";
 import { toast } from "sonner";
 import { useApp } from "../context/AppContext";
 import { api, errMsg, fileUrl, uploadFile } from "../lib/api";
 import { Avatar, Spinner, rel, AccentButton, GhostButton, getAvailabilityStatusMeta, VerifiedBadge, MentionText } from "../components/common";
 import { getProfileCompletion } from "../lib/profileCompletion";
-import { upsertAccountInVault } from "../lib/persistentMirror";
+import { upsertAccountInVault, syncWorkspaceMirror } from "../lib/persistentMirror";
 import { upsertConversationInCache } from "../lib/workspaceCaches";
+import { createEvent } from "../lib/calendar";
+import { getAccessToken, googleCalendarOAuthSignIn, getConnectedCalendarEmail } from "../lib/auth";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { AppSelect } from "../components/ui/select";
 import { DatePicker } from "../components/ui/date-picker";
@@ -529,6 +531,22 @@ export default function Profile() {
       });
   }, [uid]);
 
+  const [profileMeetings, setProfileMeetings] = useState([]);
+  const [statsPeriod, setStatsPeriod] = useState("week"); // "week" | "month"
+  const [setMeetingOpen, setSetMeetingOpen] = useState(false);
+
+  const loadProfileMeetings = useCallback(() => {
+    if (!uid) return;
+    api
+      .get(`/meetings?user_id=${encodeURIComponent(uid)}`)
+      .then((r) => {
+        if (Array.isArray(r.data)) {
+          setProfileMeetings(r.data);
+        }
+      })
+      .catch(() => {});
+  }, [uid]);
+
   useEffect(() => {
     const cachedFeed = readCachedUserFeedHistory(uid, userMap);
     setFeedState({
@@ -543,7 +561,8 @@ export default function Profile() {
       if (!cachedUser) navigate("/people");
     });
     loadFeedHistory();
-  }, [uid, loadFeedHistory]); // eslint-disable-line
+    loadProfileMeetings();
+  }, [uid, loadFeedHistory, loadProfileMeetings]); // eslint-disable-line
 
   useEffect(() => {
     if (!subscribe) return;
@@ -551,8 +570,16 @@ export default function Profile() {
       if (evt?.type === "post:new" || evt?.type === "post:updated" || evt?.type === "post:deleted") {
         loadFeedHistory();
       }
+      if (
+        evt?.type === "meeting:new" ||
+        evt?.type === "meeting:update" ||
+        evt?.type === "meeting:delete" ||
+        evt?.type === "meetings:synced"
+      ) {
+        loadProfileMeetings();
+      }
     });
-  }, [subscribe, loadFeedHistory]);
+  }, [subscribe, loadFeedHistory, loadProfileMeetings]);
 
   const activeRawP = rawP?.user_id === uid ? rawP : null;
   const liveUser = (uid === me?.user_id ? me : null) || userMap?.[uid];
@@ -610,6 +637,138 @@ export default function Profile() {
   const isDeadlineToday = Boolean(hasDeadlineToday?.(p.user_id));
   const canEdit = Boolean(p.can_edit || uid === me?.user_id || ["super_admin", "workspace_admin"].includes(me?.role));
   const profileComp = useMemo(() => getProfileCompletion(p), [p]);
+
+  // Compute weekly & monthly meeting statistics for this profile user
+  const meetingStats = useMemo(() => {
+    const now = new Date();
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+
+    // Current week (Monday - Sunday)
+    const dayOfWeek = now.getDay(); // 0=Sun, 1=Mon...
+    const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diffToMonday);
+    const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
+
+    const fmtDate = (d) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+    const weekStartStr = fmtDate(monday);
+    const weekEndStr = fmtDate(sunday);
+
+    // Current month
+    const monthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+
+    const parseDurationMinutes = (m) => {
+      if (!m?.start || !m?.end) return 60;
+      const [sh, sm] = String(m.start).split(":").map(Number);
+      const [eh, em] = String(m.end).split(":").map(Number);
+      if (Number.isNaN(sh) || Number.isNaN(eh)) return 60;
+      const diff = (eh * 60 + (em || 0)) - (sh * 60 + (sm || 0));
+      return diff > 0 ? diff : 60;
+    };
+
+    const targetEmail = String(p?.email || "").toLowerCase();
+    const belongsToProfile = (m) => {
+      if (!m) return false;
+      if (m.owner_user_id === uid || m.created_by === uid) return true;
+      if (Array.isArray(m.attendee_ids) && m.attendee_ids.includes(uid)) return true;
+      if (targetEmail && Array.isArray(m.attendee_emails) && m.attendee_emails.some((e) => String(e).toLowerCase() === targetEmail)) {
+        return true;
+      }
+      if (!m.owner_user_id && (!Array.isArray(m.attendee_ids) || m.attendee_ids.length === 0)) return true;
+      return false;
+    };
+
+    const userMeetings = (Array.isArray(profileMeetings) ? profileMeetings : []).filter(belongsToProfile);
+
+    // Weekly buckets (Mon..Sun)
+    const dayLabels = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
+    const weekBars = dayLabels.map((label, idx) => {
+      const d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + idx);
+      const dStr = fmtDate(d);
+      return {
+        key: dStr,
+        label,
+        isToday: dStr === todayStr,
+        count: 0,
+        minutes: 0,
+      };
+    });
+
+    // Monthly buckets (Mgg 1..Mgg 4+)
+    const monthBars = [
+      { key: "w1", label: "Mgg 1", range: "1–7", count: 0, minutes: 0, isCurrent: now.getDate() <= 7 },
+      { key: "w2", label: "Mgg 2", range: "8–14", count: 0, minutes: 0, isCurrent: now.getDate() >= 8 && now.getDate() <= 14 },
+      { key: "w3", label: "Mgg 3", range: "15–21", count: 0, minutes: 0, isCurrent: now.getDate() >= 15 && now.getDate() <= 21 },
+      { key: "w4", label: "Mgg 4+", range: "22–31", count: 0, minutes: 0, isCurrent: now.getDate() >= 22 },
+    ];
+
+    let weekCount = 0;
+    let weekMinutes = 0;
+    let monthCount = 0;
+    let monthMinutes = 0;
+
+    for (const m of userMeetings) {
+      const dStr = String(m.date || "").slice(0, 10);
+      if (!dStr) continue;
+      const mins = parseDurationMinutes(m);
+
+      if (dStr >= weekStartStr && dStr <= weekEndStr) {
+        weekCount += 1;
+        weekMinutes += mins;
+        const bar = weekBars.find((b) => b.key === dStr);
+        if (bar) {
+          bar.count += 1;
+          bar.minutes += mins;
+        }
+      }
+
+      if (dStr.startsWith(monthPrefix)) {
+        monthCount += 1;
+        monthMinutes += mins;
+        const dayNum = Number(dStr.slice(8, 10)) || 1;
+        const bucketIdx = dayNum <= 7 ? 0 : dayNum <= 14 ? 1 : dayNum <= 21 ? 2 : 3;
+        monthBars[bucketIdx].count += 1;
+        monthBars[bucketIdx].minutes += mins;
+      }
+    }
+
+    const upcomingNext = userMeetings
+      .filter((m) => String(m.date || "") >= todayStr)
+      .sort((a, b) => `${a.date} ${a.start || "00:00"}`.localeCompare(`${b.date} ${b.start || "00:00"}`))[0] || null;
+
+    const formatHours = (mins) => {
+      if (mins <= 0) return "0";
+      const hrs = mins / 60;
+      return Number.isInteger(hrs) ? String(hrs) : hrs.toFixed(1);
+    };
+
+    const isWeek = statsPeriod === "week";
+    const activeCount = isWeek ? weekCount : monthCount;
+    const activeMinutes = isWeek ? weekMinutes : monthMinutes;
+    const activeHours = formatHours(activeMinutes);
+    const avgMinutes = activeCount > 0 ? Math.round(activeMinutes / activeCount) : 0;
+    const bars = isWeek ? weekBars : monthBars;
+    const maxMinutes = Math.max(...bars.map((b) => b.minutes), 60);
+    // Reference capacity: 15h/week or 60h/month
+    const targetCapMinutes = isWeek ? 15 * 60 : 60 * 60;
+    const loadPct = Math.min(100, Math.round((activeMinutes / targetCapMinutes) * 100));
+
+    return {
+      activeCount,
+      activeMinutes,
+      activeHours,
+      avgMinutes,
+      bars,
+      maxMinutes,
+      loadPct,
+      weekCount,
+      weekHours: formatHours(weekMinutes),
+      monthCount,
+      monthHours: formatHours(monthMinutes),
+      upcomingNext,
+    };
+  }, [profileMeetings, statsPeriod, uid, p?.email]);
 
   useEffect(() => {
     if (searchParams.get("edit") === "1" && canEdit) {
@@ -765,6 +924,182 @@ export default function Profile() {
           )}
           <section className="card min-w-0 overflow-hidden p-4 sm:p-5"><h3 className="mb-3 text-sm font-bold">{tr("profile_about_title", "Tentang")}</h3><p className="text-sm text-sub break-words">{p.bio || tr("profile_no_bio", "Belum ada biodata.")}</p>
             {p.skills?.length > 0 && <div className="mt-4 flex flex-wrap gap-1.5">{p.skills.map((s) => <span key={s} className="rounded-full bg-soft-purple px-2.5 py-1 text-xs font-medium">{s}</span>)}</div>}</section>
+
+          {/* Statistik & Jadwal Meeting Card (Right below Tentang) */}
+          <section
+            className="card min-w-0 overflow-hidden p-4 sm:p-5"
+            data-testid="profile-meeting-stats-card"
+          >
+            <div className="flex items-center justify-between gap-2 mb-3.5">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-800 text-ink">
+                  <Calendar size={14} className="text-brand" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-bold text-ink truncate">
+                    {tr("profile_meeting_stats_title", "Statistik Meeting")}
+                  </h3>
+                </div>
+              </div>
+
+              {/* Segmented Period Toggle */}
+              <div
+                className="inline-flex items-center rounded-lg bg-surface2 p-0.5 text-[11px] font-semibold shrink-0"
+                data-testid="profile-meeting-stats-period"
+              >
+                <button
+                  type="button"
+                  onClick={() => setStatsPeriod("week")}
+                  className={`rounded-md px-2.5 py-1 transition-all ${
+                    statsPeriod === "week"
+                      ? "bg-surface text-ink shadow-2xs"
+                      : "text-sub hover:text-ink"
+                  }`}
+                >
+                  Minggu Ini
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStatsPeriod("month")}
+                  className={`rounded-md px-2.5 py-1 transition-all ${
+                    statsPeriod === "month"
+                      ? "bg-surface text-ink shadow-2xs"
+                      : "text-sub hover:text-ink"
+                  }`}
+                >
+                  Bulan Ini
+                </button>
+              </div>
+            </div>
+
+            {/* Minimalist Metric Summary Grid */}
+            <div className="grid grid-cols-2 gap-2.5">
+              <div className="rounded-2xl border border-slate-200/70 dark:border-slate-800/80 bg-surface2/40 p-3">
+                <div className="flex items-center justify-between text-[11px] font-medium text-sub">
+                  <span>Jumlah Meeting</span>
+                  <Video size={12} className="text-sub/70" />
+                </div>
+                <div className="mt-1 flex items-baseline gap-1.5">
+                  <span
+                    className="text-2xl font-extrabold tracking-tight text-ink tabular-nums"
+                    data-testid="profile-meeting-count"
+                  >
+                    {meetingStats.activeCount}
+                  </span>
+                  <span className="text-[11px] font-medium text-sub">sesi</span>
+                </div>
+                <p className="mt-0.5 text-[10.5px] text-sub tabular-nums">
+                  {statsPeriod === "week"
+                    ? `${meetingStats.monthCount} sesi bulan ini`
+                    : `${meetingStats.weekCount} sesi minggu ini`}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200/70 dark:border-slate-800/80 bg-surface2/40 p-3">
+                <div className="flex items-center justify-between text-[11px] font-medium text-sub">
+                  <span>Total Durasi</span>
+                  <Clock size={12} className="text-sub/70" />
+                </div>
+                <div className="mt-1 flex items-baseline gap-1.5">
+                  <span
+                    className="text-2xl font-extrabold tracking-tight text-ink tabular-nums"
+                    data-testid="profile-meeting-hours"
+                  >
+                    {meetingStats.activeHours}
+                  </span>
+                  <span className="text-[11px] font-medium text-sub">jam</span>
+                </div>
+                <p className="mt-0.5 text-[10.5px] text-sub tabular-nums">
+                  {meetingStats.avgMinutes > 0
+                    ? `Rata-rata ${meetingStats.avgMinutes} mnt/sesi`
+                    : "Belum ada durasi tercatat"}
+                </p>
+              </div>
+            </div>
+
+            {/* Minimalist Graphic: Distribution Bar Chart */}
+            <div className="mt-3.5 rounded-2xl border border-slate-200/70 dark:border-slate-800/80 bg-surface2/30 px-3.5 pt-3 pb-2.5">
+              <div className="flex items-center justify-between text-[11px] mb-2.5">
+                <span className="font-semibold text-sub">
+                  {statsPeriod === "week" ? "Distribusi Jam (Sen–Min)" : "Distribusi Mingguan"}
+                </span>
+                <span className="font-semibold text-ink tabular-nums">
+                  {meetingStats.loadPct}% beban rapat
+                </span>
+              </div>
+
+              <div className="flex items-end justify-between gap-1.5 h-16 pt-2">
+                {meetingStats.bars.map((bar) => {
+                  const pct = bar.minutes > 0 ? Math.max(18, Math.round((bar.minutes / meetingStats.maxMinutes) * 100)) : 8;
+                  const hrsLabel = bar.minutes > 0 ? `${(bar.minutes / 60).toFixed(bar.minutes % 60 === 0 ? 0 : 1)}j` : "";
+                  const isHighlighted = Boolean(bar.isToday || bar.isCurrent);
+                  return (
+                    <div
+                      key={bar.key}
+                      className="group relative flex-1 flex flex-col items-center h-full justify-end"
+                      title={`${bar.label}: ${bar.count} meeting (${(bar.minutes / 60).toFixed(1)} jam)`}
+                    >
+                      {hrsLabel && (
+                        <span className="mb-1 text-[9.5px] font-bold text-sub tabular-nums leading-none">
+                          {hrsLabel}
+                        </span>
+                      )}
+                      <div className="w-full max-w-[24px] h-10 flex items-end rounded-md bg-slate-200/60 dark:bg-slate-800/70 overflow-hidden p-0.5">
+                        <div
+                          className={`w-full rounded-xs transition-all duration-300 ${
+                            bar.minutes > 0
+                              ? isHighlighted
+                                ? "bg-brand"
+                                : "bg-slate-700 dark:bg-slate-300"
+                              : "bg-slate-300/60 dark:bg-slate-700/50"
+                          }`}
+                          style={{ height: `${pct}%` }}
+                        />
+                      </div>
+                      <span
+                        className={`mt-1.5 text-[10px] font-semibold leading-none ${
+                          isHighlighted ? "text-brand font-bold" : "text-sub"
+                        }`}
+                      >
+                        {bar.label}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Minimalist Workload Capacity Line */}
+              <div className="mt-3 pt-2.5 border-t border-slate-200/60 dark:border-slate-800/70">
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200/80 dark:bg-slate-800">
+                  <div
+                    className={`h-full rounded-full transition-all duration-300 ${
+                      meetingStats.loadPct > 75
+                        ? "bg-rose-500"
+                        : meetingStats.loadPct > 40
+                        ? "bg-amber-500"
+                        : "bg-emerald-500"
+                    }`}
+                    style={{ width: `${Math.max(4, meetingStats.loadPct)}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Action Button: Set Meeting dengan [Nama Profil] */}
+            <button
+              type="button"
+              onClick={() => setSetMeetingOpen(true)}
+              data-testid="profile-set-meeting-btn"
+              className="mt-3.5 w-full inline-flex items-center justify-center gap-2 rounded-xl bg-ink dark:bg-white text-white dark:text-slate-900 hover:opacity-95 px-3.5 py-2.5 text-xs font-bold shadow-xs transition-all cursor-pointer"
+            >
+              <CalendarPlus size={15} className="text-brand dark:text-rose-600 shrink-0" />
+              <span className="truncate">Set Meeting dengan {p.name}</span>
+            </button>
+            <p className="mt-1.5 text-center text-[10.5px] text-sub flex items-center justify-center gap-1">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 inline-block" />
+              <span>Terkoneksi otomatis dengan Google Calendar</span>
+            </p>
+          </section>
           <section className="card min-w-0 overflow-hidden space-y-3 p-4 sm:p-5" data-testid="profile-contact-info">
             {info.map(([I, l, v]) => <div key={l} className="flex items-center gap-2.5 sm:gap-3 text-sm min-w-0"><I size={15} className="text-sub shrink-0" /><span className="w-24 sm:w-28 shrink-0 text-sub">{l}</span><span className="min-w-0 flex-1 truncate font-medium">{v}</span></div>)}
             {mgr && <button onClick={() => navigate(`/people/${mgr.user_id}`)} className="flex w-full min-w-0 items-center gap-3 rounded-xl bg-surface2 p-2 text-left text-sm"><Avatar user={mgr} size={28} showStatus={false} /><span className="min-w-0"><span className="block text-[11px] text-sub">{tr("profile_reports_to", "Melapor ke")}</span><span className="block truncate font-semibold">{mgr.name}</span></span></button>}
@@ -954,6 +1289,333 @@ export default function Profile() {
         p={p}
         onSaved={syncSavedProfile}
       />
+      <SetProfileMeetingDialog
+        open={setMeetingOpen}
+        onOpenChange={setSetMeetingOpen}
+        profileUser={p}
+        me={me}
+        onCreated={() => {
+          loadProfileMeetings();
+        }}
+      />
     </div>
   );
 }
+
+function buildGoogleCalendarTemplateUrl({ title, date, start, end, location, notes, attendeeEmail }) {
+  try {
+    const cleanDate = String(date || "").replace(/-/g, "");
+    const cleanStart = String(start || "10:00").replace(/:/g, "") + "00";
+    const cleanEnd = String(end || "11:00").replace(/:/g, "") + "00";
+    const params = new URLSearchParams({
+      action: "TEMPLATE",
+      text: title || "Meeting",
+      dates: `${cleanDate}T${cleanStart}/${cleanDate}T${cleanEnd}`,
+      details: notes || "Jadwal meeting dari CIRCLE Workspace",
+      location: location || "Google Meet",
+    });
+    if (attendeeEmail) {
+      params.set("add", attendeeEmail);
+    }
+    return `https://calendar.google.com/calendar/render?${params.toString()}`;
+  } catch {
+    return "https://calendar.google.com";
+  }
+}
+
+function SetProfileMeetingDialog({ open, onOpenChange, profileUser, me, onCreated }) {
+  const todayStr = useMemo(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }, []);
+
+  const defaultTitle = useMemo(() => {
+    const myFirst = me?.name?.split(" ")[0] || "Tim";
+    const targetFirst = profileUser?.name?.split(" ")[0] || "Rekan";
+    return me?.user_id === profileUser?.user_id
+      ? `Focus / Jadwal Meeting — ${targetFirst}`
+      : `Sync Meeting: ${myFirst} & ${targetFirst}`;
+  }, [me?.name, me?.user_id, profileUser?.name, profileUser?.user_id]);
+
+  const [title, setTitle] = useState(defaultTitle);
+  const [date, setDate] = useState(todayStr);
+  const [start, setStart] = useState("10:00");
+  const [end, setEnd] = useState("11:00");
+  const [location, setLocation] = useState("Google Meet");
+  const [notes, setNotes] = useState("");
+  const [autoGcal, setAutoGcal] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setTitle(defaultTitle);
+      setDate(todayStr);
+      setStart("10:00");
+      setEnd("11:00");
+      setLocation("Google Meet");
+      setNotes("");
+      setAutoGcal(true);
+    }
+  }, [open, defaultTitle, todayStr]);
+
+  const durationLabel = useMemo(() => {
+    const [sh, sm] = String(start || "10:00").split(":").map(Number);
+    const [eh, em] = String(end || "11:00").split(":").map(Number);
+    if (Number.isNaN(sh) || Number.isNaN(eh)) return "1 jam";
+    const mins = (eh * 60 + (em || 0)) - (sh * 60 + (sm || 0));
+    if (mins <= 0) return "Durasi tidak valid";
+    const hrs = mins / 60;
+    return hrs >= 1
+      ? `${Number.isInteger(hrs) ? hrs : hrs.toFixed(1)} jam (${mins} mnt)`
+      : `${mins} menit`;
+  }, [start, end]);
+
+  const connectedEmail = getConnectedCalendarEmail();
+
+  const handleSubmit = async (e) => {
+    e?.preventDefault();
+    if (!title.trim()) {
+      toast.error("Judul meeting wajib diisi");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const attendeeIds = Array.from(
+        new Set([me?.user_id, profileUser?.user_id].filter(Boolean))
+      );
+      const attendeeEmails = Array.from(
+        new Set([me?.email, profileUser?.email].filter(Boolean))
+      );
+
+      let gcalEventId = null;
+      let gcalHtmlLink = null;
+      let syncedViaApi = false;
+
+      if (autoGcal) {
+        try {
+          let token = await getAccessToken();
+          if (!token) {
+            try {
+              const authRes = await googleCalendarOAuthSignIn();
+              token = authRes?.accessToken || null;
+            } catch {
+              token = null;
+            }
+          }
+
+          if (token) {
+            const startIso = new Date(`${date}T${start}:00`).toISOString();
+            const endIso = new Date(`${date}T${end}:00`).toISOString();
+            const gcalPayload = {
+              summary: title.trim(),
+              location: location.trim() || "Google Meet",
+              description: notes.trim() || `Dijadwalkan melalui profil ${profileUser?.name} di CIRCLE Workspace`,
+              start: { dateTime: startIso },
+              end: { dateTime: endIso },
+              attendees: attendeeEmails
+                .filter((em) => em && em.includes("@"))
+                .map((email) => ({ email })),
+            };
+            const createdGcal = await createEvent(gcalPayload);
+            if (createdGcal?.id) {
+              gcalEventId = createdGcal.id;
+              gcalHtmlLink = createdGcal.htmlLink || null;
+              syncedViaApi = true;
+            }
+          }
+        } catch (gcalErr) {
+          console.warn("Auto GCal API push fallback:", gcalErr);
+        }
+      }
+
+      const templateUrl = buildGoogleCalendarTemplateUrl({
+        title: title.trim(),
+        date,
+        start,
+        end,
+        location: location.trim(),
+        notes: notes.trim(),
+        attendeeEmail: profileUser?.email,
+      });
+
+      const payload = {
+        title: title.trim(),
+        date,
+        start,
+        end,
+        location: location.trim() || "Google Meet",
+        notes: notes.trim(),
+        attendee_ids: attendeeIds,
+        attendee_emails: attendeeEmails,
+        owner_user_id: me?.user_id,
+        source: syncedViaApi ? "google_calendar" : "local",
+        gcal_id: gcalEventId,
+        html_link: gcalHtmlLink || templateUrl,
+      };
+
+      await api.post("/meetings", payload);
+      syncWorkspaceMirror();
+
+      if (syncedViaApi) {
+        toast.success(`Meeting dengan ${profileUser?.name} berhasil dijadwalkan & tersinkron otomatis ke Google Calendar!`);
+      } else if (autoGcal) {
+        toast.success(`Meeting dengan ${profileUser?.name} tersimpan! Mengarahkan sinkronisasi Google Calendar...`, {
+          action: {
+            label: "Buka Google Calendar",
+            onClick: () => {
+              const a = document.createElement("a");
+              a.href = templateUrl;
+              a.target = "_blank";
+              a.rel = "noopener noreferrer";
+              a.click();
+            },
+          },
+        });
+      } else {
+        toast.success(`Meeting dengan ${profileUser?.name} berhasil dijadwalkan!`);
+      }
+
+      onCreated?.();
+      onOpenChange(false);
+    } catch (err) {
+      toast.error(errMsg(err, "Gagal menjadwalkan meeting"));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-base font-bold">
+            <CalendarPlus size={18} className="text-brand" />
+            <span>Set Meeting dengan {profileUser?.name}</span>
+          </DialogTitle>
+        </DialogHeader>
+
+        <form onSubmit={handleSubmit} className="space-y-3.5 pt-1">
+          {/* Attendee Pill */}
+          <div className="flex items-center justify-between gap-2 rounded-2xl border border-slate-200/80 dark:border-slate-800 bg-surface2/60 p-2.5">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <Avatar user={profileUser} size={34} showStatus={false} />
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-ink truncate">{profileUser?.name}</p>
+                <p className="text-[11px] text-sub truncate">
+                  {profileUser?.email || profileUser?.job_title || "Peserta Meeting"}
+                </p>
+              </div>
+            </div>
+            <span className="rounded-lg bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200/70 dark:border-emerald-800/60 px-2 py-0.5 text-[10.5px] font-bold text-emerald-700 dark:text-emerald-300 shrink-0">
+              Peserta Utama
+            </span>
+          </div>
+
+          <Field label="Judul / Topik Meeting">
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Contoh: Weekly Sync / Review Project"
+              className={inp}
+              required
+              data-testid="profile-meeting-title-input"
+            />
+          </Field>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+            <div className="sm:col-span-1">
+              <Field label="Tanggal">
+                <DatePicker
+                  showQuickPresets={false}
+                  value={date}
+                  onChange={setDate}
+                  className={inp}
+                />
+              </Field>
+            </div>
+            <div>
+              <Field label="Jam Mulai">
+                <input
+                  type="time"
+                  value={start}
+                  onChange={(e) => setStart(e.target.value)}
+                  className={`${inp} tabular-nums`}
+                  required
+                />
+              </Field>
+            </div>
+            <div>
+              <Field label="Jam Selesai">
+                <input
+                  type="time"
+                  value={end}
+                  onChange={(e) => setEnd(e.target.value)}
+                  className={`${inp} tabular-nums`}
+                  required
+                />
+              </Field>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between text-[11px] text-sub px-1">
+            <span>Estimasi Durasi Meeting:</span>
+            <span className="font-bold text-ink tabular-nums">{durationLabel}</span>
+          </div>
+
+          <Field label="Lokasi / Link Meeting">
+            <input
+              type="text"
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+              placeholder="Google Meet, Zoom, atau Ruang Rapat"
+              className={inp}
+            />
+          </Field>
+
+          <Field label="Agenda / Catatan (Opsional)">
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Tulis poin agenda diskusi..."
+              className={`${inp} h-16 py-2 resize-none`}
+            />
+          </Field>
+
+          {/* Auto Google Calendar Connection Toggle */}
+          <div className="flex items-center justify-between gap-3 rounded-2xl border border-emerald-200/80 dark:border-emerald-800/60 bg-emerald-50/50 dark:bg-emerald-950/25 p-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
+                <p className="text-xs font-bold text-ink">
+                  Sinkron Otomatis ke Google Calendar
+                </p>
+              </div>
+              <p className="mt-0.5 text-[11px] text-sub truncate">
+                {connectedEmail
+                  ? `Terhubung ke ${connectedEmail} & undang ${profileUser?.email || profileUser?.name}`
+                  : `Otomatis buat event & undang ${profileUser?.email || profileUser?.name} di Google Calendar`}
+              </p>
+            </div>
+            <Switch checked={autoGcal} onCheckedChange={setAutoGcal} />
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-2">
+            <GhostButton type="button" onClick={() => onOpenChange(false)}>
+              Batal
+            </GhostButton>
+            <AccentButton
+              type="submit"
+              disabled={submitting}
+              data-testid="profile-meeting-submit-btn"
+            >
+              <CalendarPlus size={15} />
+              <span>{submitting ? "Menjadwalkan..." : "Jadwalkan & Sinkron"}</span>
+            </AccentButton>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+

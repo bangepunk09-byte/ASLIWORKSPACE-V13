@@ -30,9 +30,11 @@ import {
   Pin,
   Pencil,
   StickyNote,
-  AlertTriangle
+  AlertTriangle,
+  Instagram
 } from "lucide-react";
 import StickyNotesWidget from "../components/StickyNotesWidget";
+import InstagramTrackerWidget from "../components/InstagramTrackerWidget";
 import { toast } from "sonner";
 import { useApp } from "../context/AppContext";
 import { api, errMsg, fileUrl } from "../lib/api";
@@ -55,6 +57,7 @@ const DEFAULT_WIDGET_CONFIG = {
     performance: true,
     bottleneck: true,
     personnel: true,
+    instagram_tracker: true,
     drive_directory: true
   },
   gridStyle: "3col", // '3col' | '2col' | 'focus'
@@ -114,9 +117,10 @@ export default function Dashboard() {
       setTasks(ctxTasks);
     }
   }, [ctxTasks]);
+  const meetingsCacheKey = `circle_cache_meetings_${me?.user_id || "default"}`;
   const [meetings, setMeetings] = useState(() => {
     try {
-      const saved = localStorage.getItem("circle_cache_meetings");
+      const saved = localStorage.getItem(`circle_cache_meetings_${me?.user_id || "default"}`);
       return saved ? JSON.parse(saved) : [];
     } catch { return []; }
   });
@@ -216,9 +220,9 @@ export default function Dashboard() {
         setCachedDriveShortcuts(dRes.data);
       }
 
-      // Update Cache
+      // Update Cache per user
       if ((Array.isArray(mRes.data) && mRes.data.length > 0) || hasCompletedInitialHydrate()) {
-        try { localStorage.setItem("circle_cache_meetings", JSON.stringify(mRes.data || [])); } catch {}
+        try { localStorage.setItem(meetingsCacheKey, JSON.stringify(mRes.data || [])); } catch {}
       }
     } catch (e) {
       console.warn("Failed to load dashboard data:", e);
@@ -226,6 +230,13 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
+    try {
+      const saved = localStorage.getItem(meetingsCacheKey);
+      if (saved) setMeetings(JSON.parse(saved));
+      else setMeetings([]);
+    } catch {
+      setMeetings([]);
+    }
     loadData();
   }, [me?.user_id]);
 
@@ -235,7 +246,7 @@ export default function Dashboard() {
         if (evt.type === "bootstrap:dashboard") {
           if (Array.isArray(evt.meetings)) {
             setMeetings(evt.meetings);
-            try { localStorage.setItem("circle_cache_meetings", JSON.stringify(evt.meetings)); } catch {}
+            try { localStorage.setItem(meetingsCacheKey, JSON.stringify(evt.meetings)); } catch {}
           }
           if (Array.isArray(evt.drive_shortcuts)) {
             setDriveShortcuts(evt.drive_shortcuts);
@@ -284,10 +295,20 @@ export default function Dashboard() {
           });
         }
         if (evt.type === "meeting:new" && evt.data) {
+          const m = evt.data;
+          const myUid = me?.user_id;
+          const myEmail = (me?.email || "").toLowerCase();
+          const isMine =
+            !m.owner_user_id ||
+            m.owner_user_id === myUid ||
+            m.created_by === myUid ||
+            (Array.isArray(m.attendee_ids) && m.attendee_ids.includes(myUid)) ||
+            (myEmail && Array.isArray(m.attendee_emails) && m.attendee_emails.some((e) => String(e).toLowerCase() === myEmail));
+          if (!isMine) return;
           setMeetings((prev) => {
             const list = Array.isArray(prev) ? prev : [];
-            const next = [...list.filter((m) => m.id !== evt.data.id), evt.data];
-            try { localStorage.setItem("circle_cache_meetings", JSON.stringify(next)); } catch {}
+            const next = [...list.filter((item) => item.id !== evt.data.id), evt.data];
+            try { localStorage.setItem(meetingsCacheKey, JSON.stringify(next)); } catch {}
             return next;
           });
         }
@@ -295,7 +316,7 @@ export default function Dashboard() {
           setMeetings((prev) => {
             const list = Array.isArray(prev) ? prev : [];
             const next = list.map((m) => (m.id === evt.data.id ? evt.data : m));
-            try { localStorage.setItem("circle_cache_meetings", JSON.stringify(next)); } catch {}
+            try { localStorage.setItem(meetingsCacheKey, JSON.stringify(next)); } catch {}
             return next;
           });
         }
@@ -303,16 +324,17 @@ export default function Dashboard() {
           setMeetings((prev) => {
             const list = Array.isArray(prev) ? prev : [];
             const next = list.filter((m) => m.id !== evt.id);
-            try { localStorage.setItem("circle_cache_meetings", JSON.stringify(next)); } catch {}
+            try { localStorage.setItem(meetingsCacheKey, JSON.stringify(next)); } catch {}
             return next;
           });
         }
         if (evt.type === "meetings:synced" && Array.isArray(evt.data)) {
+          if (evt.user_id && me?.user_id && evt.user_id !== me.user_id) return;
           setMeetings(evt.data);
-          try { localStorage.setItem("circle_cache_meetings", JSON.stringify(evt.data)); } catch {}
+          try { localStorage.setItem(meetingsCacheKey, JSON.stringify(evt.data)); } catch {}
         }
       }),
-    [subscribe]
+    [subscribe, me?.user_id, me?.email, meetingsCacheKey]
   );
 
   const humanUsers = (users || []).filter(
@@ -779,6 +801,13 @@ export default function Dashboard() {
         )}
 
         {/* ============================================================ */}
+        {/* INSTAGRAM LATEST POST TRACKER (LIVE CONTENT MONITOR)         */}
+        {/* ============================================================ */}
+        {widgetLayout.visible.instagram_tracker !== false && (
+          <InstagramTrackerWidget densityStyles={densityStyles} />
+        )}
+
+        {/* ============================================================ */}
         {/* DIREKTORI SHORTCUT FOLDER GOOGLE DRIVE (FILTERED BY ACCESS)  */}
         {/* ============================================================ */}
         {widgetLayout.visible.drive_directory !== false && (
@@ -1168,6 +1197,12 @@ export default function Dashboard() {
                   title: tr("dash_layout_pers_title", "Kapasitas & Beban Kerja Personel"),
                   desc: tr("dash_layout_pers_desc", "Kartu beban kerja anggota tim dan indikator tekanan"),
                   icon: BarChart3
+                },
+                {
+                  key: "instagram_tracker",
+                  title: tr("dash_layout_ig_title", "Tracker Postingan Instagram"),
+                  desc: tr("dash_layout_ig_desc", "Pantau status tayangan konten terakhir akun Instagram tim (Sudah Naik / Belum Naik)"),
+                  icon: Instagram
                 },
                 {
                   key: "drive_directory",

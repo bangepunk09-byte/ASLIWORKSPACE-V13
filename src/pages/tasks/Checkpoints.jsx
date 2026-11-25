@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { MessageSquare, AlertTriangle, X, Plus, CheckCircle2, RotateCcw, Flag, Layers, Sparkles, Bell, BookmarkPlus, AtSign } from "lucide-react";
+import { MessageSquare, AlertTriangle, X, Plus, CheckCircle2, RotateCcw, Flag, Layers, Sparkles, Bell, BookmarkPlus, AtSign, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { api, errMsg } from "../../lib/api";
 import { useApp } from "../../context/AppContext";
@@ -8,7 +8,7 @@ import { Avatar, rel, MentionText } from "../../components/common";
 import { DatePicker } from "../../components/ui/date-picker";
 import { UserSelect } from "./fields";
 import { playSound } from "../../lib/sound";
-import { syncWorkspaceMirror } from "../../lib/persistentMirror";
+import { syncWorkspaceMirror, getLocalDeletedCheckpointTemplateIds, recordDeletedCheckpointTemplateIds } from "../../lib/persistentMirror";
 
 export function extractCommentMentions(text, explicitIds = [], users = []) {
   const raw = String(text || "");
@@ -350,74 +350,166 @@ export const DEFAULT_CHECKPOINT_PRESETS = [
   },
 ];
 
-const CP_TEMPLATES_STORAGE_PREFIX = "circle_user_cp_templates_";
+const SHARED_CP_TEMPLATES_STORAGE_KEY = "circle_checkpoint_templates";
 
-function getUserStorageKey(userId) {
-  return `${CP_TEMPLATES_STORAGE_PREFIX}${userId || "guest"}`;
-}
-
-function buildInitialUserTemplates(wsTemplates) {
-  const base = [...DEFAULT_CHECKPOINT_PRESETS];
-  const seenLabels = new Set(base.map((t) => String(t.label || "").trim().toLowerCase()));
-  if (Array.isArray(wsTemplates)) {
-    for (const t of wsTemplates) {
-      if (!t || !t.label || !Array.isArray(t.items)) continue;
-      const key = String(t.label).trim().toLowerCase();
-      if (!seenLabels.has(key)) {
-        seenLabels.add(key);
-        base.push({
-          id: t.id || `tpl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-          label: t.label,
-          items: t.items,
-        });
-      }
-    }
+function normalizeTemplateList(rawList, deletedIds = []) {
+  const delSet = new Set(
+    [
+      ...(Array.isArray(deletedIds) ? deletedIds : []),
+      ...getLocalDeletedCheckpointTemplateIds(),
+    ]
+      .map((x) => String(x || "").trim())
+      .filter(Boolean)
+  );
+  const out = [];
+  const seenIds = new Set();
+  for (const t of Array.isArray(rawList) ? rawList : []) {
+    if (!t || typeof t !== "object") continue;
+    const label = String(t.label || "").trim();
+    const items = (Array.isArray(t.items) ? t.items : [])
+      .map((x) => String(x || "").trim())
+      .filter(Boolean);
+    if (!label || items.length === 0) continue;
+    const matchedBuiltin = DEFAULT_CHECKPOINT_PRESETS.find(
+      (b) => b.label.trim().toLowerCase() === label.toLowerCase()
+    );
+    const id = String(
+      t.id || matchedBuiltin?.id || `tpl_${label.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`
+    ).trim();
+    if (!id || delSet.has(id) || seenIds.has(id)) continue;
+    seenIds.add(id);
+    out.push({
+      id,
+      label,
+      items,
+      updated_at: t.updated_at || null,
+    });
   }
-  return base;
+  return out;
 }
 
-function readCachedUserTemplates(userId, prefs, ws) {
-  if (Array.isArray(prefs?.user_checkpoint_templates)) {
-    return prefs.user_checkpoint_templates;
+function readSharedTemplates(ws) {
+  const wsDel = Array.isArray(ws?.deleted_checkpoint_template_ids)
+    ? ws.deleted_checkpoint_template_ids
+    : [];
+  if (ws?.checkpoint_templates_initialized && Array.isArray(ws?.checkpoint_templates)) {
+    return normalizeTemplateList(ws.checkpoint_templates, wsDel);
   }
   try {
-    const raw = localStorage.getItem(getUserStorageKey(userId));
+    const raw = localStorage.getItem(SHARED_CP_TEMPLATES_STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed;
+      if (Array.isArray(parsed)) {
+        return normalizeTemplateList(parsed, wsDel);
+      }
     }
   } catch {}
-  return buildInitialUserTemplates(prefs?.checkpoint_templates || ws?.checkpoint_templates);
+  if (Array.isArray(ws?.checkpoint_templates) && ws.checkpoint_templates.length > 0) {
+    return normalizeTemplateList([...DEFAULT_CHECKPOINT_PRESETS, ...ws.checkpoint_templates], wsDel);
+  }
+  return normalizeTemplateList(DEFAULT_CHECKPOINT_PRESETS, wsDel);
+}
+
+function broadcastLocalTemplateEvent(nextList) {
+  try {
+    localStorage.setItem(SHARED_CP_TEMPLATES_STORAGE_KEY, JSON.stringify(nextList));
+  } catch {}
+  try {
+    window.dispatchEvent(
+      new CustomEvent("circle:checkpoint-templates-updated", { detail: { templates: nextList } })
+    );
+  } catch {}
 }
 
 export function useCheckpointTemplates() {
-  const { me, ws, prefs, savePrefs, t: tr } = useApp();
-  const userId = me?.user_id || "guest";
+  const { ws, subscribe, t: tr } = useApp();
 
-  const [templates, setTemplates] = useState(() =>
-    readCachedUserTemplates(userId, prefs, ws)
-  );
+  const [templates, setTemplates] = useState(() => readSharedTemplates(ws));
 
   useEffect(() => {
-    const resolved = readCachedUserTemplates(userId, prefs, ws);
-    setTemplates(resolved);
-    try {
-      localStorage.setItem(getUserStorageKey(userId), JSON.stringify(resolved));
-    } catch {}
-  }, [userId, prefs?.user_checkpoint_templates]); // eslint-disable-line
+    if (Array.isArray(ws?.deleted_checkpoint_template_ids) && ws.deleted_checkpoint_template_ids.length > 0) {
+      recordDeletedCheckpointTemplateIds(ws.deleted_checkpoint_template_ids);
+    }
+    if (Array.isArray(ws?.checkpoint_templates)) {
+      const normalized = normalizeTemplateList(
+        ws.checkpoint_templates,
+        ws.deleted_checkpoint_template_ids
+      );
+      setTemplates(normalized);
+      try {
+        localStorage.setItem(SHARED_CP_TEMPLATES_STORAGE_KEY, JSON.stringify(normalized));
+      } catch {}
+    }
+  }, [ws?.checkpoint_templates, ws?.deleted_checkpoint_template_ids]);
 
-  const persistTemplates = async (nextList) => {
-    setTemplates(nextList);
-    try {
-      localStorage.setItem(getUserStorageKey(userId), JSON.stringify(nextList));
-    } catch {}
-    try {
-      await savePrefs?.({
-        user_checkpoint_templates: nextList,
-        checkpoint_templates: nextList,
-      });
-    } catch {}
-  };
+  useEffect(() => {
+    let active = true;
+    api
+      .get("/workspace/checkpoint-templates")
+      .then((res) => {
+        if (!active) return;
+        const delIds = Array.isArray(res.data?.deleted_ids) ? res.data.deleted_ids : [];
+        if (delIds.length > 0) {
+          recordDeletedCheckpointTemplateIds(delIds);
+        }
+        if (Array.isArray(res.data?.templates)) {
+          const normalized = normalizeTemplateList(res.data.templates, delIds);
+          setTemplates(normalized);
+          try {
+            localStorage.setItem(SHARED_CP_TEMPLATES_STORAGE_KEY, JSON.stringify(normalized));
+          } catch {}
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!subscribe) return undefined;
+    return subscribe((evt) => {
+      if (!evt || typeof evt !== "object") return;
+      if (evt.type === "checkpoint_templates:changed") {
+        const delIds = Array.isArray(evt.deleted_ids) ? evt.deleted_ids : [];
+        if (delIds.length > 0) {
+          recordDeletedCheckpointTemplateIds(delIds);
+        }
+        if (Array.isArray(evt.templates)) {
+          const normalized = normalizeTemplateList(evt.templates, delIds);
+          setTemplates(normalized);
+          try {
+            localStorage.setItem(SHARED_CP_TEMPLATES_STORAGE_KEY, JSON.stringify(normalized));
+          } catch {}
+        }
+      } else if (
+        (evt.type === "workspace:updated" || evt.type === "workspace:changed") &&
+        Array.isArray(evt.data?.checkpoint_templates)
+      ) {
+        const delIds = Array.isArray(evt.data?.deleted_checkpoint_template_ids)
+          ? evt.data.deleted_checkpoint_template_ids
+          : [];
+        if (delIds.length > 0) {
+          recordDeletedCheckpointTemplateIds(delIds);
+        }
+        const normalized = normalizeTemplateList(evt.data.checkpoint_templates, delIds);
+        setTemplates(normalized);
+        try {
+          localStorage.setItem(SHARED_CP_TEMPLATES_STORAGE_KEY, JSON.stringify(normalized));
+        } catch {}
+      }
+    });
+  }, [subscribe]);
+
+  useEffect(() => {
+    const onLocalSync = (e) => {
+      if (Array.isArray(e?.detail?.templates)) {
+        setTemplates(e.detail.templates);
+      }
+    };
+    window.addEventListener("circle:checkpoint-templates-updated", onLocalSync);
+    return () => window.removeEventListener("circle:checkpoint-templates-updated", onLocalSync);
+  }, []);
 
   const addTemplate = async (label, items) => {
     const cleanLabel = String(label || "").trim();
@@ -436,32 +528,125 @@ export function useCheckpointTemplates() {
       id: `tpl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       label: cleanLabel,
       items: cleanItems,
+      updated_at: new Date().toISOString(),
     };
-    const next = [...templates, newTpl];
-    await persistTemplates(next);
-    toast.success(`${tr("cp_tpl_saved_prefix", "Template")} "${cleanLabel}" ${tr("cp_tpl_saved_suffix", "berhasil disimpan!")}`);
-    return newTpl;
+    const optimistic = [...templates, newTpl];
+    setTemplates(optimistic);
+    broadcastLocalTemplateEvent(optimistic);
+
+    try {
+      const res = await api.post("/workspace/checkpoint-templates", newTpl);
+      if (Array.isArray(res.data?.templates)) {
+        const normalized = normalizeTemplateList(res.data.templates, res.data?.deleted_ids);
+        setTemplates(normalized);
+        broadcastLocalTemplateEvent(normalized);
+      }
+      void syncWorkspaceMirror(api, true);
+      toast.success(
+        `${tr("cp_tpl_saved_prefix", "Template")} "${cleanLabel}" ${tr("cp_tpl_saved_suffix", "berhasil disimpan!")}`
+      );
+      return res.data?.template || newTpl;
+    } catch (e) {
+      toast.error(errMsg(e));
+      return newTpl;
+    }
+  };
+
+  const updateTemplate = async (id, label, items, oldLabel = "") => {
+    const cleanLabel = String(label || "").trim();
+    const cleanItems = (Array.isArray(items) ? items : [])
+      .map((x) => String(x || "").trim())
+      .filter(Boolean);
+    if (!cleanLabel) {
+      toast.error(tr("cp_tpl_name_required", "Nama template wajib diisi"));
+      return false;
+    }
+    if (cleanItems.length === 0) {
+      toast.error(tr("cp_tpl_stage_required", "Tambahkan minimal 1 tahap checkpoint untuk template"));
+      return false;
+    }
+    const targetId = String(id || oldLabel || cleanLabel).trim();
+    const nowIso = new Date().toISOString();
+    const optimistic = templates.map((t) =>
+      (t.id && id ? t.id === id : t.label === (oldLabel || cleanLabel))
+        ? { ...t, label: cleanLabel, items: cleanItems, updated_at: nowIso }
+        : t
+    );
+    setTemplates(optimistic);
+    broadcastLocalTemplateEvent(optimistic);
+
+    try {
+      const res = await api.put(
+        `/workspace/checkpoint-templates/${encodeURIComponent(targetId)}`,
+        {
+          label: cleanLabel,
+          items: cleanItems,
+          old_label: oldLabel,
+        }
+      );
+      if (Array.isArray(res.data?.templates)) {
+        const normalized = normalizeTemplateList(res.data.templates, res.data?.deleted_ids);
+        setTemplates(normalized);
+        broadcastLocalTemplateEvent(normalized);
+      }
+      void syncWorkspaceMirror(api, true);
+      toast.success(
+        `${tr("cp_tpl_saved_prefix", "Template")} "${cleanLabel}" ${tr("cp_tpl_updated_suffix", "berhasil diperbarui!")}`
+      );
+      return res.data?.template || true;
+    } catch (e) {
+      toast.error(errMsg(e));
+      return false;
+    }
   };
 
   const removeTemplate = async (id, label) => {
     const target = templates.find((t) => (t.id && id ? t.id === id : t.label === label));
-    const next = templates.filter((t) => (t.id && id ? t.id !== id : t.label !== label));
-    await persistTemplates(next);
-    if (target) toast.success(`${tr("cp_tpl_saved_prefix", "Template")} "${target.label}" ${tr("cp_tpl_deleted_suffix", "dihapus")}`);
+    const resolvedId = String(target?.id || id || "").trim();
+    if (resolvedId) {
+      recordDeletedCheckpointTemplateIds([resolvedId]);
+    }
+    const next = templates.filter((t) => (t.id && resolvedId ? t.id !== resolvedId : t.label !== label));
+    setTemplates(next);
+    broadcastLocalTemplateEvent(next);
+
+    try {
+      const res = await api.delete(
+        `/workspace/checkpoint-templates/${encodeURIComponent(resolvedId || label || "unknown")}?label=${encodeURIComponent(label || target?.label || "")}`
+      );
+      if (Array.isArray(res.data?.deleted_ids) && res.data.deleted_ids.length > 0) {
+        recordDeletedCheckpointTemplateIds(res.data.deleted_ids);
+      }
+      if (Array.isArray(res.data?.templates)) {
+        const normalized = normalizeTemplateList(res.data.templates, res.data?.deleted_ids);
+        setTemplates(normalized);
+        broadcastLocalTemplateEvent(normalized);
+      }
+      void syncWorkspaceMirror(api, true);
+      if (target) {
+        toast.success(
+          `${tr("cp_tpl_saved_prefix", "Template")} "${target.label}" ${tr("cp_tpl_deleted_suffix", "dihapus")}`
+        );
+      }
+    } catch (e) {
+      toast.error(errMsg(e));
+    }
   };
 
   return {
     allPresets: templates,
     customTemplates: templates,
     addTemplate,
+    updateTemplate,
     removeTemplate,
   };
 }
 
 export function CheckpointPresetBar({ onApply, currentCheckpoints = [], testidPrefix = "preset-btn" }) {
   const { t: tr } = useApp();
-  const { allPresets, addTemplate, removeTemplate } = useCheckpointTemplates();
+  const { allPresets, addTemplate, updateTemplate, removeTemplate } = useCheckpointTemplates();
   const [creating, setCreating] = useState(false);
+  const [editingTpl, setEditingTpl] = useState(null);
   const [tplName, setTplName] = useState("");
   const [tplItems, setTplItems] = useState([""]);
   const [stageInput, setStageInput] = useState("");
@@ -470,10 +655,32 @@ export function CheckpointPresetBar({ onApply, currentCheckpoints = [], testidPr
     const existingTitles = (currentCheckpoints || [])
       .map((c) => (typeof c === "string" ? c : c?.title || "").trim())
       .filter(Boolean);
+    setEditingTpl(null);
     setTplName("");
-    setTplItems(existingTitles.length > 0 ? existingTitles : [`${tr("cp_stage_num_prefix", "Tahap")} 1`, `${tr("cp_stage_num_prefix", "Tahap")} 2`]);
+    setTplItems(
+      existingTitles.length > 0
+        ? existingTitles
+        : [`${tr("cp_stage_num_prefix", "Tahap")} 1`, `${tr("cp_stage_num_prefix", "Tahap")} 2`]
+    );
     setStageInput("");
     setCreating(true);
+  };
+
+  const openEditorForTemplate = (preset) => {
+    if (!preset) return;
+    setEditingTpl({ id: preset.id, label: preset.label });
+    setTplName(preset.label || "");
+    setTplItems(Array.isArray(preset.items) && preset.items.length > 0 ? [...preset.items] : [""]);
+    setStageInput("");
+    setCreating(true);
+  };
+
+  const closeBuilder = () => {
+    setCreating(false);
+    setEditingTpl(null);
+    setTplName("");
+    setTplItems([""]);
+    setStageInput("");
   };
 
   const addStageToDraft = () => {
@@ -488,12 +695,16 @@ export function CheckpointPresetBar({ onApply, currentCheckpoints = [], testidPr
       ...tplItems.map((x) => x.trim()).filter(Boolean),
       ...(stageInput.trim() ? [stageInput.trim()] : []),
     ];
-    const created = await addTemplate(tplName, finalItems);
-    if (created) {
-      setCreating(false);
-      setTplName("");
-      setTplItems([""]);
-      setStageInput("");
+    if (editingTpl) {
+      const updated = await updateTemplate(editingTpl.id, tplName, finalItems, editingTpl.label);
+      if (updated) {
+        closeBuilder();
+      }
+    } else {
+      const created = await addTemplate(tplName, finalItems);
+      if (created) {
+        closeBuilder();
+      }
     }
   };
 
@@ -520,7 +731,7 @@ export function CheckpointPresetBar({ onApply, currentCheckpoints = [], testidPr
             type="button"
             onClick={() => {
               if (creating) {
-                setCreating(false);
+                closeBuilder();
               } else {
                 openCreatorWithCurrent();
               }
@@ -538,7 +749,11 @@ export function CheckpointPresetBar({ onApply, currentCheckpoints = [], testidPr
         {allPresets.map((p) => (
           <div
             key={p.id || p.label}
-            className="inline-flex max-w-full items-center rounded-xl border border-slate-200 bg-surface hover:border-brand dark:border-slate-700 transition-colors shadow-2xs"
+            className={`inline-flex max-w-full items-center rounded-xl border bg-surface hover:border-brand transition-colors shadow-2xs ${
+              editingTpl && (editingTpl.id === p.id || editingTpl.label === p.label)
+                ? "border-brand ring-1 ring-brand/30"
+                : "border-slate-200 dark:border-slate-700"
+            }`}
           >
             <button
               type="button"
@@ -548,6 +763,18 @@ export function CheckpointPresetBar({ onApply, currentCheckpoints = [], testidPr
             >
               <span>{p.label}</span>
               <span className="text-[10px] text-sub font-normal">+{p.items.length} {tr("cp_stage_unit", "tahap")}</span>
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                openEditorForTemplate(p);
+              }}
+              title={tr("cp_edit_tpl_title", "Ubah template")}
+              className="px-1 text-sub hover:text-brand transition-colors cursor-pointer"
+              data-testid={`edit-template-${p.id || p.label}`}
+            >
+              <Pencil size={11} />
             </button>
             <button
               type="button"
@@ -568,10 +795,14 @@ export function CheckpointPresetBar({ onApply, currentCheckpoints = [], testidPr
       {creating && (
         <div className="mt-3 space-y-2.5 rounded-xl border bg-surface p-3 shadow-xs" data-testid="checkpoint-template-builder">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-ink">{tr("cp_tpl_builder_title", "Buat Template Checkpoint Sendiri")}</span>
+            <span className="text-xs font-bold text-ink">
+              {editingTpl
+                ? tr("cp_tpl_editor_title", "Ubah Template Checkpoint")
+                : tr("cp_tpl_builder_title", "Buat Template Checkpoint Sendiri")}
+            </span>
             <button
               type="button"
-              onClick={() => setCreating(false)}
+              onClick={closeBuilder}
               className="text-sub hover:text-ink p-0.5 cursor-pointer"
             >
               <X size={13} />
@@ -641,7 +872,7 @@ export function CheckpointPresetBar({ onApply, currentCheckpoints = [], testidPr
           <div className="flex items-center justify-end gap-2 pt-1">
             <button
               type="button"
-              onClick={() => setCreating(false)}
+              onClick={closeBuilder}
               className="h-8 rounded-lg border px-3 text-xs font-semibold text-sub hover:bg-surface2 cursor-pointer"
             >
               {tr("cp_tpl_cancel_btn", "Batal")}
@@ -652,7 +883,9 @@ export function CheckpointPresetBar({ onApply, currentCheckpoints = [], testidPr
               className="btn-accent h-8 rounded-lg px-3.5 text-xs font-semibold cursor-pointer"
               data-testid="template-save-btn"
             >
-              {tr("cp_tpl_save_btn", "Simpan Template")}
+              {editingTpl
+                ? tr("cp_tpl_update_btn", "Simpan Perubahan")
+                : tr("cp_tpl_save_btn", "Simpan Template")}
             </button>
           </div>
         </div>

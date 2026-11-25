@@ -17,6 +17,8 @@ const MIRROR_KEY = 'latest_workspace_mirror';
 const RICHEST_MIRROR_KEY = 'richest_workspace_mirror';
 const VAULT_STORAGE_KEY = 'circle_account_vault_v1';
 const DELETED_TASK_IDS_KEY = 'circle_deleted_task_ids_v1';
+const DELETED_CP_TEMPLATE_IDS_KEY = 'circle_deleted_cp_template_ids_v1';
+const DELETED_ENTITY_IDS_KEY = 'circle_deleted_entity_ids_v1';
 
 export interface PersistentMirrorEnvelope {
   snapshot: any;
@@ -211,6 +213,257 @@ export function recordDeletedTaskIds(ids: string[] = []): void {
   })();
 }
 
+export function getLocalDeletedCheckpointTemplateIds(): string[] {
+  try {
+    const raw = localStorage.getItem(DELETED_CP_TEMPLATE_IDS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.map((id) => String(id || '').trim()).filter(Boolean)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export function recordDeletedCheckpointTemplateIds(ids: string[] = []): void {
+  const cleanIds = (Array.isArray(ids) ? ids : [ids])
+    .map((x) => String(x || '').trim())
+    .filter(Boolean);
+  if (cleanIds.length === 0) return;
+
+  const existing = getLocalDeletedCheckpointTemplateIds();
+  const merged = Array.from(new Set([...existing, ...cleanIds]));
+  const delSet = new Set(merged);
+
+  try {
+    localStorage.setItem(DELETED_CP_TEMPLATE_IDS_KEY, JSON.stringify(merged));
+    const raw = localStorage.getItem('circle_checkpoint_templates');
+    if (raw) {
+      const list = JSON.parse(raw);
+      if (Array.isArray(list)) {
+        const next = list.filter((t) => !delSet.has(getItemId(t)));
+        if (next.length !== list.length) {
+          localStorage.setItem('circle_checkpoint_templates', JSON.stringify(next));
+        }
+      }
+    }
+  } catch {}
+
+  if (cachedBootHarvest && Array.isArray(cachedBootHarvest.templates)) {
+    cachedBootHarvest.templates = cachedBootHarvest.templates.filter(
+      (t) => !delSet.has(getItemId(t))
+    );
+  }
+
+  void (async () => {
+    try {
+      const db = await openMirrorDb();
+      if (!db) return;
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      const store = tx.objectStore(IDB_STORE);
+      for (const key of [MIRROR_KEY, RICHEST_MIRROR_KEY]) {
+        const req = store.get(key);
+        req.onsuccess = () => {
+          const env = req.result as PersistentMirrorEnvelope | undefined;
+          if (!env?.snapshot) return;
+          const root =
+            env.snapshot.data && typeof env.snapshot.data === 'object'
+              ? env.snapshot.data
+              : env.snapshot;
+          const prevDel = [
+            ...(Array.isArray(root.deleted_checkpoint_template_ids)
+              ? root.deleted_checkpoint_template_ids
+              : []),
+            ...(Array.isArray(root.workspace?.deleted_checkpoint_template_ids)
+              ? root.workspace.deleted_checkpoint_template_ids
+              : []),
+          ];
+          const nextDel = Array.from(new Set([...prevDel, ...merged]));
+          root.deleted_checkpoint_template_ids = nextDel;
+          if (root.workspace && typeof root.workspace === 'object') {
+            root.workspace.deleted_checkpoint_template_ids = nextDel;
+            if (Array.isArray(root.workspace.checkpoint_templates)) {
+              root.workspace.checkpoint_templates = root.workspace.checkpoint_templates.filter(
+                (t: any) => !delSet.has(getItemId(t))
+              );
+            }
+          }
+          store.put(env, key);
+        };
+      }
+    } catch {}
+  })();
+}
+
+export function getLocalDeletedEntityIds(): string[] {
+  try {
+    const raw = localStorage.getItem(DELETED_ENTITY_IDS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.map((id) => String(id || '').trim()).filter(Boolean)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export function recordDeletedEntityIds(ids: string[] = []): void {
+  const cleanIds = (Array.isArray(ids) ? ids : [ids])
+    .map((x) => String(x || '').trim())
+    .filter(Boolean);
+  if (cleanIds.length === 0) return;
+
+  const existing = getLocalDeletedEntityIds();
+  const merged = Array.from(new Set([...existing, ...cleanIds]));
+  const delSet = new Set(merged);
+
+  const isDeletedObj = (item: any, altIdKey?: string): boolean => {
+    const id = getItemId(item, altIdKey);
+    if (id && delSet.has(id)) return true;
+    if (item?.gcal_id && delSet.has(String(item.gcal_id).trim())) return true;
+    return false;
+  };
+
+  try {
+    localStorage.setItem(DELETED_ENTITY_IDS_KEY, JSON.stringify(merged));
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key) continue;
+      if (
+        key.startsWith('circle_notes_cache_') ||
+        key.startsWith('circle_sticky_notes_') ||
+        key === 'circle_boards_cache' ||
+        key.startsWith('circle_meetings_cache') ||
+        key.startsWith('circle_cache_meetings') ||
+        key.startsWith('circle_cache_posts') ||
+        key.startsWith('circle_user_feed_history_') ||
+        key.startsWith('circle_msgs_cache_') ||
+        key.startsWith('circle_convs_cache') ||
+        key.startsWith('circle_groups_cache') ||
+        key === 'circle_drive_shortcuts_cache' ||
+        key === 'circle_projects_cache' ||
+        key === 'circle_org_units_cache'
+      ) {
+        const raw = localStorage.getItem(key);
+        if (!raw) continue;
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          const next = parsed.filter(
+            (item) =>
+              !isDeletedObj(item, 'note_id') &&
+              !isDeletedObj(item, 'board_id') &&
+              !isDeletedObj(item, 'post_id') &&
+              !isDeletedObj(item, 'task_id')
+          );
+          if (next.length !== parsed.length) {
+            localStorage.setItem(key, JSON.stringify(next));
+          }
+        } else if (parsed && Array.isArray(parsed.posts)) {
+          const nextPosts = parsed.posts.filter((p: any) => !isDeletedObj(p, 'post_id'));
+          if (nextPosts.length !== parsed.posts.length) {
+            localStorage.setItem(key, JSON.stringify({ ...parsed, posts: nextPosts }));
+          }
+        }
+      }
+    }
+  } catch {}
+
+  if (cachedBootHarvest) {
+    cachedBootHarvest.notes = (cachedBootHarvest.notes || []).filter(
+      (n) => !isDeletedObj(n, 'note_id')
+    );
+    cachedBootHarvest.boards = (cachedBootHarvest.boards || []).filter(
+      (b) => !isDeletedObj(b, 'board_id')
+    );
+    cachedBootHarvest.meetings = (cachedBootHarvest.meetings || []).filter(
+      (m) => !isDeletedObj(m)
+    );
+    cachedBootHarvest.posts = (cachedBootHarvest.posts || []).filter(
+      (p) => !isDeletedObj(p, 'post_id')
+    );
+    cachedBootHarvest.messages = (cachedBootHarvest.messages || []).filter(
+      (m) => !isDeletedObj(m)
+    );
+    cachedBootHarvest.conversations = (cachedBootHarvest.conversations || []).filter(
+      (c) => !isDeletedObj(c)
+    );
+    cachedBootHarvest.groups = (cachedBootHarvest.groups || []).filter(
+      (g) => !isDeletedObj(g)
+    );
+    cachedBootHarvest.projects = (cachedBootHarvest.projects || []).filter(
+      (p) => !isDeletedObj(p)
+    );
+    cachedBootHarvest.org_units = (cachedBootHarvest.org_units || []).filter(
+      (o) => !isDeletedObj(o)
+    );
+    cachedBootHarvest.drive_shortcuts = (cachedBootHarvest.drive_shortcuts || []).filter(
+      (d) => !isDeletedObj(d)
+    );
+  }
+
+  void (async () => {
+    try {
+      const db = await openMirrorDb();
+      if (!db) return;
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      const store = tx.objectStore(IDB_STORE);
+      for (const key of [MIRROR_KEY, RICHEST_MIRROR_KEY]) {
+        const req = store.get(key);
+        req.onsuccess = () => {
+          const env = req.result as PersistentMirrorEnvelope | undefined;
+          if (!env?.snapshot) return;
+          const root =
+            env.snapshot.data && typeof env.snapshot.data === 'object'
+              ? env.snapshot.data
+              : env.snapshot;
+          const prevDel = Array.isArray(root.deleted_entity_ids) ? root.deleted_entity_ids : [];
+          root.deleted_entity_ids = Array.from(new Set([...prevDel, ...merged]));
+          const prevNoteDel = Array.isArray(root.deleted_note_ids) ? root.deleted_note_ids : [];
+          root.deleted_note_ids = Array.from(new Set([...prevNoteDel, ...merged]));
+          if (Array.isArray(root.circle_notes)) {
+            root.circle_notes = root.circle_notes.filter((n: any) => !isDeletedObj(n, 'note_id'));
+          }
+          if (Array.isArray(root.boards)) {
+            root.boards = root.boards.filter((b: any) => !isDeletedObj(b, 'board_id'));
+          }
+          if (Array.isArray(root.meetings)) {
+            root.meetings = root.meetings.filter((m: any) => !isDeletedObj(m));
+          }
+          if (Array.isArray(root.posts)) {
+            root.posts = root.posts.filter((p: any) => !isDeletedObj(p, 'post_id'));
+          }
+          if (Array.isArray(root.messages)) {
+            root.messages = root.messages.filter((m: any) => !isDeletedObj(m));
+          }
+          if (Array.isArray(root.conversations)) {
+            root.conversations = root.conversations.filter((c: any) => !isDeletedObj(c));
+          }
+          if (Array.isArray(root.groups)) {
+            root.groups = root.groups.filter((g: any) => !isDeletedObj(g));
+          }
+          if (Array.isArray(root.projects)) {
+            root.projects = root.projects.filter((p: any) => !isDeletedObj(p));
+          }
+          if (Array.isArray(root.org_units)) {
+            root.org_units = root.org_units.filter((o: any) => !isDeletedObj(o));
+          }
+          if (Array.isArray(root.drive_shortcuts)) {
+            root.drive_shortcuts = root.drive_shortcuts.filter((d: any) => !isDeletedObj(d));
+          }
+          if (root.workspace && Array.isArray(root.workspace.instagram_accounts)) {
+            root.workspace.instagram_accounts = root.workspace.instagram_accounts.filter(
+              (acc: any) => !isDeletedObj(acc)
+            );
+          }
+          store.put(env, key);
+        };
+      }
+    } catch {}
+  })();
+}
+
 export function upsertAccountInVault(account: any): void {
   if (!account || typeof account !== 'object' || !account.email || !account.user_id) return;
   if (
@@ -353,26 +606,40 @@ function harvestAllLocalStorageCaches(): LocalCacheHarvest {
   );
 
   const localDelTaskSet = new Set(getLocalDeletedTaskIds());
+  const localDelEntitySet = new Set(getLocalDeletedEntityIds());
+  const isEntityDel = (item: any, altKey?: string) => {
+    const id = getItemId(item, altKey);
+    if (id && (localDelEntitySet.has(id) || localDelTaskSet.has(id))) return true;
+    if (item?.gcal_id && localDelEntitySet.has(String(item.gcal_id).trim())) return true;
+    return false;
+  };
 
   harvest.tasks = mergeItemsById(
     readJsonArray('circle_tasks_cache'),
     readJsonArray('circle_cache_tasks'),
     'task_id'
-  ).filter((t) => !localDelTaskSet.has(getItemId(t, 'task_id')));
+  ).filter((t) => !isEntityDel(t, 'task_id'));
 
-  harvest.boards = readJsonArray('circle_boards_cache').filter((b) => b && b.id !== 'brd_1');
-  harvest.templates = readJsonArray('circle_checkpoint_templates');
+  const localDelTplSet = new Set(getLocalDeletedCheckpointTemplateIds());
+  harvest.boards = readJsonArray('circle_boards_cache').filter(
+    (b) => b && b.id !== 'brd_1' && !isEntityDel(b, 'board_id')
+  );
+  harvest.templates = readJsonArray('circle_checkpoint_templates').filter(
+    (t) => !localDelTplSet.has(getItemId(t)) && !isEntityDel(t)
+  );
 
   harvest.meetings = mergeItemsById(
     readJsonArray('circle_meetings_cache'),
     readJsonArray('circle_cache_meetings')
-  );
-  harvest.projects = readJsonArray('circle_projects_cache');
-  harvest.org_units = readJsonArray('circle_org_units_cache');
+  ).filter((m) => !isEntityDel(m));
+  harvest.projects = readJsonArray('circle_projects_cache').filter((p) => !isEntityDel(p));
+  harvest.org_units = readJsonArray('circle_org_units_cache').filter((o) => !isEntityDel(o));
   harvest.divisions = readJsonArray('circle_admin_divisions').filter(
     (d) => typeof d === 'string' && d.trim()
   );
-  harvest.drive_shortcuts = readJsonArray('circle_drive_shortcuts_cache');
+  harvest.drive_shortcuts = readJsonArray('circle_drive_shortcuts_cache').filter(
+    (d) => !isEntityDel(d)
+  );
 
   for (const pk of ['circle_cache_posts_feed', 'circle_cache_posts']) {
     try {
@@ -385,7 +652,9 @@ function harvestAllLocalStorageCaches(): LocalCacheHarvest {
           ? parsed.posts
           : [];
       if (list.length > 0) {
-        harvest.posts = mergeItemsById(harvest.posts, list, 'post_id');
+        harvest.posts = mergeItemsById(harvest.posts, list, 'post_id').filter(
+          (p) => !isEntityDel(p, 'post_id')
+        );
       }
     } catch {}
   }
@@ -396,7 +665,7 @@ function harvestAllLocalStorageCaches(): LocalCacheHarvest {
       if (!key) continue;
 
       if (key.startsWith('circle_msgs_cache_')) {
-        const msgs = readJsonArray(key);
+        const msgs = readJsonArray(key).filter((m) => !isEntityDel(m));
         if (msgs.length > 0) {
           harvest.messages = mergeItemsById(harvest.messages, msgs);
           const extractedTasks: any[] = [];
@@ -418,17 +687,17 @@ function harvestAllLocalStorageCaches(): LocalCacheHarvest {
           }
           if (extractedTasks.length > 0) {
             harvest.tasks = mergeItemsById(harvest.tasks, extractedTasks, 'task_id').filter(
-              (t) => !localDelTaskSet.has(getItemId(t, 'task_id'))
+              (t) => !isEntityDel(t, 'task_id')
             );
           }
         }
       } else if (key === 'circle_convs_cache' || key.startsWith('circle_convs_cache_')) {
-        const convs = readJsonArray(key);
+        const convs = readJsonArray(key).filter((c) => !isEntityDel(c));
         if (convs.length > 0) {
           harvest.conversations = mergeItemsById(harvest.conversations, convs);
         }
       } else if (key === 'circle_groups_cache' || key.startsWith('circle_groups_cache_')) {
-        const grps = readJsonArray(key);
+        const grps = readJsonArray(key).filter((g) => !isEntityDel(g));
         if (grps.length > 0) {
           harvest.groups = mergeItemsById(harvest.groups, grps);
         }
@@ -436,14 +705,22 @@ function harvestAllLocalStorageCaches(): LocalCacheHarvest {
         key.startsWith('circle_sticky_notes_') ||
         key.startsWith('circle_notes_cache_')
       ) {
-        const notes = readJsonArray(key);
+        const notes = readJsonArray(key).filter((n) => !isEntityDel(n, 'note_id'));
         if (notes.length > 0) {
           harvest.notes = mergeItemsById(harvest.notes, notes, 'note_id');
         }
       } else if (key.startsWith('circle_user_feed_history_')) {
-        const posts = readJsonArray(key);
+        const posts = readJsonArray(key).filter((p) => !isEntityDel(p, 'post_id'));
         if (posts.length > 0) {
           harvest.posts = mergeItemsById(harvest.posts, posts, 'post_id');
+        }
+      } else if (
+        key.startsWith('circle_meetings_cache_') ||
+        key.startsWith('circle_cache_meetings_')
+      ) {
+        const mtgs = readJsonArray(key).filter((m) => !isEntityDel(m));
+        if (mtgs.length > 0) {
+          harvest.meetings = mergeItemsById(harvest.meetings, mtgs);
         }
       }
     }
@@ -491,7 +768,36 @@ function mergeHarvestIntoSnapshotPayload(basePayload: any, harvest: LocalCacheHa
   root.deleted_task_ids = Array.from(
     new Set([...existingDelTaskIds, ...localDelTaskIds].map((id: any) => String(id || '').trim()).filter(Boolean))
   );
-  const delTaskSet = new Set<string>(root.deleted_task_ids);
+
+  const localDelEntityIds = getLocalDeletedEntityIds();
+  const existingDelEntityIds = [
+    ...(Array.isArray(root.deleted_entity_ids) ? root.deleted_entity_ids : []),
+    ...(Array.isArray(root.deleted_note_ids) ? root.deleted_note_ids : []),
+    ...(Array.isArray(root.deleted_meeting_ids) ? root.deleted_meeting_ids : []),
+    ...(Array.isArray(root.deleted_gcal_ids) ? root.deleted_gcal_ids : []),
+  ];
+  root.deleted_entity_ids = Array.from(
+    new Set(
+      [...existingDelEntityIds, ...localDelEntityIds]
+        .map((id: any) => String(id || '').trim())
+        .filter(Boolean)
+    )
+  );
+  root.deleted_note_ids = Array.from(
+    new Set(
+      [...(Array.isArray(root.deleted_note_ids) ? root.deleted_note_ids : []), ...localDelEntityIds]
+        .map((id: any) => String(id || '').trim())
+        .filter(Boolean)
+    )
+  );
+  const delTaskSet = new Set<string>([...root.deleted_task_ids, ...root.deleted_entity_ids]);
+  const delEntitySet = new Set<string>(root.deleted_entity_ids);
+  const isDel = (item: any, altKey?: string) => {
+    const id = getItemId(item, altKey);
+    if (id && delEntitySet.has(id)) return true;
+    if (item?.gcal_id && delEntitySet.has(String(item.gcal_id).trim())) return true;
+    return false;
+  };
 
   if (harvest.users.length > 0) {
     root.users = mergeItemsById(root.users || [], harvest.users, 'user_id');
@@ -501,43 +807,88 @@ function mergeHarvestIntoSnapshotPayload(basePayload: any, harvest: LocalCacheHa
       (t: any) => !delTaskSet.has(getItemId(t, 'task_id'))
     );
   }
-  if (harvest.boards.length > 0) {
-    root.boards = mergeItemsById(root.boards || [], harvest.boards, 'board_id');
+  if (harvest.boards.length > 0 || Array.isArray(root.boards)) {
+    root.boards = mergeItemsById(root.boards || [], harvest.boards, 'board_id').filter(
+      (b: any) => !isDel(b, 'board_id')
+    );
   }
-  if (harvest.messages.length > 0) {
-    root.messages = mergeItemsById(root.messages || [], harvest.messages);
+  if (harvest.messages.length > 0 || Array.isArray(root.messages)) {
+    root.messages = mergeItemsById(root.messages || [], harvest.messages).filter(
+      (m: any) => !isDel(m)
+    );
   }
-  if (harvest.conversations.length > 0) {
-    root.conversations = mergeItemsById(root.conversations || [], harvest.conversations);
+  if (harvest.conversations.length > 0 || Array.isArray(root.conversations)) {
+    root.conversations = mergeItemsById(root.conversations || [], harvest.conversations).filter(
+      (c: any) => !isDel(c)
+    );
   }
-  if (harvest.groups.length > 0) {
-    root.groups = mergeItemsById(root.groups || [], harvest.groups);
+  if (harvest.groups.length > 0 || Array.isArray(root.groups)) {
+    root.groups = mergeItemsById(root.groups || [], harvest.groups).filter(
+      (g: any) => !isDel(g)
+    );
   }
-  if (harvest.meetings.length > 0) {
-    root.meetings = mergeItemsById(root.meetings || [], harvest.meetings);
+  if (harvest.meetings.length > 0 || Array.isArray(root.meetings)) {
+    root.meetings = mergeItemsById(root.meetings || [], harvest.meetings).filter(
+      (m: any) => !isDel(m)
+    );
   }
-  if (harvest.projects.length > 0) {
-    root.projects = mergeItemsById(root.projects || [], harvest.projects);
+  if (harvest.projects.length > 0 || Array.isArray(root.projects)) {
+    root.projects = mergeItemsById(root.projects || [], harvest.projects).filter(
+      (p: any) => !isDel(p)
+    );
   }
-  if (harvest.notes.length > 0) {
-    root.circle_notes = mergeItemsById(root.circle_notes || [], harvest.notes, 'note_id');
+  if (harvest.notes.length > 0 || Array.isArray(root.circle_notes)) {
+    root.circle_notes = mergeItemsById(root.circle_notes || [], harvest.notes, 'note_id').filter(
+      (n: any) => !isDel(n, 'note_id')
+    );
   }
-  if (harvest.posts.length > 0) {
-    root.posts = mergeItemsById(root.posts || [], harvest.posts, 'post_id');
+  if (harvest.posts.length > 0 || Array.isArray(root.posts)) {
+    root.posts = mergeItemsById(root.posts || [], harvest.posts, 'post_id').filter(
+      (p: any) => !isDel(p, 'post_id')
+    );
   }
-  if (harvest.org_units.length > 0) {
-    root.org_units = mergeItemsById(root.org_units || [], harvest.org_units);
+  if (harvest.org_units.length > 0 || Array.isArray(root.org_units)) {
+    root.org_units = mergeItemsById(root.org_units || [], harvest.org_units).filter(
+      (o: any) => !isDel(o)
+    );
   }
-  if (harvest.drive_shortcuts.length > 0) {
-    root.drive_shortcuts = mergeItemsById(root.drive_shortcuts || [], harvest.drive_shortcuts);
+  if (harvest.drive_shortcuts.length > 0 || Array.isArray(root.drive_shortcuts)) {
+    root.drive_shortcuts = mergeItemsById(root.drive_shortcuts || [], harvest.drive_shortcuts).filter(
+      (d: any) => !isDel(d)
+    );
   }
-  if (harvest.templates.length > 0 || harvest.divisions.length > 0) {
+  const localDelTplIds = getLocalDeletedCheckpointTemplateIds();
+  const existingDelTplIds = [
+    ...(Array.isArray(root.deleted_checkpoint_template_ids)
+      ? root.deleted_checkpoint_template_ids
+      : []),
+    ...(Array.isArray(root.workspace?.deleted_checkpoint_template_ids)
+      ? root.workspace.deleted_checkpoint_template_ids
+      : []),
+  ];
+  const mergedDelTplIds = Array.from(
+    new Set(
+      [...existingDelTplIds, ...localDelTplIds]
+        .map((id: any) => String(id || '').trim())
+        .filter(Boolean)
+    )
+  );
+  root.deleted_checkpoint_template_ids = mergedDelTplIds;
+  const delTplSet = new Set<string>(mergedDelTplIds);
+
+  if (
+    harvest.templates.length > 0 ||
+    harvest.divisions.length > 0 ||
+    mergedDelTplIds.length > 0 ||
+    Array.isArray(root.workspace?.checkpoint_templates)
+  ) {
     root.workspace = root.workspace && typeof root.workspace === 'object' ? root.workspace : {};
-    if (harvest.templates.length > 0) {
+    root.workspace.deleted_checkpoint_template_ids = mergedDelTplIds;
+    if (harvest.templates.length > 0 || Array.isArray(root.workspace.checkpoint_templates)) {
       root.workspace.checkpoint_templates = mergeItemsById(
         root.workspace.checkpoint_templates || [],
         harvest.templates
-      );
+      ).filter((t: any) => !delTplSet.has(getItemId(t)));
     }
     if (harvest.divisions.length > 0) {
       const existingDivs = Array.isArray(root.workspace.divisions)
@@ -557,9 +908,49 @@ export async function saveMirrorSnapshot(envelope: PersistentMirrorEnvelope): Pr
     const delEmails = envelope.snapshot?.data?.deleted_user_emails || [];
     const delTaskIds =
       envelope.snapshot?.data?.deleted_task_ids || envelope.snapshot?.deleted_task_ids || [];
+    const delTplIds = [
+      ...(Array.isArray(envelope.snapshot?.data?.deleted_checkpoint_template_ids)
+        ? envelope.snapshot.data.deleted_checkpoint_template_ids
+        : []),
+      ...(Array.isArray(envelope.snapshot?.data?.workspace?.deleted_checkpoint_template_ids)
+        ? envelope.snapshot.data.workspace.deleted_checkpoint_template_ids
+        : []),
+      ...(Array.isArray(envelope.snapshot?.deleted_checkpoint_template_ids)
+        ? envelope.snapshot.deleted_checkpoint_template_ids
+        : []),
+      ...(Array.isArray(envelope.snapshot?.workspace?.deleted_checkpoint_template_ids)
+        ? envelope.snapshot.workspace.deleted_checkpoint_template_ids
+        : []),
+    ];
+    const delEntityIds = [
+      ...(Array.isArray(envelope.snapshot?.data?.deleted_entity_ids)
+        ? envelope.snapshot.data.deleted_entity_ids
+        : []),
+      ...(Array.isArray(envelope.snapshot?.data?.deleted_note_ids)
+        ? envelope.snapshot.data.deleted_note_ids
+        : []),
+      ...(Array.isArray(envelope.snapshot?.data?.deleted_meeting_ids)
+        ? envelope.snapshot.data.deleted_meeting_ids
+        : []),
+      ...(Array.isArray(envelope.snapshot?.data?.deleted_gcal_ids)
+        ? envelope.snapshot.data.deleted_gcal_ids
+        : []),
+      ...(Array.isArray(envelope.snapshot?.deleted_entity_ids)
+        ? envelope.snapshot.deleted_entity_ids
+        : []),
+      ...(Array.isArray(envelope.snapshot?.deleted_note_ids)
+        ? envelope.snapshot.deleted_note_ids
+        : []),
+    ];
     pruneDeletedAccountsFromVault(delIds, delEmails);
     if (Array.isArray(delTaskIds) && delTaskIds.length > 0) {
       recordDeletedTaskIds(delTaskIds);
+    }
+    if (delTplIds.length > 0) {
+      recordDeletedCheckpointTemplateIds(delTplIds);
+    }
+    if (delEntityIds.length > 0) {
+      recordDeletedEntityIds(delEntityIds);
     }
     if (Array.isArray(snapUsers)) {
       upsertAccountsListInVault(snapUsers);
@@ -619,6 +1010,84 @@ export async function saveMirrorSnapshot(envelope: PersistentMirrorEnvelope): Pr
     mergedData.tasks = mergedData.tasks.filter((t: any) => !delSet.has(getItemId(t, 'task_id')));
   }
 
+  const allDeletedEntityIds = Array.from(
+    new Set([
+      ...(Array.isArray(mergedData.deleted_entity_ids) ? mergedData.deleted_entity_ids : []),
+      ...(Array.isArray(mergedData.deleted_note_ids) ? mergedData.deleted_note_ids : []),
+      ...(Array.isArray(mergedData.deleted_meeting_ids) ? mergedData.deleted_meeting_ids : []),
+      ...(Array.isArray(mergedData.deleted_gcal_ids) ? mergedData.deleted_gcal_ids : []),
+      ...getLocalDeletedEntityIds(),
+    ])
+  );
+  mergedData.deleted_entity_ids = allDeletedEntityIds;
+  mergedData.deleted_note_ids = Array.from(
+    new Set([
+      ...(Array.isArray(mergedData.deleted_note_ids) ? mergedData.deleted_note_ids : []),
+      ...getLocalDeletedEntityIds(),
+    ])
+  );
+  if (allDeletedEntityIds.length > 0) {
+    const delEntitySet = new Set(allDeletedEntityIds);
+    const isDel = (item: any, altKey?: string) => {
+      const id = getItemId(item, altKey);
+      if (id && delEntitySet.has(id)) return true;
+      if (item?.gcal_id && delEntitySet.has(String(item.gcal_id).trim())) return true;
+      return false;
+    };
+    if (Array.isArray(mergedData.circle_notes)) {
+      mergedData.circle_notes = mergedData.circle_notes.filter((n: any) => !isDel(n, 'note_id'));
+    }
+    if (Array.isArray(mergedData.boards)) {
+      mergedData.boards = mergedData.boards.filter((b: any) => !isDel(b, 'board_id'));
+    }
+    if (Array.isArray(mergedData.meetings)) {
+      mergedData.meetings = mergedData.meetings.filter((m: any) => !isDel(m));
+    }
+    if (Array.isArray(mergedData.posts)) {
+      mergedData.posts = mergedData.posts.filter((p: any) => !isDel(p, 'post_id'));
+    }
+    if (Array.isArray(mergedData.messages)) {
+      mergedData.messages = mergedData.messages.filter((m: any) => !isDel(m));
+    }
+    if (Array.isArray(mergedData.conversations)) {
+      mergedData.conversations = mergedData.conversations.filter((c: any) => !isDel(c));
+    }
+    if (Array.isArray(mergedData.groups)) {
+      mergedData.groups = mergedData.groups.filter((g: any) => !isDel(g));
+    }
+    if (Array.isArray(mergedData.projects)) {
+      mergedData.projects = mergedData.projects.filter((p: any) => !isDel(p));
+    }
+    if (Array.isArray(mergedData.org_units)) {
+      mergedData.org_units = mergedData.org_units.filter((o: any) => !isDel(o));
+    }
+    if (Array.isArray(mergedData.drive_shortcuts)) {
+      mergedData.drive_shortcuts = mergedData.drive_shortcuts.filter((d: any) => !isDel(d));
+    }
+  }
+
+  const allDeletedTplIds = Array.from(
+    new Set([
+      ...(Array.isArray(mergedData.deleted_checkpoint_template_ids)
+        ? mergedData.deleted_checkpoint_template_ids
+        : []),
+      ...(Array.isArray(mergedData.workspace?.deleted_checkpoint_template_ids)
+        ? mergedData.workspace.deleted_checkpoint_template_ids
+        : []),
+      ...getLocalDeletedCheckpointTemplateIds(),
+    ])
+  );
+  mergedData.deleted_checkpoint_template_ids = allDeletedTplIds;
+  if (mergedData.workspace && typeof mergedData.workspace === 'object') {
+    mergedData.workspace.deleted_checkpoint_template_ids = allDeletedTplIds;
+    if (Array.isArray(mergedData.workspace.checkpoint_templates) && allDeletedTplIds.length > 0) {
+      const delTplSet = new Set(allDeletedTplIds);
+      mergedData.workspace.checkpoint_templates = mergedData.workspace.checkpoint_templates.filter(
+        (t: any) => !delTplSet.has(getItemId(t))
+      );
+    }
+  }
+
   const finalEnvelope: PersistentMirrorEnvelope = {
     ...envelope,
     snapshot: mergedSnapshot,
@@ -631,7 +1100,8 @@ export async function saveMirrorSnapshot(envelope: PersistentMirrorEnvelope): Pr
   const shouldUpdateRichest =
     !existingPair.richest ||
     mergedTasksCount >= richestTasksCount ||
-    allDeletedTaskIds.length > 0;
+    allDeletedTaskIds.length > 0 ||
+    allDeletedEntityIds.length > 0;
 
   await new Promise<void>((resolve) => {
     try {
@@ -907,6 +1377,38 @@ export async function attemptAutoHydrateServer(api: any): Promise<boolean> {
           .filter(Boolean)
       );
 
+      const deletedTplIdsList = Array.isArray(status?.deleted_checkpoint_template_ids)
+        ? status.deleted_checkpoint_template_ids
+        : [];
+      if (deletedTplIdsList.length > 0) {
+        recordDeletedCheckpointTemplateIds(deletedTplIdsList);
+      }
+      const deletedTplIds = new Set(
+        [...deletedTplIdsList, ...getLocalDeletedCheckpointTemplateIds()]
+          .map((id: string) => String(id || '').trim())
+          .filter(Boolean)
+      );
+
+      const deletedEntityIdsList = [
+        ...(Array.isArray(status?.deleted_entity_ids) ? status.deleted_entity_ids : []),
+        ...(Array.isArray(status?.deleted_note_ids) ? status.deleted_note_ids : []),
+        ...(Array.isArray(status?.deleted_meeting_ids) ? status.deleted_meeting_ids : []),
+      ];
+      if (deletedEntityIdsList.length > 0) {
+        recordDeletedEntityIds(deletedEntityIdsList);
+      }
+      const deletedEntityIds = new Set(
+        [...deletedEntityIdsList, ...getLocalDeletedEntityIds()]
+          .map((id: string) => String(id || '').trim())
+          .filter(Boolean)
+      );
+      const isEntityDel = (item: any, altKey?: string) => {
+        const id = getItemId(item, altKey);
+        if (id && deletedEntityIds.has(id)) return true;
+        if (item?.gcal_id && deletedEntityIds.has(String(item.gcal_id).trim())) return true;
+        return false;
+      };
+
       const deletedIds = new Set(deletedIdsList.map((id: string) => String(id || '').trim()));
       const deletedEmails = new Set(
         deletedEmailsList.map((e: string) => String(e || '').toLowerCase().trim())
@@ -925,28 +1427,46 @@ export async function attemptAutoHydrateServer(api: any): Promise<boolean> {
             !deletedEmails.has(String(u.email).toLowerCase().trim())
         ),
         tasks: mergeItemsById(bootHarvest.tasks, liveHarvest.tasks, 'task_id').filter(
-          (t) => !deletedTaskIds.has(getItemId(t, 'task_id'))
+          (t) => !deletedTaskIds.has(getItemId(t, 'task_id')) && !isEntityDel(t, 'task_id')
         ),
-        boards: mergeItemsById(bootHarvest.boards, liveHarvest.boards, 'board_id'),
-        templates: mergeItemsById(bootHarvest.templates, liveHarvest.templates),
-        messages: mergeItemsById(bootHarvest.messages, liveHarvest.messages),
+        boards: mergeItemsById(bootHarvest.boards, liveHarvest.boards, 'board_id').filter(
+          (b) => !isEntityDel(b, 'board_id')
+        ),
+        templates: mergeItemsById(bootHarvest.templates, liveHarvest.templates).filter(
+          (t) => !deletedTplIds.has(getItemId(t)) && !isEntityDel(t)
+        ),
+        messages: mergeItemsById(bootHarvest.messages, liveHarvest.messages).filter(
+          (m) => !isEntityDel(m)
+        ),
         conversations: mergeItemsById(
           bootHarvest.conversations,
           liveHarvest.conversations
+        ).filter((c) => !isEntityDel(c)),
+        groups: mergeItemsById(bootHarvest.groups, liveHarvest.groups).filter(
+          (g) => !isEntityDel(g)
         ),
-        groups: mergeItemsById(bootHarvest.groups, liveHarvest.groups),
-        meetings: mergeItemsById(bootHarvest.meetings, liveHarvest.meetings),
-        projects: mergeItemsById(bootHarvest.projects, liveHarvest.projects),
-        notes: mergeItemsById(bootHarvest.notes, liveHarvest.notes, 'note_id'),
-        posts: mergeItemsById(bootHarvest.posts, liveHarvest.posts, 'post_id'),
-        org_units: mergeItemsById(bootHarvest.org_units, liveHarvest.org_units),
+        meetings: mergeItemsById(bootHarvest.meetings, liveHarvest.meetings).filter(
+          (m) => !isEntityDel(m)
+        ),
+        projects: mergeItemsById(bootHarvest.projects, liveHarvest.projects).filter(
+          (p) => !isEntityDel(p)
+        ),
+        notes: mergeItemsById(bootHarvest.notes, liveHarvest.notes, 'note_id').filter(
+          (n) => !isEntityDel(n, 'note_id')
+        ),
+        posts: mergeItemsById(bootHarvest.posts, liveHarvest.posts, 'post_id').filter(
+          (p) => !isEntityDel(p, 'post_id')
+        ),
+        org_units: mergeItemsById(bootHarvest.org_units, liveHarvest.org_units).filter(
+          (o) => !isEntityDel(o)
+        ),
         divisions: Array.from(
           new Set([...bootHarvest.divisions, ...liveHarvest.divisions])
         ),
         drive_shortcuts: mergeItemsById(
           bootHarvest.drive_shortcuts,
           liveHarvest.drive_shortcuts
-        ),
+        ).filter((d) => !isEntityDel(d)),
       };
 
       const activeVaultAccounts = getKnownAccountsFromVault().filter(
@@ -967,17 +1487,31 @@ export async function attemptAutoHydrateServer(api: any): Promise<boolean> {
       const snapData = idbEnv?.snapshot?.data || idbEnv?.snapshot || {};
       const snapUsers = Array.isArray(snapData.users) ? snapData.users : [];
       const snapTasks = (Array.isArray(snapData.tasks) ? snapData.tasks : []).filter(
-        (t: any) => !deletedTaskIds.has(getItemId(t, 'task_id'))
+        (t: any) => !deletedTaskIds.has(getItemId(t, 'task_id')) && !isEntityDel(t, 'task_id')
       );
-      const snapBoards = Array.isArray(snapData.boards) ? snapData.boards : [];
-      const snapPosts = Array.isArray(snapData.posts) ? snapData.posts : [];
-      const snapNotes = Array.isArray(snapData.circle_notes) ? snapData.circle_notes : [];
-      const snapMessages = Array.isArray(snapData.messages) ? snapData.messages : [];
-      const snapMeetings = Array.isArray(snapData.meetings) ? snapData.meetings : [];
-      const snapProjects = Array.isArray(snapData.projects) ? snapData.projects : [];
-      const snapTemplates = Array.isArray(snapData.workspace?.checkpoint_templates)
-        ? snapData.workspace.checkpoint_templates
-        : [];
+      const snapBoards = (Array.isArray(snapData.boards) ? snapData.boards : []).filter(
+        (b: any) => !isEntityDel(b, 'board_id')
+      );
+      const snapPosts = (Array.isArray(snapData.posts) ? snapData.posts : []).filter(
+        (p: any) => !isEntityDel(p, 'post_id')
+      );
+      const snapNotes = (Array.isArray(snapData.circle_notes) ? snapData.circle_notes : []).filter(
+        (n: any) => !isEntityDel(n, 'note_id')
+      );
+      const snapMessages = (Array.isArray(snapData.messages) ? snapData.messages : []).filter(
+        (m: any) => !isEntityDel(m)
+      );
+      const snapMeetings = (Array.isArray(snapData.meetings) ? snapData.meetings : []).filter(
+        (m: any) => !isEntityDel(m)
+      );
+      const snapProjects = (Array.isArray(snapData.projects) ? snapData.projects : []).filter(
+        (p: any) => !isEntityDel(p)
+      );
+      const snapTemplates = (
+        Array.isArray(snapData.workspace?.checkpoint_templates)
+          ? snapData.workspace.checkpoint_templates
+          : []
+      ).filter((t: any) => !deletedTplIds.has(getItemId(t)) && !isEntityDel(t));
 
       const hasMissingSnapshotUser =
         snapUsers.length > 0 &&
@@ -1075,12 +1609,20 @@ export async function attemptAutoHydrateServer(api: any): Promise<boolean> {
 
       const cloudData = cloudSync?.payload?.data || cloudSync?.payload || {};
       const cloudTasks = (Array.isArray(cloudData.tasks) ? cloudData.tasks : []).filter(
-        (t: any) => !deletedTaskIds.has(getItemId(t, 'task_id'))
+        (t: any) => !deletedTaskIds.has(getItemId(t, 'task_id')) && !isEntityDel(t, 'task_id')
       );
-      const cloudBoards = Array.isArray(cloudData.boards) ? cloudData.boards : [];
-      const cloudPosts = Array.isArray(cloudData.posts) ? cloudData.posts : [];
-      const cloudNotes = Array.isArray(cloudData.circle_notes) ? cloudData.circle_notes : [];
-      const cloudMessages = Array.isArray(cloudData.messages) ? cloudData.messages : [];
+      const cloudBoards = (Array.isArray(cloudData.boards) ? cloudData.boards : []).filter(
+        (b: any) => !isEntityDel(b, 'board_id')
+      );
+      const cloudPosts = (Array.isArray(cloudData.posts) ? cloudData.posts : []).filter(
+        (p: any) => !isEntityDel(p, 'post_id')
+      );
+      const cloudNotes = (Array.isArray(cloudData.circle_notes) ? cloudData.circle_notes : []).filter(
+        (n: any) => !isEntityDel(n, 'note_id')
+      );
+      const cloudMessages = (Array.isArray(cloudData.messages) ? cloudData.messages : []).filter(
+        (m: any) => !isEntityDel(m)
+      );
       const hasMissingCloudData =
         cloudTasks.some((t: any) => {
           const id = getItemId(t, 'task_id');

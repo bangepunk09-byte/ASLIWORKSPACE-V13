@@ -5,6 +5,7 @@ import { useApp } from "../../context/AppContext";
 import { api, errMsg, uploadFile, fileUrl } from "../../lib/api";
 import { DEFAULT_COPYWRITING, LOGIN_COPYWRITING_SECTIONS, cleanCopywritingMap } from "../../lib/i18n";
 import { Avatar, LabelChip, ROLE_NAMES, rel, Logo, Spinner, renderFormattedCopy, RichCopyField } from "../../components/common";
+import { humanizeLogAction, resolveActorName } from "../../lib/logHumanizer";
 import { Switch } from "../../components/ui/switch";
 import { AppSelect, Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "../../components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../../components/ui/dialog";
@@ -129,20 +130,24 @@ export function AdminOverview() {
       </div>
 
       <Card title="Aktivitas Workspace Terbaru" testid="audit-log">
-        <ul className="max-h-96 space-y-2.5 overflow-y-auto pr-1">
-          {logs.map((l) => (
-            <li key={l.id} className="flex items-start gap-2.5 text-sm py-2 border-b border-slate-100 dark:border-slate-800/60 last:border-0">
-              <div className="mt-0.5 shrink-0">
-                <Avatar user={userMap[l.actor_id] || { name: l.actor_name }} size={24} showStatus={false} />
-              </div>
-              <div className="min-w-0 flex-1 leading-relaxed break-words">
-                <span className="font-bold text-ink mr-1.5">{l.actor_name}</span>
-                <span className="text-sub">{l.action}</span>
-              </div>
-              <span className="ml-auto text-[11px] text-sub shrink-0 whitespace-nowrap pt-0.5">{rel(l.created_at)}</span>
-            </li>
-          ))}
-          {!logs.length && <li className="text-sm text-sub">Belum ada aktivitas admin.</li>}
+        <ul className="max-h-96 space-y-2 overflow-y-auto px-2 py-1 -mx-1">
+          {logs.map((l) => {
+            const displayActor = resolveActorName(l.actor_id, l.actor_name, userMap);
+            const displayAction = humanizeLogAction(l.action, userMap);
+            return (
+              <li key={l.id} className="flex items-start gap-3 text-sm py-2.5 border-b border-slate-100 dark:border-slate-800/60 last:border-0">
+                <div className="mt-0.5 shrink-0 pl-0.5">
+                  <Avatar user={userMap[l.actor_id] || { name: displayActor }} size={24} showStatus={false} />
+                </div>
+                <div className="min-w-0 flex-1 leading-relaxed break-words">
+                  <span className="font-bold text-ink mr-1.5">{displayActor}</span>
+                  <span className="text-sub">{displayAction}</span>
+                </div>
+                <span className="ml-auto text-[11px] text-sub shrink-0 whitespace-nowrap pt-0.5 tabular-nums">{rel(l.created_at)}</span>
+              </li>
+            );
+          })}
+          {!logs.length && <li className="text-sm text-sub">Belum ada aktivitas workspace.</li>}
         </ul>
       </Card>
     </div>

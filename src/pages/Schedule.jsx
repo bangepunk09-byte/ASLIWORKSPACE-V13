@@ -11,6 +11,7 @@ import { DatePicker, TimePicker } from "../components/ui/date-picker";
 import { playSound } from "../lib/sound";
 import { initAuth, googleCalendarOAuthSignIn, getAccessToken, getConnectedCalendarEmail, clearCalendarAuth } from "../lib/auth";
 import { listEvents, createEvent, deleteEvent } from "../lib/calendar";
+import { recordDeletedEntityIds, syncWorkspaceMirror } from "../lib/persistentMirror";
 
 const DELETED_MEETING_IDS = new Set();
 const DELETED_MEETING_KEYS = new Set();
@@ -77,14 +78,32 @@ function filterAndDedupeMeetings(list = []) {
   return result;
 }
 
-let MEETINGS_CACHE = [];
-try {
-  const cached = localStorage.getItem("circle_meetings_cache");
-  if (cached) {
-    const parsed = JSON.parse(cached);
-    if (Array.isArray(parsed)) MEETINGS_CACHE = filterAndDedupeMeetings(parsed);
-  }
-} catch {}
+const MEETINGS_CACHE_BY_UID = new Map();
+function getMeetingsCacheForUid(uid) {
+  const key = `circle_meetings_cache_${uid || "default"}`;
+  if (MEETINGS_CACHE_BY_UID.has(key)) return MEETINGS_CACHE_BY_UID.get(key);
+  try {
+    const cached = localStorage.getItem(key);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed)) {
+        const clean = filterAndDedupeMeetings(parsed);
+        MEETINGS_CACHE_BY_UID.set(key, clean);
+        return clean;
+      }
+    }
+  } catch {}
+  return [];
+}
+
+function setMeetingsCacheForUid(uid, list) {
+  const key = `circle_meetings_cache_${uid || "default"}`;
+  MEETINGS_CACHE_BY_UID.set(key, list);
+  try {
+    localStorage.setItem(key, JSON.stringify(list));
+    localStorage.removeItem("circle_meetings_cache");
+  } catch {}
+}
 
 function normalizeGCalItems(items = []) {
   return items
@@ -160,12 +179,13 @@ function buildGoogleCalendarTemplateUrl(m, userMap = {}) {
 
 export default function Schedule() {
   const { me, users, userMap, t, subscribe } = useApp();
-  const [meetings, setMeetings] = useState(MEETINGS_CACHE);
+  const uid = me?.user_id || "default";
+  const [meetings, setMeetings] = useState(() => getMeetingsCacheForUid(uid));
   const [syncingGCal, setSyncingGCal] = useState(false);
   const [needsAuth, setNeedsAuth] = useState(true);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
-  const [connectedEmail, setConnectedEmail] = useState(() => getConnectedCalendarEmail());
+  const [connectedEmail, setConnectedEmail] = useState(() => getConnectedCalendarEmail(uid));
   const [selectedDate, setSelectedDate] = useState(() => format(new Date(), "yyyy-MM-dd"));
   const [createOpen, setCreateOpen] = useState(false);
   const [createConfirmOpen, setCreateConfirmOpen] = useState(false);
@@ -197,10 +217,9 @@ export default function Schedule() {
   const updateMeetingsList = useCallback((nextList) => {
     if (!Array.isArray(nextList)) return;
     const cleaned = filterAndDedupeMeetings(nextList);
-    MEETINGS_CACHE = cleaned;
+    setMeetingsCacheForUid(uid, cleaned);
     setMeetings(cleaned);
-    try { localStorage.setItem("circle_meetings_cache", JSON.stringify(cleaned)); } catch {}
-  }, []);
+  }, [uid]);
 
   const savedIcsUrlRef = useRef("");
   savedIcsUrlRef.current = savedIcsUrl;
@@ -229,8 +248,7 @@ export default function Schedule() {
             const normalized = normalizeGCalItems(gcalRes.items);
             setMeetings((prev) => {
               const merged = filterAndDedupeMeetings([...prev, ...normalized]);
-              MEETINGS_CACHE = merged;
-              try { localStorage.setItem("circle_meetings_cache", JSON.stringify(merged)); } catch {}
+              setMeetingsCacheForUid(uid, merged);
               return merged;
             });
 
@@ -238,7 +256,7 @@ export default function Schedule() {
             if (Array.isArray(syncedServerList)) {
               updateMeetingsList(syncedServerList);
             }
-            setConnectedEmail(getConnectedCalendarEmail());
+            setConnectedEmail(getConnectedCalendarEmail(uid));
             setNeedsAuth(false);
             setLastSyncedAt(new Date());
             syncedSuccess = true;
@@ -249,7 +267,7 @@ export default function Schedule() {
         } catch (innerErr) {
           console.warn("Direct GCal API error:", innerErr);
           if (!activeIcsUrl) {
-            clearCalendarAuth();
+            clearCalendarAuth(uid);
             setConnectedEmail("");
             setNeedsAuth(true);
             if (!silent) {
@@ -263,7 +281,9 @@ export default function Schedule() {
       // 2. Sync via saved iCal URL if configured
       if (activeIcsUrl) {
         const { data } = await api.post("/meetings/import-ics", { ics_url: activeIcsUrl });
-        if (Array.isArray(data?.meetings)) {
+        if (Array.isArray(data?.events)) {
+          updateMeetingsList(data.events);
+        } else if (Array.isArray(data?.meetings)) {
           updateMeetingsList(data.meetings);
         }
         setNeedsAuth(false);
@@ -281,9 +301,15 @@ export default function Schedule() {
     } finally {
       setSyncingGCal(false);
     }
-  }, [updateMeetingsList]);
+  }, [updateMeetingsList, uid]);
 
   const loadMeetings = useCallback(() => {
+    setMeetings(getMeetingsCacheForUid(uid));
+    setConnectedEmail(getConnectedCalendarEmail(uid));
+    savedIcsUrlRef.current = "";
+    setSavedIcsUrl("");
+    setIcsUrlInput("");
+
     api.get("/meetings").then((res) => {
       if (Array.isArray(res.data)) {
         updateMeetingsList(res.data);
@@ -299,22 +325,22 @@ export default function Schedule() {
         setNeedsAuth(false);
         syncFromGoogleCalendar({ silent: true, overrideIcsUrl: url });
       } else {
-        syncFromGoogleCalendar({ silent: true });
+        syncFromGoogleCalendar({ silent: true, overrideIcsUrl: "" });
       }
     }).catch(() => {
-      syncFromGoogleCalendar({ silent: true });
+      syncFromGoogleCalendar({ silent: true, overrideIcsUrl: "" });
     });
-  }, [updateMeetingsList, syncFromGoogleCalendar]);
+  }, [uid, updateMeetingsList, syncFromGoogleCalendar]);
 
   useEffect(() => {
     const unsub = initAuth(
       (u) => {
-        setConnectedEmail(u?.email || getConnectedCalendarEmail());
+        setConnectedEmail(u?.email || getConnectedCalendarEmail(uid));
         setNeedsAuth(false);
         syncFromGoogleCalendar({ silent: true });
       },
       () => {
-        setConnectedEmail(getConnectedCalendarEmail());
+        setConnectedEmail(getConnectedCalendarEmail(uid));
         // Keep connected if savedIcsUrl is present
         setNeedsAuth(savedIcsUrlRef.current ? false : true);
       }
@@ -323,13 +349,13 @@ export default function Schedule() {
     return () => {
       if (typeof unsub === "function") unsub();
     };
-  }, [loadMeetings, syncFromGoogleCalendar]);
+  }, [uid, loadMeetings, syncFromGoogleCalendar]);
 
   // Automatic periodic & window-focus Google Calendar sync so new calendar events appear automatically
   useEffect(() => {
     let lastFocusSyncAt = 0;
     const interval = setInterval(() => {
-      getAccessToken().then((tok) => {
+      getAccessToken(uid).then((tok) => {
         if (tok || savedIcsUrl) syncFromGoogleCalendar({ silent: true });
       });
     }, 45000);
@@ -337,7 +363,7 @@ export default function Schedule() {
       const now = Date.now();
       if (now - lastFocusSyncAt < 30000) return;
       lastFocusSyncAt = now;
-      getAccessToken().then((tok) => {
+      getAccessToken(uid).then((tok) => {
         if (tok || savedIcsUrl) syncFromGoogleCalendar({ silent: true });
       });
     };
@@ -346,19 +372,29 @@ export default function Schedule() {
       clearInterval(interval);
       window.removeEventListener("focus", onFocus);
     };
-  }, [syncFromGoogleCalendar, savedIcsUrl]);
+  }, [uid, syncFromGoogleCalendar, savedIcsUrl]);
 
   useEffect(() => {
     return subscribe?.((evt) => {
       if (evt.type === "meetings:synced" && Array.isArray(evt.data)) {
+        if (evt.user_id && evt.user_id !== uid) return;
         updateMeetingsList(evt.data);
       }
       if (evt.type === "meeting:new" && evt.data) {
         if (isMeetingDeleted(evt.data)) return;
+        const m = evt.data;
+        const isInvolved =
+          !m.owner_user_id && !m.is_gcal
+            ? m.created_by === uid ||
+              (Array.isArray(m.attendee_ids) && m.attendee_ids.includes(uid)) ||
+              !Array.isArray(m.attendee_ids) ||
+              m.attendee_ids.length === 0
+            : m.owner_user_id === uid ||
+              (Array.isArray(m.attendee_ids) && m.attendee_ids.includes(uid));
+        if (!isInvolved) return;
         setMeetings((prev) => {
           const next = filterAndDedupeMeetings([...prev, evt.data]);
-          MEETINGS_CACHE = next;
-          try { localStorage.setItem("circle_meetings_cache", JSON.stringify(next)); } catch {}
+          setMeetingsCacheForUid(uid, next);
           return next;
         });
       }
@@ -367,10 +403,13 @@ export default function Schedule() {
         if (Array.isArray(evt.deleted_ids)) evt.deleted_ids.forEach((x) => x && DELETED_MEETING_IDS.add(String(x)));
         if (Array.isArray(evt.deleted_keys)) evt.deleted_keys.forEach((k) => k && DELETED_MEETING_KEYS.add(String(k)));
         persistDeletedMeetings();
+        recordDeletedEntityIds([
+          String(evt.id),
+          ...(Array.isArray(evt.deleted_ids) ? evt.deleted_ids : []),
+        ]);
         setMeetings((prev) => {
           const next = filterAndDedupeMeetings(prev.filter((m) => m.id !== evt.id));
-          MEETINGS_CACHE = next;
-          try { localStorage.setItem("circle_meetings_cache", JSON.stringify(next)); } catch {}
+          setMeetingsCacheForUid(uid, next);
           return next;
         });
       }
@@ -378,28 +417,26 @@ export default function Schedule() {
         if (isMeetingDeleted(evt.data)) return;
         setMeetings((prev) => {
           const next = filterAndDedupeMeetings(prev.map((m) => (m.id === evt.data.id ? { ...m, ...evt.data } : m)));
-          MEETINGS_CACHE = next;
-          try { localStorage.setItem("circle_meetings_cache", JSON.stringify(next)); } catch {}
+          setMeetingsCacheForUid(uid, next);
           return next;
         });
       }
     });
-  }, [subscribe, updateMeetingsList]);
+  }, [subscribe, uid, updateMeetingsList]);
 
   const handleConnectGoogleCalendar = async () => {
     setIsLoggingIn(true);
     setSyncingGCal(true);
     try {
       const result = await googleCalendarOAuthSignIn();
-      const email = result?.user?.email || getConnectedCalendarEmail() || me?.email || "";
+      const email = result?.user?.email || getConnectedCalendarEmail(uid) || me?.email || "";
       const gcalRes = await listEvents();
       const items = Array.isArray(gcalRes?.items) ? gcalRes.items : [];
       const normalized = normalizeGCalItems(items);
 
       setMeetings((prev) => {
         const merged = filterAndDedupeMeetings([...prev, ...normalized]);
-        MEETINGS_CACHE = merged;
-        try { localStorage.setItem("circle_meetings_cache", JSON.stringify(merged)); } catch {}
+        setMeetingsCacheForUid(uid, merged);
         return merged;
       });
 
@@ -449,7 +486,9 @@ export default function Schedule() {
     setImportingIcs(true);
     try {
       const { data } = await api.post("/meetings/import-ics", { ics_url: trimmed });
-      if (Array.isArray(data?.meetings)) {
+      if (Array.isArray(data?.events)) {
+        updateMeetingsList(data.events);
+      } else if (Array.isArray(data?.meetings)) {
         updateMeetingsList(data.meetings);
       }
       setSavedIcsUrl(trimmed);
@@ -477,7 +516,9 @@ export default function Schedule() {
         return;
       }
       const { data } = await api.post("/meetings/import-ics", { ics_text: text });
-      if (Array.isArray(data?.meetings)) {
+      if (Array.isArray(data?.events)) {
+        updateMeetingsList(data.events);
+      } else if (Array.isArray(data?.meetings)) {
         updateMeetingsList(data.meetings);
       }
       setNeedsAuth(false);
@@ -550,8 +591,7 @@ export default function Schedule() {
     // 100% Optimistic UI update (0ms delay)
     setMeetings((prev) => {
       const next = filterAndDedupeMeetings([...prev, newMeeting]);
-      MEETINGS_CACHE = next;
-      try { localStorage.setItem("circle_meetings_cache", JSON.stringify(next)); } catch {}
+      setMeetingsCacheForUid(uid, next);
       return next;
     });
 
@@ -570,7 +610,7 @@ export default function Schedule() {
           const startIso = new Date(`${form.date}T${form.start_time}:00`).toISOString();
           const endIso = new Date(`${form.date}T${form.end_time}:00`).toISOString();
           const attendeesList = (form.attendee_ids || [])
-            .map((uid) => userMap[uid]?.email)
+            .map((id) => userMap[id]?.email)
             .filter(Boolean)
             .map((email) => ({ email }));
 
@@ -620,10 +660,10 @@ export default function Schedule() {
         if (res.data && !isMeetingDeleted(res.data)) {
           setMeetings((prev) => {
             const next = filterAndDedupeMeetings(prev.map((m) => (m.id === tempId ? res.data : m)));
-            MEETINGS_CACHE = next;
-            try { localStorage.setItem("circle_meetings_cache", JSON.stringify(next)); } catch {}
+            setMeetingsCacheForUid(uid, next);
             return next;
           });
+          void syncWorkspaceMirror(api, true);
         }
       } catch (err) {
         toast.error(errMsg(err, "Gagal sinkronisasi meeting ke server"));
@@ -650,14 +690,14 @@ export default function Schedule() {
     }
     if (mKey) DELETED_MEETING_KEYS.add(mKey);
     persistDeletedMeetings();
+    recordDeletedEntityIds([id, gcalId, gcalId ? `gcal_${gcalId}` : null].filter(Boolean));
 
     // 100% Optimistic deletion (0ms delay)
     setMeetings((prev) => {
       const next = filterAndDedupeMeetings(
         prev.filter((m) => m.id !== id && (!mKey || makeMeetingKey(m) !== mKey))
       );
-      MEETINGS_CACHE = next;
-      try { localStorage.setItem("circle_meetings_cache", JSON.stringify(next)); } catch {}
+      setMeetingsCacheForUid(uid, next);
       return next;
     });
     setDeleteConfirmMeeting(null);
@@ -675,7 +715,9 @@ export default function Schedule() {
       gcal_event_id: gcalId || "",
     }).toString();
 
-    api.delete(`/meetings/${encodeURIComponent(id)}?${qs}`).catch((err) => {
+    api.delete(`/meetings/${encodeURIComponent(id)}?${qs}`).then(() => {
+      void syncWorkspaceMirror(api, true);
+    }).catch((err) => {
       console.warn("Server meeting delete note:", err);
     });
   };

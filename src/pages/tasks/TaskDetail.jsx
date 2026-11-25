@@ -17,6 +17,7 @@ import { playSound } from "../../lib/sound";
 import { INITIAL_TASKS } from "../../data/initialTasks";
 import PrintPreviewDialog from "../../components/PrintPreviewDialog";
 import { tryNativePrint } from "../../lib/printReport";
+import { humanizeLogAction, resolveActorName, resolveRawUserTokens } from "../../lib/logHumanizer";
 
 function Row({ label, children }) {
   return <div className="grid w-full min-w-0 items-center gap-1 sm:grid-cols-[120px_minmax(0,1fr)] sm:gap-3"><span className="text-xs font-semibold text-sub">{label}</span><div className="min-w-0 w-full max-w-full">{children}</div></div>;
@@ -607,30 +608,35 @@ export default function TaskDetail({ id, onClose, onChanged }) {
                     <p className="py-4 text-center text-xs text-sub">{tr("task_activity_empty", "Belum ada riwayat aktivitas pada tugas ini.")}</p>
                   ) : (
                     <ul className="space-y-3" data-testid="task-activity">
-                      {(t.activity || []).map((a, i) => (
-                        <li key={a.id || `act_${i}`} className="flex items-start gap-2.5 rounded-2xl border border-slate-200/70 dark:border-slate-800/80 bg-surface2/40 p-3 text-sm">
-                          <Avatar user={userMap[a.actor_id]} size={26} showStatus={false} className="mt-0.5" />
-                          <div className="min-w-0 flex-1">
-                            <p className="leading-snug">
-                              <b className="text-ink">{userMap[a.actor_id]?.name || tr("task_user_fallback", "Pengguna")}</b>{" "}
-                              <span className="text-sub">{a.action}</span>
-                              {!a.detail && a.changes?.from !== undefined && a.changes?.to !== undefined && typeof a.changes.to !== "object" && a.changes.to !== null && (
-                                <span className="text-sub">
-                                  {" "}→ <b className="text-ink">{userMap[a.changes.to]?.name || statuses.find((s) => s.key === a.changes.to)?.name || String(a.changes.to).slice(0, 80)}</b>
-                                </span>
+                      {(t.activity || []).map((a, i) => {
+                        const actorDisplay = resolveActorName(a.actor_id, a.actor_name, userMap) || tr("task_user_fallback", "Pengguna");
+                        const actionDisplay = humanizeLogAction(a.action, userMap);
+                        const detailDisplay = a.detail ? resolveRawUserTokens(String(a.detail), userMap) : "";
+                        return (
+                          <li key={a.id || `act_${i}`} className="flex items-start gap-2.5 rounded-2xl border border-slate-200/70 dark:border-slate-800/80 bg-surface2/40 p-3 text-sm">
+                            <Avatar user={userMap[a.actor_id]} size={26} showStatus={false} className="mt-0.5" />
+                            <div className="min-w-0 flex-1">
+                              <p className="leading-snug">
+                                <b className="text-ink">{actorDisplay}</b>{" "}
+                                <span className="text-sub">{actionDisplay}</span>
+                                {!detailDisplay && a.changes?.from !== undefined && a.changes?.to !== undefined && typeof a.changes.to !== "object" && a.changes.to !== null && (
+                                  <span className="text-sub">
+                                    {" "}→ <b className="text-ink">{userMap[a.changes.to]?.name || statuses.find((s) => s.key === a.changes.to)?.name || resolveRawUserTokens(String(a.changes.to), userMap).slice(0, 80)}</b>
+                                  </span>
+                                )}
+                              </p>
+                              {detailDisplay && (
+                                <div className="mt-1.5 rounded-xl border border-slate-200/80 dark:border-slate-800 bg-surface px-3 py-2 text-xs text-ink/90 whitespace-pre-wrap break-words">
+                                  {detailDisplay}
+                                </div>
                               )}
-                            </p>
-                            {a.detail && (
-                              <div className="mt-1.5 rounded-xl border border-slate-200/80 dark:border-slate-800 bg-surface px-3 py-2 text-xs text-ink/90 whitespace-pre-wrap break-words">
-                                {a.detail}
-                              </div>
-                            )}
-                            <span className="mt-1 block text-[11px] text-sub">
-                              {fmtDate(a.created_at, "d MMM yyyy, HH:mm:ss")} · {rel(a.created_at)}
-                            </span>
-                          </div>
-                        </li>
-                      ))}
+                              <span className="mt-1 block text-[11px] text-sub">
+                                {fmtDate(a.created_at, "d MMM yyyy, HH:mm:ss")} · {rel(a.created_at)}
+                              </span>
+                            </div>
+                          </li>
+                        );
+                      })}
                     </ul>
                   )
                 )}

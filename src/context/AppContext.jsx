@@ -19,7 +19,7 @@ import {
 } from "../lib/workspaceCaches";
 import { setCachedDriveShortcuts } from "../data/initialDriveShortcuts";
 import { showSystemNotification, syncPushSubscription, syncAppBadge } from "../lib/systemNotifications";
-import { attemptAutoHydrateServer, syncWorkspaceMirror, scheduleRealtimeCloudSync, upsertAccountInVault, upsertAccountsListInVault, getKnownAccountsFromVault, hasCompletedInitialHydrate, rehydrateIfServerRestarted, recordDeletedTaskIds } from "../lib/persistentMirror";
+import { attemptAutoHydrateServer, syncWorkspaceMirror, scheduleRealtimeCloudSync, upsertAccountInVault, upsertAccountsListInVault, getKnownAccountsFromVault, hasCompletedInitialHydrate, rehydrateIfServerRestarted, recordDeletedTaskIds, recordDeletedCheckpointTemplateIds, recordDeletedEntityIds } from "../lib/persistentMirror";
 import { firebaseAuth, subscribeFirebaseAuth, getCloudSyncStatus, subscribeCloudSyncStatus } from "../lib/firestoreBackup";
 import { googleBasicSignIn } from "../lib/auth";
 import { prefetchMarketplaceState, reconcileMarketplaceEnabledCache } from "../pages/marketplace/marketplaceStore";
@@ -918,17 +918,74 @@ export function AppProvider({ children }) {
         }
         if (evt.type === "conversation:deleted" && evt.id) {
           const curUid = meRef.current?.user_id || me?.user_id;
+          const delMsgIds = Array.isArray(evt.deleted_message_ids) ? evt.deleted_message_ids : [];
           if (evt.is_circle_clear) {
+            if (delMsgIds.length > 0) recordDeletedEntityIds(delMsgIds);
             clearConversationMessagesCache(evt.id, curUid);
           } else {
+            recordDeletedEntityIds([evt.id, ...delMsgIds]);
             removeConversationFromCache(evt.id, curUid);
             if (evt.conv_type === "group") {
               removeGroupFromCache(evt.id, curUid);
             }
           }
         }
+        if (evt.type === "group:deleted" && evt.id) {
+          const delMsgIds = Array.isArray(evt.deleted_message_ids) ? evt.deleted_message_ids : [];
+          recordDeletedEntityIds([evt.id, ...delMsgIds]);
+        }
+        if (evt.type === "notes:changed" && evt.action === "delete" && evt.deleted_id) {
+          recordDeletedEntityIds([evt.deleted_id]);
+        }
+        if (evt.type === "post:deleted" && (evt.id || Array.isArray(evt.deleted_ids))) {
+          recordDeletedEntityIds(Array.isArray(evt.deleted_ids) ? evt.deleted_ids : [evt.id]);
+        }
+        if (evt.type === "meeting:delete" && (evt.id || Array.isArray(evt.deleted_ids))) {
+          recordDeletedEntityIds([
+            ...(evt.id ? [evt.id] : []),
+            ...(Array.isArray(evt.deleted_ids) ? evt.deleted_ids : []),
+          ]);
+        }
+        if (evt.type === "boards:changed" && evt.deleted_id) {
+          recordDeletedEntityIds([evt.deleted_id]);
+        }
+        if (evt.type === "instagram_tracker:changed" && evt.deleted_id) {
+          recordDeletedEntityIds([evt.deleted_id]);
+        }
+        if (evt.type === "checkpoint_templates:changed") {
+          if (Array.isArray(evt.deleted_ids) && evt.deleted_ids.length > 0) {
+            recordDeletedCheckpointTemplateIds(evt.deleted_ids);
+          }
+          if (Array.isArray(evt.templates)) {
+            try {
+              localStorage.setItem("circle_checkpoint_templates", JSON.stringify(evt.templates));
+            } catch {}
+            setSession((s) =>
+              s
+                ? {
+                    ...s,
+                    workspace: {
+                      ...(s.workspace || {}),
+                      checkpoint_templates: evt.templates,
+                      checkpoint_templates_initialized: true,
+                      deleted_checkpoint_template_ids:
+                        evt.deleted_ids || s.workspace?.deleted_checkpoint_template_ids || [],
+                    },
+                  }
+                : s
+            );
+          }
+        }
         if (evt.type === "workspace:changed" || evt.type === "workspace:updated") {
           if (evt.data && typeof evt.data === "object") {
+            if (Array.isArray(evt.data.deleted_checkpoint_template_ids) && evt.data.deleted_checkpoint_template_ids.length > 0) {
+              recordDeletedCheckpointTemplateIds(evt.data.deleted_checkpoint_template_ids);
+            }
+            if (Array.isArray(evt.data.checkpoint_templates)) {
+              try {
+                localStorage.setItem("circle_checkpoint_templates", JSON.stringify(evt.data.checkpoint_templates));
+              } catch {}
+            }
             setSession((s) => (s ? { ...s, workspace: evt.data } : s));
             reconcileMarketplaceEnabledCache(
               me?.user_id,
@@ -938,6 +995,14 @@ export function AppProvider({ children }) {
           } else {
             api.get("/workspace").then((r) => {
               if (r.data && typeof r.data === "object") {
+                if (Array.isArray(r.data.deleted_checkpoint_template_ids) && r.data.deleted_checkpoint_template_ids.length > 0) {
+                  recordDeletedCheckpointTemplateIds(r.data.deleted_checkpoint_template_ids);
+                }
+                if (Array.isArray(r.data.checkpoint_templates)) {
+                  try {
+                    localStorage.setItem("circle_checkpoint_templates", JSON.stringify(r.data.checkpoint_templates));
+                  } catch {}
+                }
                 setSession((s) => (s ? { ...s, workspace: r.data } : s));
                 reconcileMarketplaceEnabledCache(
                   me?.user_id,
@@ -971,6 +1036,7 @@ export function AppProvider({ children }) {
           try { localStorage.setItem("circle_org_units_cache", JSON.stringify(evt.units)); } catch {}
         }
         if (evt.type === "drive_shortcuts:changed" && Array.isArray(evt.data)) {
+          if (evt.deleted_id) recordDeletedEntityIds([evt.deleted_id]);
           setCachedDriveShortcuts(evt.data);
         }
         if (evt.type === "tasks:changed") {

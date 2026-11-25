@@ -47,6 +47,7 @@ import {
   getWorkspaceSnapshotFromPostgres,
 } from './src/db/persistence.ts';
 import { verifyFirebaseIdTokenSafe } from './src/middleware/auth.ts';
+import { humanizeLogAction, resolveActorName } from './src/lib/logHumanizer.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MASTER_KEY = getMasterKey(__dirname);
@@ -616,6 +617,7 @@ async function startServer() {
             db.drive_shortcuts = [...INITIAL_DRIVE_SHORTCUTS];
           }
           ensureMarketplaceData(db);
+          ensureWorkspaceCheckpointTemplates();
           migrateSecurityAtRest();
           sanitizeConversationsAndMessages();
           db.revision = Math.max(Number(db.revision || 0), Number(loaded.revision || 0));
@@ -646,9 +648,128 @@ async function startServer() {
     schedulePostgresSave(immediate, options);
   }
 
+  const DEFAULT_WORKSPACE_CHECKPOINT_PRESETS = [
+    {
+      id: "builtin_video",
+      label: "🎬 Video Content",
+      items: ["Pembuatan Script / Naskah", "Persiapan Aset Visual", "Shooting / Recording", "Editing & Post-Production"],
+    },
+    {
+      id: "builtin_design",
+      label: "🎨 Graphic & Design",
+      items: ["Brief & Riset Konsep", "Draft Desain Awal", "Review & Revisi", "Final Export Asset"],
+    },
+    {
+      id: "builtin_web",
+      label: "💻 Web & Tech",
+      items: ["Requirement & Wireframe", "UI/UX Design", "Frontend / Backend Dev", "QA & Final Testing"],
+    },
+    {
+      id: "builtin_daily_content",
+      label: "Daily Content",
+      items: ["Ide & Brief Konten", "Copywriting & Caption", "Produksi Visual / Video", "Review & Approval", "Scheduling & Posting"],
+    },
+    {
+      id: "builtin_seasonal_menu",
+      label: "Seasonal Menu",
+      items: [
+        "Riset & Konsep Menu",
+        "R&D Resep & Trial Produk",
+        "Costing & HPP",
+        "Approval Direksi",
+        "Photoshoot & Key Visual",
+        "Desain Materi Promosi",
+        "Cetak & Distribusi POSM",
+        "Training Tim Outlet",
+        "Persiapan Bahan Baku",
+        "Teaser & Kampanye Sosmed",
+        "Launching & Evaluasi",
+      ],
+    },
+  ];
+
+  function ensureWorkspaceCheckpointTemplates() {
+    db.workspace = db.workspace && typeof db.workspace === "object" ? db.workspace : {};
+    const topDel = Array.isArray(db.deleted_checkpoint_template_ids) ? db.deleted_checkpoint_template_ids : [];
+    const wsDel = Array.isArray(db.workspace.deleted_checkpoint_template_ids)
+      ? db.workspace.deleted_checkpoint_template_ids
+      : [];
+    const mergedDel = Array.from(
+      new Set([...topDel, ...wsDel].map((x: any) => String(x || "").trim()).filter(Boolean))
+    );
+    db.deleted_checkpoint_template_ids = mergedDel;
+    db.workspace.deleted_checkpoint_template_ids = mergedDel;
+    const delSet = new Set<string>(mergedDel);
+
+    const existingList = Array.isArray(db.workspace.checkpoint_templates)
+      ? db.workspace.checkpoint_templates
+      : [];
+
+    if (!db.workspace.checkpoint_templates_initialized) {
+      const mergedMap = new Map<string, any>();
+      const seenLabels = new Set<string>();
+
+      const addCandidate = (tpl: any) => {
+        if (!tpl || typeof tpl !== "object") return;
+        const label = String(tpl.label || "").trim();
+        const items = (Array.isArray(tpl.items) ? tpl.items : [])
+          .map((it: any) => String(it || "").trim())
+          .filter(Boolean);
+        if (!label || items.length === 0) return;
+        const matchedBuiltin = DEFAULT_WORKSPACE_CHECKPOINT_PRESETS.find(
+          (b) => b.label.trim().toLowerCase() === label.toLowerCase()
+        );
+        const id = String(tpl.id || matchedBuiltin?.id || `tpl_${label.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`).trim();
+        if (!id || delSet.has(id)) return;
+        const labelKey = label.toLowerCase();
+        if (mergedMap.has(id) || seenLabels.has(labelKey)) return;
+        seenLabels.add(labelKey);
+        mergedMap.set(id, {
+          id,
+          label,
+          items,
+          updated_at: tpl.updated_at || new Date().toISOString(),
+        });
+      };
+
+      // First include any existing workspace templates
+      for (const t of existingList) addCandidate(t);
+      // Then include defaults (unless deleted)
+      for (const d of DEFAULT_WORKSPACE_CHECKPOINT_PRESETS) addCandidate(d);
+      // Also migrate any custom templates previously saved in user prefs
+      if (db.prefs && typeof db.prefs === "object") {
+        for (const prefObj of Object.values(db.prefs)) {
+          if (!prefObj || typeof prefObj !== "object") continue;
+          const p = prefObj as any;
+          const userTpls = Array.isArray(p.user_checkpoint_templates)
+            ? p.user_checkpoint_templates
+            : Array.isArray(p.checkpoint_templates)
+            ? p.checkpoint_templates
+            : [];
+          for (const ut of userTpls) addCandidate(ut);
+        }
+      }
+
+      db.workspace.checkpoint_templates = Array.from(mergedMap.values());
+      db.workspace.checkpoint_templates_initialized = true;
+    } else {
+      db.workspace.checkpoint_templates = existingList
+        .filter((t: any) => t && typeof t === "object" && t.label && Array.isArray(t.items))
+        .map((t: any) => ({
+          ...t,
+          id: String(t.id || `tpl_${String(t.label).toLowerCase().replace(/[^a-z0-9]+/g, "_")}`).trim(),
+          label: String(t.label).trim(),
+          items: t.items.map((x: any) => String(x || "").trim()).filter(Boolean),
+        }))
+        .filter((t: any) => t.id && t.items.length > 0 && !delSet.has(t.id));
+    }
+    return db.workspace.checkpoint_templates;
+  }
+
   // Load persistent DB state on startup
   loadDbFromFile();
   ensureMarketplaceData(db);
+  ensureWorkspaceCheckpointTemplates();
 
   // Clean up any historical approval/rejection text messages so only clean approval cards remain
   if (Array.isArray(db.messages)) {
@@ -2552,6 +2673,21 @@ async function startServer() {
     }
   }
 
+  function recordServerDeletedIds(ids: (string | undefined | null)[], specificKey?: string) {
+    const clean = (Array.isArray(ids) ? ids : [ids])
+      .map((x) => String(x || "").trim())
+      .filter(Boolean);
+    if (clean.length === 0) return;
+    db.deleted_entity_ids = Array.from(
+      new Set([...(Array.isArray(db.deleted_entity_ids) ? db.deleted_entity_ids : []), ...clean])
+    );
+    if (specificKey) {
+      db[specificKey] = Array.from(
+        new Set([...(Array.isArray(db[specificKey]) ? db[specificKey] : []), ...clean])
+      );
+    }
+  }
+
   function buildFullBackupPayload(
     exportedBy: any = { user_id: "system_scheduler", name: "Auto Backup Harian", email: "system@circle.local" },
     options: { includeFiles?: boolean } = {}
@@ -2596,7 +2732,13 @@ async function startServer() {
       "deleted_user_ids",
       "deleted_user_emails",
       "deleted_task_ids",
+      "deleted_checkpoint_template_ids",
       "deleted_marketplace_listing_ids",
+      "deleted_entity_ids",
+      "deleted_note_ids",
+      "deleted_meeting_ids",
+      "deleted_gcal_ids",
+      "deleted_meeting_keys",
     ];
 
     const snapshotData: Record<string, any> = {};
@@ -3198,6 +3340,29 @@ async function startServer() {
     db.deleted_task_ids = Array.from(new Set([...prevDelTaskIds, ...nextDelTaskIds].map((id: any) => String(id || "").trim()).filter(Boolean)));
     const delTaskSet = new Set<string>(db.deleted_task_ids);
 
+    const prevDelEntityIds = [
+      ...(Array.isArray(db.deleted_entity_ids) ? db.deleted_entity_ids : []),
+      ...(Array.isArray(db.deleted_note_ids) ? db.deleted_note_ids : []),
+      ...(Array.isArray(db.deleted_meeting_ids) ? db.deleted_meeting_ids : []),
+      ...(Array.isArray(db.deleted_gcal_ids) ? db.deleted_gcal_ids : []),
+    ];
+    const nextDelEntityIds = [
+      ...(Array.isArray(rawData.deleted_entity_ids) ? rawData.deleted_entity_ids : []),
+      ...(Array.isArray(rawData.deleted_note_ids) ? rawData.deleted_note_ids : []),
+      ...(Array.isArray(rawData.deleted_meeting_ids) ? rawData.deleted_meeting_ids : []),
+      ...(Array.isArray(rawData.deleted_gcal_ids) ? rawData.deleted_gcal_ids : []),
+    ];
+    db.deleted_entity_ids = Array.from(
+      new Set([...prevDelEntityIds, ...nextDelEntityIds].map((id: any) => String(id || "").trim()).filter(Boolean))
+    );
+    db.deleted_note_ids = Array.from(
+      new Set([
+        ...(Array.isArray(db.deleted_note_ids) ? db.deleted_note_ids : []),
+        ...(Array.isArray(rawData.deleted_note_ids) ? rawData.deleted_note_ids : []),
+      ].map((id: any) => String(id || "").trim()).filter(Boolean))
+    );
+    const delEntitySet = new Set<string>(db.deleted_entity_ids);
+
     for (const k of arrayKeys) {
       if (Array.isArray(rawData[k])) {
         if (k === "users") {
@@ -3206,14 +3371,24 @@ async function startServer() {
           mergeKnownAccountsIntoDb(existingUsers);
         } else if (k === "tasks") {
           db.tasks = rawData.tasks.filter(
-            (t: any) => t && !delTaskSet.has(String(t.id || t.task_id || "").trim())
+            (t: any) =>
+              t &&
+              !delTaskSet.has(String(t.id || t.task_id || "").trim()) &&
+              !delEntitySet.has(String(t.id || t.task_id || "").trim())
           );
         } else if (k === "marketplace_listings") {
           db.marketplace_listings = rawData.marketplace_listings.filter(
             (l: any) => l && !delMktSet.has(String(l.id))
           );
         } else {
-          db[k] = rawData[k];
+          db[k] = rawData[k].filter((item: any) => {
+            if (!item || typeof item !== "object") return true;
+            const itemId = String(
+              item.id || item.note_id || item.board_id || item.post_id || ""
+            ).trim();
+            const gcalId = String(item.gcal_event_id || item.gcal_id || "").trim();
+            return !(itemId && delEntitySet.has(itemId)) && !(gcalId && delEntitySet.has(gcalId));
+          });
         }
       }
     }
@@ -3415,8 +3590,54 @@ async function startServer() {
     db.deleted_task_ids = Array.from(
       new Set([...prevDelTaskIds, ...nextDelTaskIds].map((id: any) => String(id || "").trim()).filter(Boolean))
     );
-    if (db.deleted_task_ids.length > 0 && Array.isArray(db.tasks)) {
-      const delSet = new Set<string>(db.deleted_task_ids);
+
+    const prevDelEntityIds = [
+      ...(Array.isArray(db.deleted_entity_ids) ? db.deleted_entity_ids : []),
+      ...(Array.isArray(db.deleted_note_ids) ? db.deleted_note_ids : []),
+      ...(Array.isArray(db.deleted_meeting_ids) ? db.deleted_meeting_ids : []),
+      ...(Array.isArray(db.deleted_gcal_ids) ? db.deleted_gcal_ids : []),
+    ];
+    const nextDelEntityIds = [
+      ...(Array.isArray(rawData.deleted_entity_ids) ? rawData.deleted_entity_ids : []),
+      ...(Array.isArray(rawData.deleted_note_ids) ? rawData.deleted_note_ids : []),
+      ...(Array.isArray(rawData.deleted_meeting_ids) ? rawData.deleted_meeting_ids : []),
+      ...(Array.isArray(rawData.deleted_gcal_ids) ? rawData.deleted_gcal_ids : []),
+    ];
+    const mergedDelEntityIds = Array.from(
+      new Set([...prevDelEntityIds, ...nextDelEntityIds].map((id: any) => String(id || "").trim()).filter(Boolean))
+    );
+    if (mergedDelEntityIds.length !== (Array.isArray(db.deleted_entity_ids) ? db.deleted_entity_ids.length : 0)) {
+      anyChanged = true;
+    }
+    db.deleted_entity_ids = mergedDelEntityIds;
+    db.deleted_note_ids = Array.from(
+      new Set([
+        ...(Array.isArray(db.deleted_note_ids) ? db.deleted_note_ids : []),
+        ...(Array.isArray(rawData.deleted_note_ids) ? rawData.deleted_note_ids : []),
+      ].map((id: any) => String(id || "").trim()).filter(Boolean))
+    );
+    db.deleted_meeting_ids = Array.from(
+      new Set([
+        ...(Array.isArray(db.deleted_meeting_ids) ? db.deleted_meeting_ids : []),
+        ...(Array.isArray(rawData.deleted_meeting_ids) ? rawData.deleted_meeting_ids : []),
+      ].map((id: any) => String(id || "").trim()).filter(Boolean))
+    );
+    db.deleted_gcal_ids = Array.from(
+      new Set([
+        ...(Array.isArray(db.deleted_gcal_ids) ? db.deleted_gcal_ids : []),
+        ...(Array.isArray(rawData.deleted_gcal_ids) ? rawData.deleted_gcal_ids : []),
+      ].map((id: any) => String(id || "").trim()).filter(Boolean))
+    );
+    const delEntitySet = new Set<string>(db.deleted_entity_ids);
+    const isItemDeleted = (item: any) => {
+      if (!item || typeof item !== "object") return false;
+      const itemId = String(item.id || item.note_id || item.board_id || item.post_id || item.task_id || "").trim();
+      const gcalId = String(item.gcal_event_id || item.gcal_id || "").trim();
+      return Boolean((itemId && delEntitySet.has(itemId)) || (gcalId && delEntitySet.has(gcalId)));
+    };
+
+    if ((db.deleted_task_ids.length > 0 || delEntitySet.size > 0) && Array.isArray(db.tasks)) {
+      const delSet = new Set<string>([...db.deleted_task_ids, ...db.deleted_entity_ids]);
       const beforeTaskLen = db.tasks.length;
       db.tasks = db.tasks.filter((t: any) => t && !delSet.has(String(t.id || t.task_id || "").trim()));
       if (db.tasks.length !== beforeTaskLen) anyChanged = true;
@@ -3431,7 +3652,10 @@ async function startServer() {
 
     // 3. Tasks
     if (Array.isArray(rawData.tasks) && rawData.tasks.length > 0) {
-      const { list, changed } = mergeTasksNonDestructive(db.tasks || [], rawData.tasks);
+      const { list, changed } = mergeTasksNonDestructive(
+        db.tasks || [],
+        rawData.tasks.filter((t: any) => !isItemDeleted(t))
+      );
       if (changed) {
         db.tasks = list;
         anyChanged = true;
@@ -3440,8 +3664,9 @@ async function startServer() {
 
     // 4. Boards (also union member_ids and invited_member_ids)
     if (Array.isArray(rawData.boards) && rawData.boards.length > 0) {
-      const { list, changed } = mergeArrayById(db.boards || [], rawData.boards, "id");
-      for (const incB of rawData.boards) {
+      const incomingBoards = rawData.boards.filter((b: any) => !isItemDeleted(b));
+      const { list, changed } = mergeArrayById(db.boards || [], incomingBoards, "id");
+      for (const incB of incomingBoards) {
         if (!incB?.id) continue;
         const target = list.find((b: any) => b && b.id === incB.id);
         if (target) {
@@ -3453,8 +3678,13 @@ async function startServer() {
           target.invited_member_ids = Array.from(new Set([...inv1, ...inv2].filter(Boolean)));
         }
       }
-      db.boards = list;
-      if (changed) anyChanged = true;
+      const filteredBoards = list.filter((b: any) => !isItemDeleted(b));
+      if (filteredBoards.length !== (db.boards || []).length || changed) anyChanged = true;
+      db.boards = filteredBoards;
+    } else if (Array.isArray(db.boards) && delEntitySet.size > 0) {
+      const beforeLen = db.boards.length;
+      db.boards = db.boards.filter((b: any) => !isItemDeleted(b));
+      if (db.boards.length !== beforeLen) anyChanged = true;
     }
 
     // 5. Standard ID-based collections
@@ -3483,17 +3713,23 @@ async function startServer() {
     ];
     for (const key of idCollections) {
       if (Array.isArray(rawData[key]) && rawData[key].length > 0) {
-        const { list, changed } = mergeArrayById(db[key] || [], rawData[key], "id");
-        if (changed) {
+        const cleanIncoming = rawData[key].filter((item: any) => !isItemDeleted(item));
+        const { list, changed } = mergeArrayById(db[key] || [], cleanIncoming, "id");
+        const filteredList = list.filter((item: any) => !isItemDeleted(item));
+        if (changed || filteredList.length !== (db[key] || []).length) {
           if (key === "messages") {
-            list.sort(
+            filteredList.sort(
               (a: any, b: any) =>
                 new Date(a?.created_at || 0).getTime() - new Date(b?.created_at || 0).getTime()
             );
           }
-          db[key] = list;
+          db[key] = filteredList;
           anyChanged = true;
         }
+      } else if (Array.isArray(db[key]) && delEntitySet.size > 0) {
+        const beforeLen = db[key].length;
+        db[key] = db[key].filter((item: any) => !isItemDeleted(item));
+        if (db[key].length !== beforeLen) anyChanged = true;
       }
     }
     if (Array.isArray(db.deleted_marketplace_listing_ids) && db.deleted_marketplace_listing_ids.length > 0 && Array.isArray(db.marketplace_listings)) {
@@ -3503,17 +3739,42 @@ async function startServer() {
       if (db.marketplace_listings.length !== beforeLen) anyChanged = true;
     }
 
-    // 6. Workspace config & custom checkpoint templates
+    // 6. Workspace config & shared checkpoint templates
+    const prevDelTplIds = [
+      ...(Array.isArray(db.deleted_checkpoint_template_ids) ? db.deleted_checkpoint_template_ids : []),
+      ...(Array.isArray(db.workspace?.deleted_checkpoint_template_ids)
+        ? db.workspace.deleted_checkpoint_template_ids
+        : []),
+    ];
+    const nextDelTplIds = [
+      ...(Array.isArray(rawData.deleted_checkpoint_template_ids) ? rawData.deleted_checkpoint_template_ids : []),
+      ...(Array.isArray(rawData.workspace?.deleted_checkpoint_template_ids)
+        ? rawData.workspace.deleted_checkpoint_template_ids
+        : []),
+    ];
+    const mergedDelTplIds = Array.from(
+      new Set([...prevDelTplIds, ...nextDelTplIds].map((id: any) => String(id || "").trim()).filter(Boolean))
+    );
+    if (mergedDelTplIds.length !== prevDelTplIds.length) anyChanged = true;
+    db.deleted_checkpoint_template_ids = mergedDelTplIds;
+    db.workspace = db.workspace || {};
+    db.workspace.deleted_checkpoint_template_ids = mergedDelTplIds;
+    const delTplSet = new Set<string>(mergedDelTplIds);
+
     if (rawData.workspace && typeof rawData.workspace === "object") {
-      db.workspace = db.workspace || {};
+      if (rawData.workspace.checkpoint_templates_initialized) {
+        db.workspace.checkpoint_templates_initialized = true;
+      }
       if (Array.isArray(rawData.workspace.checkpoint_templates) && rawData.workspace.checkpoint_templates.length > 0) {
-        const { list } = mergeArrayById(
+        const { list, changed: tplChanged } = mergeArrayById(
           db.workspace.checkpoint_templates || [],
           rawData.workspace.checkpoint_templates,
           "id"
         );
-        db.workspace.checkpoint_templates = list;
-        anyChanged = true;
+        db.workspace.checkpoint_templates = list.filter(
+          (t: any) => t && t.id && !delTplSet.has(String(t.id).trim())
+        );
+        if (tplChanged) anyChanged = true;
       }
       const maxTaskNum = (db.tasks || []).reduce((mx: number, t: any) => {
         const n = Number(t?.number || String(t?.number_str || "").replace(/\D+/g, "") || 0);
@@ -3523,6 +3784,7 @@ async function startServer() {
         db.workspace.next_task_number = maxTaskNum + 1;
       }
     }
+    ensureWorkspaceCheckpointTemplates();
 
     // 7. Prefs & Files
     if (rawData.prefs && typeof rawData.prefs === "object") {
@@ -3609,6 +3871,12 @@ async function startServer() {
       deleted_user_ids: Array.isArray(db.deleted_user_ids) ? db.deleted_user_ids : [],
       deleted_user_emails: Array.isArray(db.deleted_user_emails) ? db.deleted_user_emails : [],
       deleted_task_ids: Array.isArray(db.deleted_task_ids) ? db.deleted_task_ids : [],
+      deleted_checkpoint_template_ids: Array.isArray(db.deleted_checkpoint_template_ids)
+        ? db.deleted_checkpoint_template_ids
+        : [],
+      deleted_entity_ids: Array.isArray(db.deleted_entity_ids) ? db.deleted_entity_ids : [],
+      deleted_note_ids: Array.isArray(db.deleted_note_ids) ? db.deleted_note_ids : [],
+      deleted_meeting_ids: Array.isArray(db.deleted_meeting_ids) ? db.deleted_meeting_ids : [],
       counts: {
         users: summary.users,
         tasks: summary.tasks,
@@ -4179,6 +4447,20 @@ async function startServer() {
     const title = job_title || "Staff Member";
     const avatarUrl = resolvedPicture || `https://api.dicebear.com/7.x/pixel-art/svg?seed=${encodeURIComponent(displayName)}`;
 
+    const makeCleanUserSlug = (nameStr: string, emailStr: string) => {
+      const raw = (nameStr || emailStr.split("@")[0] || "member")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "")
+        .slice(0, 24) || "member";
+      let candidate = `user_${raw}`;
+      let suffix = 2;
+      while (db.users.some((u: any) => u?.user_id === candidate)) {
+        candidate = `user_${raw}_${suffix++}`;
+      }
+      return candidate;
+    };
+
     if (!user) {
       if (isSuperAdminEmail) {
         user = {
@@ -4203,7 +4485,7 @@ async function startServer() {
         // Invited email, verified company domain (auto_join_domain), or workspace explicitly disables approval
         if (invitation) invitation.used = true;
         user = {
-          user_id: `user_google_${Date.now()}`,
+          user_id: makeCleanUserSlug(displayName, cleanEmail),
           email: cleanEmail,
           name: displayName,
           role: invitation?.role || "employee",
@@ -4229,7 +4511,7 @@ async function startServer() {
         });
       } else {
         // Explicit Sign-Up mode with require_approval enabled: register as pending & send Approval Card
-        const newUserId = `user_google_${Date.now()}`;
+        const newUserId = makeCleanUserSlug(displayName, cleanEmail);
         const reqId = `req_${Date.now()}`;
 
         const newUserObj: any = {
@@ -5684,7 +5966,7 @@ async function startServer() {
       id: `log_adminpw_${Date.now()}`,
       actor_id: reqUser.user_id,
       actor_name: reqUser.name || "Admin",
-      action: `mereset password (scrypt) untuk ${targetUser.name} (${targetUser.email})`,
+      action: `mereset kata sandi untuk ${targetUser.name}`,
       created_at: new Date().toISOString()
     });
 
@@ -5729,7 +6011,7 @@ async function startServer() {
       id: `log_rkey_${Date.now()}`,
       actor_id: reqUser.user_id,
       actor_name: reqUser.name || "Admin",
-      action: "membuat ulang Kode Pemulihan Workspace (AES-256-GCM)",
+      action: "membuat ulang Kode Pemulihan Workspace",
       created_at: new Date().toISOString()
     });
     saveDbToFile();
@@ -5932,6 +6214,7 @@ async function startServer() {
 
   app.delete("/api/labels/:id", (req, res) => {
     db.labels = db.labels.filter((l: any) => l.id !== req.params.id);
+    recordServerDeletedIds([req.params.id]);
     saveDbToFile();
     res.json({ success: true });
   });
@@ -6391,7 +6674,7 @@ async function startServer() {
       id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       actor_id: creatorId,
       actor_name: creatorName,
-      action: `membuat tugas baru: ${t.number_str} - ${t.title}`,
+      action: `membuat tugas baru "${t.title}" (${t.number_str})`,
       created_at: new Date().toISOString()
     });
     saveDbToFile(true);
@@ -7150,10 +7433,27 @@ async function startServer() {
     }
 
     const actorId = user?.user_id || "user_admin1";
-    const actorName = user?.name || "User";
+    const actorName = user?.name || "Anggota Tim";
     const getUserName = (uid: string | null | undefined) => {
-      if (!uid) return "Unassigned";
-      return db.users.find((u: any) => u.user_id === uid)?.name || uid;
+      if (!uid) return "Belum ditentukan";
+      const found = db.users.find((u: any) => u.user_id === uid || u.email === uid);
+      if (found?.name) return found.name;
+      if (/^user_[a-z0-9_]+$/i.test(String(uid))) return "Anggota Tim";
+      return String(uid);
+    };
+    const joinListNatural = (items: string[]) => {
+      if (items.length === 0) return "";
+      if (items.length === 1) return items[0];
+      if (items.length === 2) return `${items[0]} & ${items[1]}`;
+      return `${items.slice(0, -1).join(", ")}, & ${items[items.length - 1]}`;
+    };
+    const formatDateHuman = (isoOrDate: string | null | undefined) => {
+      if (!isoOrDate) return "tanpa tenggat";
+      const months = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+      const m = String(isoOrDate).match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/);
+      if (!m) return String(isoOrDate);
+      const mon = months[Number(m[2]) - 1] || m[2];
+      return m[4] && m[5] ? `${Number(m[3])} ${mon} ${m[1]}, ${m[4]}:${m[5]}` : `${Number(m[3])} ${mon} ${m[1]}`;
     };
     const getStatusName = (key: string | null | undefined) => {
       if (!key) return "—";
@@ -7164,7 +7464,7 @@ async function startServer() {
       return db.boards?.find((b: any) => b.id === bid)?.name || bid;
     };
     const getProjectName = (pid: string | null | undefined) => {
-      if (!pid) return "No project";
+      if (!pid) return "Tanpa Proyek";
       return db.projects?.find((p: any) => p.id === pid)?.name || pid;
     };
     const getLabelNames = (lids: string[] | undefined) => {
@@ -7173,7 +7473,7 @@ async function startServer() {
     };
     const stripHtml = (html: string | undefined | null) => String(html || "").replace(/<[^>]*>?/gm, "").trim();
 
-    const recordTaskActivity = (action: string, detail?: string, changes?: { field?: string; from?: any; to?: any }) => {
+    const recordTaskActivity = (action: string, detail?: string, changes?: { field?: string; from?: any; to?: any }, auditActionOverride?: string) => {
       const nowIso = new Date().toISOString();
       const act = {
         id: `act_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
@@ -7188,11 +7488,13 @@ async function startServer() {
       t.activity = Array.isArray(t.activity) ? t.activity : [];
       t.activity.unshift(act);
       db.activity.unshift(act);
+      const taskRef = t.number_str || t.title;
+      const auditText = auditActionOverride || `${action} pada ${taskRef}${detail ? ` — ${detail}` : ""}`;
       db.audit_logs.unshift({
         id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
         actor_id: actorId,
         actor_name: actorName,
-        action: `${action} (${t.number_str || t.title})${detail ? ` — ${detail}` : ""}`,
+        action: auditText,
         created_at: nowIso
       });
     };
@@ -7205,10 +7507,12 @@ async function startServer() {
 
     // 1. Title change
     if (req.body.title !== undefined && req.body.title !== t.title) {
+      const taskRef = t.number_str || t.title;
       recordTaskActivity(
-        `mengubah judul tugas`,
-        `Dari "${t.title || "—"}" menjadi "${req.body.title}"`,
-        { field: "title", from: t.title, to: req.body.title }
+        `mengganti judul tugas menjadi "${req.body.title}"`,
+        `Judul sebelumnya: "${t.title || "—"}"`,
+        { field: "title", from: t.title, to: req.body.title },
+        `mengganti judul ${taskRef} menjadi "${req.body.title}"`
       );
     }
 
@@ -7217,106 +7521,132 @@ async function startServer() {
       const oldBrief = stripHtml(t.description);
       const newBrief = stripHtml(req.body.description);
       if (oldBrief !== newBrief) {
+        const taskRef = t.number_str || t.title;
         const summaryText = newBrief
-          ? (oldBrief ? `Dari: "${oldBrief.slice(0, 100)}${oldBrief.length > 100 ? "…" : ""}" → Menjadi: "${newBrief.slice(0, 140)}${newBrief.length > 140 ? "…" : ""}"` : `Isi brief: "${newBrief.slice(0, 150)}${newBrief.length > 150 ? "…" : ""}"`)
-          : "Brief dikosongkan";
+          ? (oldBrief ? `"${newBrief.slice(0, 140)}${newBrief.length > 140 ? "…" : ""}"` : `"${newBrief.slice(0, 150)}${newBrief.length > 150 ? "…" : ""}"`)
+          : "Deskripsi dikosongkan";
         recordTaskActivity(
-          oldBrief ? `mengubah brief tugas` : `menulis brief tugas`,
+          oldBrief ? `memperbarui brief tugas` : `menambahkan brief tugas`,
           summaryText,
-          { field: "description", from: oldBrief || "Kosong", to: newBrief || "Kosong" }
+          { field: "description", from: oldBrief || "Kosong", to: newBrief || "Kosong" },
+          oldBrief ? `memperbarui brief tugas ${taskRef}` : `menambahkan brief pada ${taskRef}`
         );
       }
     }
 
     // 3. Status change
     if (req.body.status !== undefined && req.body.status !== t.status) {
+      const taskRef = t.number_str || t.title;
       recordTaskActivity(
-        `mengubah status tugas dari "${getStatusName(t.status)}" ke "${getStatusName(req.body.status)}"`,
+        `memindahkan status dari ${getStatusName(t.status)} ke ${getStatusName(req.body.status)}`,
         undefined,
-        { field: "status", from: getStatusName(t.status), to: getStatusName(req.body.status) }
+        { field: "status", from: getStatusName(t.status), to: getStatusName(req.body.status) },
+        `memindahkan status ${taskRef} dari ${getStatusName(t.status)} ke ${getStatusName(req.body.status)}`
       );
     }
 
     // 4. Priority change
     if (req.body.priority !== undefined && req.body.priority !== t.priority) {
+      const pNames: Record<string, string> = { low: "Rendah", medium: "Sedang", high: "Tinggi", urgent: "Mendesak" };
+      const newP = pNames[String(req.body.priority || "").toLowerCase()] || req.body.priority;
+      const taskRef = t.number_str || t.title;
       recordTaskActivity(
-        `mengubah prioritas tugas dari "${t.priority || "medium"}" ke "${req.body.priority}"`,
+        `mengubah prioritas menjadi ${newP}`,
         undefined,
-        { field: "priority", from: t.priority, to: req.body.priority }
+        { field: "priority", from: t.priority, to: req.body.priority },
+        `mengubah prioritas ${taskRef} menjadi ${newP}`
       );
     }
 
     // 5. Board change
     if (req.body.board_id !== undefined && req.body.board_id !== t.board_id) {
+      const taskRef = t.number_str || t.title;
       recordTaskActivity(
-        `memindahkan tugas dari board "${getBoardName(t.board_id)}" ke "${getBoardName(req.body.board_id)}"`,
+        `memindahkan tugas ke board ${getBoardName(req.body.board_id)}`,
         undefined,
-        { field: "board_id", from: getBoardName(t.board_id), to: getBoardName(req.body.board_id) }
+        { field: "board_id", from: getBoardName(t.board_id), to: getBoardName(req.body.board_id) },
+        `memindahkan ${taskRef} ke board ${getBoardName(req.body.board_id)}`
       );
     }
 
     // 6. Project change
     if (req.body.project_id !== undefined && req.body.project_id !== t.project_id) {
+      const taskRef = t.number_str || t.title;
       recordTaskActivity(
-        `mengubah project dari "${getProjectName(t.project_id)}" ke "${getProjectName(req.body.project_id)}"`,
+        `menautkan tugas ke proyek ${getProjectName(req.body.project_id)}`,
         undefined,
-        { field: "project_id", from: getProjectName(t.project_id), to: getProjectName(req.body.project_id) }
+        { field: "project_id", from: getProjectName(t.project_id), to: getProjectName(req.body.project_id) },
+        `menautkan ${taskRef} ke proyek ${getProjectName(req.body.project_id)}`
       );
     }
 
     // 7. Department change
     if (req.body.department !== undefined && req.body.department !== (t.department || "")) {
+      const taskRef = t.number_str || t.title;
       recordTaskActivity(
-        `mengubah departemen dari "${t.department || "Kosong"}" ke "${req.body.department || "Kosong"}"`,
+        `memindahkan tugas ke divisi ${req.body.department || "Umum"}`,
         undefined,
-        { field: "department", from: t.department || "Kosong", to: req.body.department || "Kosong" }
+        { field: "department", from: t.department || "Kosong", to: req.body.department || "Kosong" },
+        `memindahkan ${taskRef} ke divisi ${req.body.department || "Umum"}`
       );
     }
 
     // 8. Item type change
     if (req.body.item_type !== undefined && req.body.item_type !== (t.item_type || "")) {
+      const taskRef = t.number_str || t.title;
       recordTaskActivity(
-        `mengubah tipe item dari "${t.item_type || "Kosong"}" ke "${req.body.item_type || "Kosong"}"`,
+        `mengubah jenis tugas menjadi ${req.body.item_type || "Standar"}`,
         undefined,
-        { field: "item_type", from: t.item_type || "Kosong", to: req.body.item_type || "Kosong" }
+        { field: "item_type", from: t.item_type || "Kosong", to: req.body.item_type || "Kosong" },
+        `mengubah jenis ${taskRef} menjadi ${req.body.item_type || "Standar"}`
       );
     }
 
     // 9. Link file/folder change
     if (req.body.link_url !== undefined && req.body.link_url !== (t.link_url || "")) {
+      const taskRef = t.number_str || t.title;
       recordTaskActivity(
-        req.body.link_url ? `memperbarui link file/folder` : `menghapus link file/folder`,
-        req.body.link_url ? `Link: ${req.body.link_url}` : `Sebelumnya: ${t.link_url}`,
-        { field: "link_url", from: t.link_url || "Kosong", to: req.body.link_url || "Kosong" }
+        req.body.link_url ? `melampirkan tautan baru` : `menghapus tautan file`,
+        req.body.link_url ? `${req.body.link_url}` : undefined,
+        { field: "link_url", from: t.link_url || "Kosong", to: req.body.link_url || "Kosong" },
+        req.body.link_url ? `melampirkan tautan pada ${taskRef}` : `menghapus tautan dari ${taskRef}`
       );
     }
 
     // 10. Deadline change
     if (req.body.deadline !== undefined && req.body.deadline !== t.deadline) {
-      const oldDl = t.deadline ? String(t.deadline).slice(0, 16).replace("T", " ") : "Kosong";
-      const newDl = req.body.deadline ? String(req.body.deadline).slice(0, 16).replace("T", " ") : "Kosong";
+      const oldDl = formatDateHuman(t.deadline);
+      const newDl = formatDateHuman(req.body.deadline);
+      const taskRef = t.number_str || t.title;
       recordTaskActivity(
-        `mengubah tenggat waktu (deadline) dari "${oldDl}" ke "${newDl}"`,
+        newDl === "tanpa tenggat" ? `menghapus tenggat waktu` : `mengatur deadline ke ${newDl}`,
         undefined,
-        { field: "deadline", from: oldDl, to: newDl }
+        { field: "deadline", from: oldDl, to: newDl },
+        newDl === "tanpa tenggat" ? `menghapus tenggat waktu ${taskRef}` : `mengatur deadline ${taskRef} ke ${newDl}`
       );
     }
 
     // 11. Start date change
     if (req.body.start_date !== undefined && req.body.start_date !== (t.start_date || null)) {
+      const newStart = formatDateHuman(req.body.start_date);
+      const taskRef = t.number_str || t.title;
       recordTaskActivity(
-        `mengubah tanggal mulai (start date) dari "${t.start_date || "Kosong"}" ke "${req.body.start_date || "Kosong"}"`,
+        `mengatur tanggal mulai ke ${newStart}`,
         undefined,
-        { field: "start_date", from: t.start_date || "Kosong", to: req.body.start_date || "Kosong" }
+        { field: "start_date", from: t.start_date || "Kosong", to: req.body.start_date || "Kosong" },
+        `mengatur tanggal mulai ${taskRef} ke ${newStart}`
       );
     }
 
     // 12. Submit date change
     if (req.body.submit_date !== undefined && req.body.submit_date !== (t.submit_date || null)) {
+      const newSub = formatDateHuman(req.body.submit_date);
+      const taskRef = t.number_str || t.title;
       recordTaskActivity(
-        `mengubah tanggal submit dari "${t.submit_date || "Kosong"}" ke "${req.body.submit_date || "Kosong"}"`,
+        `mengatur tanggal submit ke ${newSub}`,
         undefined,
-        { field: "submit_date", from: t.submit_date || "Kosong", to: req.body.submit_date || "Kosong" }
+        { field: "submit_date", from: t.submit_date || "Kosong", to: req.body.submit_date || "Kosong" },
+        `mengatur tanggal submit ${taskRef} ke ${newSub}`
       );
     }
 
@@ -7325,39 +7655,64 @@ async function startServer() {
       const oldL = JSON.stringify([...(t.label_ids || [])].sort());
       const newL = JSON.stringify([...req.body.label_ids].sort());
       if (oldL !== newL) {
+        const taskRef = t.number_str || t.title;
+        const newLabelsText = getLabelNames(req.body.label_ids);
         recordTaskActivity(
-          `mengubah IP / Brand label`,
-          `Dari [${getLabelNames(t.label_ids)}] menjadi [${getLabelNames(req.body.label_ids)}]`,
-          { field: "label_ids", from: getLabelNames(t.label_ids), to: getLabelNames(req.body.label_ids) }
+          newLabelsText === "Kosong" ? `menghapus semua label` : `memperbarui label menjadi ${newLabelsText}`,
+          undefined,
+          { field: "label_ids", from: getLabelNames(t.label_ids), to: newLabelsText },
+          newLabelsText === "Kosong" ? `menghapus label dari ${taskRef}` : `memperbarui label ${taskRef} menjadi ${newLabelsText}`
         );
       }
     }
 
     // 14. Card color / style change
     if (req.body.card_color !== undefined && req.body.card_color !== t.card_color) {
+      const taskRef = t.number_str || t.title;
       recordTaskActivity(
-        req.body.card_color ? `mengubah warna kartu menjadi ${req.body.card_color}` : `mereset warna kartu`,
+        req.body.card_color ? `mengganti warna kartu` : `mengembalikan warna kartu default`,
         undefined,
-        { field: "card_color", from: t.card_color || "Default", to: req.body.card_color || "Default" }
+        { field: "card_color", from: t.card_color || "Default", to: req.body.card_color || "Default" },
+        req.body.card_color ? `mengganti warna kartu ${taskRef}` : `mengembalikan warna kartu ${taskRef} ke standar`
       );
     }
     if (req.body.card_style !== undefined && req.body.card_style !== t.card_style) {
+      const taskRef = t.number_str || t.title;
       recordTaskActivity(
-        `mengubah gaya tampilan warna kartu ke "${req.body.card_style}"`,
+        `mengganti gaya tampilan kartu`,
         undefined,
-        { field: "card_style", from: t.card_style || "bar", to: req.body.card_style }
+        { field: "card_style", from: t.card_style || "bar", to: req.body.card_style },
+        `mengganti gaya tampilan kartu ${taskRef}`
       );
     }
 
     // 15. Requestor change
     if (Array.isArray(req.body.requestor_ids)) {
-      const oldReq = (t.requestor_ids || []).map(getUserName).join(", ") || "Kosong";
-      const newReq = req.body.requestor_ids.map(getUserName).join(", ") || "Kosong";
+      const oldIds = Array.isArray(t.requestor_ids) ? t.requestor_ids : [];
+      const newIds = req.body.requestor_ids.filter(Boolean);
+      const oldSet = new Set(oldIds);
+      const newSet = new Set(newIds);
+      const addedNames = newIds.filter((id: string) => !oldSet.has(id)).map(getUserName);
+      const removedNames = oldIds.filter((id: string) => !newSet.has(id)).map(getUserName);
+      const oldReq = oldIds.map(getUserName).join(", ") || "Kosong";
+      const newReq = newIds.map(getUserName).join(", ") || "Kosong";
       if (oldReq !== newReq) {
+        const taskRef = t.number_str || t.title;
+        let humanReqMsg = `mengubah pemohon menjadi ${newReq}`;
+        if (newIds.length === 0) {
+          humanReqMsg = `mengosongkan daftar pemohon`;
+        } else if (addedNames.length > 0 && removedNames.length === 0) {
+          humanReqMsg = `menambahkan ${joinListNatural(addedNames)} sebagai pemohon`;
+        } else if (removedNames.length > 0 && addedNames.length === 0) {
+          humanReqMsg = `menghapus ${joinListNatural(removedNames)} dari daftar pemohon`;
+        } else if (oldIds.length === 0) {
+          humanReqMsg = `menetapkan ${joinListNatural(newIds.map(getUserName))} sebagai pemohon`;
+        }
         recordTaskActivity(
-          `memperbarui daftar Requestor`,
-          `Dari [${oldReq}] menjadi [${newReq}]`,
-          { field: "requestor_ids", from: oldReq, to: newReq }
+          humanReqMsg,
+          undefined,
+          { field: "requestor_ids", from: oldReq, to: newReq },
+          `${humanReqMsg} pada ${taskRef}`
         );
       }
     }
@@ -7419,21 +7774,35 @@ async function startServer() {
       // Added checkpoints
       const addedCps = newCheckpoints.filter((nc: any) => !oldCheckpoints.some((oc: any) => oc.id === nc.id));
       if (addedCps.length === 1) {
+        const cpName = addedCps[0].title || 'Tahap Baru';
+        const picName = addedCps[0].assignee_id ? getUserName(addedCps[0].assignee_id) : "";
+        const taskRef = t.number_str || t.title;
         recordTaskActivity(
-          `menambahkan checkpoint baru "${addedCps[0].title || 'Checkpoint'}"`,
-          addedCps[0].assignee_id ? `PIC: ${getUserName(addedCps[0].assignee_id)}` : undefined
+          `menambahkan tahap "${cpName}"`,
+          picName ? `PIC: ${picName}` : undefined,
+          undefined,
+          picName ? `menambahkan tahap "${cpName}" di ${taskRef} untuk ${picName}` : `menambahkan tahap "${cpName}" di ${taskRef}`
         );
       } else if (addedCps.length > 1) {
+        const taskRef = t.number_str || t.title;
         recordTaskActivity(
-          `menambahkan ${addedCps.length} checkpoint baru`,
-          addedCps.map((c: any) => c.title).join(", ")
+          `menambahkan ${addedCps.length} tahap baru`,
+          addedCps.map((c: any) => c.title).join(", "),
+          undefined,
+          `menambahkan ${addedCps.length} tahap baru pada ${taskRef}`
         );
       }
 
       // Removed checkpoints
       const removedCps = oldCheckpoints.filter((oc: any) => !newCheckpoints.some((nc: any) => nc.id === oc.id));
       removedCps.forEach((rc: any) => {
-        recordTaskActivity(`menghapus checkpoint "${rc.title || 'Checkpoint'}"`);
+        const taskRef = t.number_str || t.title;
+        recordTaskActivity(
+          `menghapus tahap "${rc.title || 'Tahap'}"`,
+          undefined,
+          undefined,
+          `menghapus tahap "${rc.title || 'Tahap'}" dari ${taskRef}`
+        );
       });
 
       // Modified existing checkpoints
@@ -7443,34 +7812,50 @@ async function startServer() {
         }
         const oldCp = oldCheckpoints.find((c: any) => c.id === newCp.id);
         if (!oldCp) return;
+        const taskRef = t.number_str || t.title;
 
         if (newCp.done && !oldCp.done) {
-          recordTaskActivity(`menyelesaikan checkpoint "${newCp.title || 'Poin Checklist'}" pada tugas`);
+          recordTaskActivity(
+            `menyelesaikan tahap "${newCp.title || 'Tahap'}"`,
+            undefined,
+            undefined,
+            `menyelesaikan tahap "${newCp.title || 'Tahap'}" di ${taskRef}`
+          );
         } else if (!newCp.done && oldCp.done) {
-          recordTaskActivity(`membuka kembali (uncheck) checkpoint "${newCp.title || 'Poin Checklist'}"`);
+          recordTaskActivity(
+            `membuka kembali tahap "${newCp.title || 'Tahap'}"`,
+            undefined,
+            undefined,
+            `membuka kembali tahap "${newCp.title || 'Tahap'}" di ${taskRef}`
+          );
         }
 
         if (newCp.title !== oldCp.title) {
           recordTaskActivity(
-            `mengubah nama checkpoint`,
-            `Dari "${oldCp.title}" menjadi "${newCp.title}"`,
-            { field: "checkpoint_title", from: oldCp.title, to: newCp.title }
+            `mengubah nama tahap menjadi "${newCp.title}"`,
+            `Sebelumnya: "${oldCp.title}"`,
+            { field: "checkpoint_title", from: oldCp.title, to: newCp.title },
+            `mengubah nama tahap menjadi "${newCp.title}" pada ${taskRef}`
           );
         }
 
         if ((newCp.assignee_id || null) !== (oldCp.assignee_id || null)) {
+          const newPic = newCp.assignee_id ? getUserName(newCp.assignee_id) : "";
           recordTaskActivity(
-            `mengubah PIC checkpoint "${newCp.title}"`,
-            `Dari ${getUserName(oldCp.assignee_id)} ke ${getUserName(newCp.assignee_id)}`,
-            { field: "checkpoint_pic", from: getUserName(oldCp.assignee_id), to: getUserName(newCp.assignee_id) }
+            newPic ? `menunjuk ${newPic} sebagai PIC tahap "${newCp.title}"` : `melepas PIC pada tahap "${newCp.title}"`,
+            undefined,
+            { field: "checkpoint_pic", from: getUserName(oldCp.assignee_id), to: getUserName(newCp.assignee_id) },
+            newPic ? `menunjuk ${newPic} sebagai PIC tahap "${newCp.title}" di ${taskRef}` : `melepas PIC tahap "${newCp.title}" di ${taskRef}`
           );
         }
 
         if ((newCp.deadline || "") !== (oldCp.deadline || "")) {
+          const newCpDl = formatDateHuman(newCp.deadline);
           recordTaskActivity(
-            `mengubah deadline checkpoint "${newCp.title}"`,
-            `Dari "${oldCp.deadline || "Kosong"}" menjadi "${newCp.deadline || "Kosong"}"`,
-            { field: "checkpoint_deadline", from: oldCp.deadline || "Kosong", to: newCp.deadline || "Kosong" }
+            newCpDl === "tanpa tenggat" ? `menghapus deadline tahap "${newCp.title}"` : `mengatur deadline tahap "${newCp.title}" ke ${newCpDl}`,
+            undefined,
+            { field: "checkpoint_deadline", from: oldCp.deadline || "Kosong", to: newCp.deadline || "Kosong" },
+            newCpDl === "tanpa tenggat" ? `menghapus deadline tahap "${newCp.title}" di ${taskRef}` : `mengatur deadline tahap "${newCp.title}" ke ${newCpDl} di ${taskRef}`
           );
         }
       });
@@ -7604,14 +7989,16 @@ async function startServer() {
     }
     // Archive / Unarchive tracking
     if (req.body.archived === false && t.archived === true) {
+      const taskRef = t.number_str || t.title;
       t.archived = false;
-      recordTaskActivity(`memulihkan (unarchive) tugas kembali ke board aktif`);
+      recordTaskActivity(`mengembalikan tugas ke board aktif`, undefined, undefined, `mengembalikan tugas ${taskRef} ke board aktif`);
     }
     if (req.body.archived === true && !t.archived) {
+      const taskRef = t.number_str || t.title;
       t.archived = true;
       t.archived_at = t.archived_at || new Date().toISOString();
       t.archived_month = t.archived_month || new Date().toISOString().slice(0, 7);
-      recordTaskActivity(`mengarsipkan tugas ke folder ${t.archived_month}`);
+      recordTaskActivity(`mengarsipkan tugas`, undefined, undefined, `mengarsipkan tugas ${taskRef} (${t.archived_month})`);
     }
 
     const oldAssignees: string[] = Array.isArray(t.assignee_ids) && t.assignee_ids.length ? t.assignee_ids : (t.assignee_id ? [t.assignee_id] : []);
@@ -7623,13 +8010,32 @@ async function startServer() {
     }
 
     if (req.body.assignee_ids !== undefined) {
-      const oldNames = oldAssignees.map(getUserName).join(", ") || "Unassigned";
-      const newNames = (req.body.assignee_ids || []).map(getUserName).join(", ") || "Unassigned";
+      const newAssignees: string[] = Array.isArray(req.body.assignee_ids) ? req.body.assignee_ids.filter(Boolean) : [];
+      const oldSet = new Set(oldAssignees);
+      const newSet = new Set(newAssignees);
+      const addedNames = newAssignees.filter((id) => !oldSet.has(id)).map(getUserName);
+      const removedNames = oldAssignees.filter((id) => !newSet.has(id)).map(getUserName);
+      const oldNames = oldAssignees.map(getUserName).join(", ") || "Kosong";
+      const newNames = newAssignees.map(getUserName).join(", ") || "Kosong";
       if (oldNames !== newNames) {
+        const taskRef = t.number_str || t.title;
+        let humanAssMsg = `mengalihkan pelaksana tugas ke ${newNames}`;
+        if (newAssignees.length === 0) {
+          humanAssMsg = `mengosongkan pelaksana tugas`;
+        } else if (addedNames.length > 0 && removedNames.length === 0) {
+          humanAssMsg = `menugaskan ${joinListNatural(addedNames)}`;
+        } else if (removedNames.length > 0 && addedNames.length === 0) {
+          humanAssMsg = `melepas ${joinListNatural(removedNames)} dari tugas`;
+        } else if (oldAssignees.length === 0) {
+          humanAssMsg = `menugaskan ${joinListNatural(newAssignees.map(getUserName))}`;
+        } else {
+          humanAssMsg = `mengalihkan pelaksana dari ${joinListNatural(oldAssignees.map(getUserName))} ke ${joinListNatural(newAssignees.map(getUserName))}`;
+        }
         recordTaskActivity(
-          `mengubah Assignee tugas`,
-          `Dari [${oldNames}] menjadi [${newNames}]`,
-          { field: "assignee_ids", from: oldNames, to: newNames }
+          humanAssMsg,
+          undefined,
+          { field: "assignee_ids", from: oldNames, to: newNames },
+          `${humanAssMsg} pada ${taskRef}`
         );
       }
     }
@@ -7757,6 +8163,7 @@ async function startServer() {
       db.deleted_task_ids = Array.from(
         new Set([...(Array.isArray(db.deleted_task_ids) ? db.deleted_task_ids : []), delId])
       );
+      recordServerDeletedIds([delId]);
     }
     saveDbToFile(true);
     broadcast({ type: "tasks:changed", deleted_id: req.params.id });
@@ -8944,6 +9351,7 @@ async function startServer() {
 
   app.delete("/api/reminders/:id", (req, res) => {
     db.reminders = db.reminders.filter((r: any) => r.id !== req.params.id);
+    recordServerDeletedIds([req.params.id]);
     saveDbToFile();
     res.json({ success: true });
   });
@@ -9127,6 +9535,7 @@ async function startServer() {
     const fallbackParent = reassignTo || deletedUnit?.parent_id || null;
 
     db.org_units = (db.org_units || []).filter((u: any) => u.id !== targetId);
+    recordServerDeletedIds([targetId]);
 
     // Reassign child sub-units
     db.org_units.forEach((u: any) => {
@@ -9540,7 +9949,12 @@ async function startServer() {
     const uid = reqUser?.user_id || currentSessionUser?.user_id || "user_admin1";
     const target = db.posts.find((p: any) => p.id === req.params.id);
     const parentId = target?.parent_id || null;
+    const removedPostIds = (db.posts || [])
+      .filter((p: any) => p && (p.id === req.params.id || p.parent_id === req.params.id))
+      .map((p: any) => p.id)
+      .filter(Boolean);
     db.posts = db.posts.filter((p: any) => p.id !== req.params.id && p.parent_id !== req.params.id);
+    recordServerDeletedIds([req.params.id, ...removedPostIds], "deleted_post_ids");
     let updatedParent: any = null;
     if (parentId) {
       const parent = db.posts.find((p: any) => p.id === parentId);
@@ -9550,10 +9964,11 @@ async function startServer() {
         updatedParent = hydratePostForUser(parent, uid, true);
       }
     }
-    saveDbToFile();
+    saveDbToFile(true);
     broadcast({
       type: "post:deleted",
       id: req.params.id,
+      deleted_ids: [req.params.id, ...removedPostIds],
       parent_id: parentId,
       parent: updatedParent,
       trending: computeTrendingTags()
@@ -9751,26 +10166,78 @@ async function startServer() {
     return `${String(m?.title || "").trim().toLowerCase()}__${String(m?.date || "")}__${String(m?.start_time || "")}`;
   }
 
-  // Meetings & Schedule API (Integrated with Google Calendar)
-  app.get("/api/meetings", (req, res) => {
-    const deletedIds = new Set(Array.isArray(db.deleted_meeting_ids) ? db.deleted_meeting_ids : []);
+  function isMeetingVisibleToUser(m: any, targetUid: string, targetEmail: string): boolean {
+    if (!m || !m.id) return false;
+    if (!targetUid) return true;
+    const cleanEmail = String(targetEmail || "").toLowerCase().trim();
+    const attendeeIds = Array.isArray(m.attendee_ids) ? m.attendee_ids : [];
+    const attendeeEmails = Array.isArray(m.attendee_emails)
+      ? m.attendee_emails.map((e: any) => String(e || "").toLowerCase().trim())
+      : [];
+
+    if (m.owner_user_id) {
+      if (m.owner_user_id === targetUid) return true;
+      if (attendeeIds.includes(targetUid)) return true;
+      if (cleanEmail && attendeeEmails.includes(cleanEmail)) return true;
+      return false;
+    }
+
+    if (m.is_gcal) {
+      if (m.created_by === targetUid) return true;
+      if (attendeeIds.includes(targetUid)) return true;
+      if (cleanEmail && attendeeEmails.includes(cleanEmail)) return true;
+      return false;
+    }
+
+    if (m.created_by === targetUid) return true;
+    if (attendeeIds.includes(targetUid)) return true;
+    if (cleanEmail && attendeeEmails.includes(cleanEmail)) return true;
+    if (attendeeIds.length === 0) return true;
+    return false;
+  }
+
+  function getFilteredMeetingsForUser(targetUid: string, targetEmail: string) {
+    const deletedIds = new Set([
+      ...(Array.isArray(db.deleted_meeting_ids) ? db.deleted_meeting_ids : []),
+      ...(Array.isArray(db.deleted_entity_ids) ? db.deleted_entity_ids : []),
+    ]);
     const deletedGcal = new Set(Array.isArray(db.deleted_gcal_ids) ? db.deleted_gcal_ids : []);
     const deletedKeys = new Set(Array.isArray(db.deleted_meeting_keys) ? db.deleted_meeting_keys : []);
 
-    const seenKeys = new Set<string>();
-    const list = (db.meetings || []).filter((m: any) => {
+    // First clean globally deleted meetings from db.meetings without dropping other users' events
+    db.meetings = (db.meetings || []).filter((m: any) => {
       if (!m || !m.id) return false;
-      const gcalId = String(m.gcal_event_id || (String(m.id).startsWith("gcal_") ? String(m.id).replace(/^gcal_/, "") : ""));
+      const gcalId = String(
+        m.gcal_event_id || (String(m.id).startsWith("gcal_") ? String(m.id).replace(/^gcal_/, "") : "")
+      );
       const key = makeMeetingKey(m);
-      if (deletedIds.has(m.id) || (gcalId && deletedGcal.has(gcalId)) || deletedKeys.has(key)) {
-        return false;
-      }
+      return !deletedIds.has(m.id) && !(gcalId && deletedGcal.has(gcalId)) && !deletedKeys.has(key);
+    });
+
+    const seenKeys = new Set<string>();
+    const userList = db.meetings.filter((m: any) => {
+      if (!isMeetingVisibleToUser(m, targetUid, targetEmail)) return false;
+      const key = makeMeetingKey(m);
       if (seenKeys.has(key)) return false;
       seenKeys.add(key);
       return true;
     });
-    db.meetings = list;
-    list.sort((a: any, b: any) => new Date(`${a.date}T${a.start_time}`).getTime() - new Date(`${b.date}T${b.start_time}`).getTime());
+
+    userList.sort(
+      (a: any, b: any) =>
+        new Date(`${a.date}T${a.start_time}`).getTime() - new Date(`${b.date}T${b.start_time}`).getTime()
+    );
+    return userList;
+  }
+
+  // Meetings & Schedule API (Integrated with Google Calendar, Isolated Per User Account)
+  app.get("/api/meetings", (req, res) => {
+    const reqUser = getReqUser(req) || currentSessionUser;
+    const requestedUid = String(req.query.user_id || reqUser?.user_id || "").trim();
+    const targetUserObj =
+      (db.users || []).find((u: any) => u && u.user_id === requestedUid) || reqUser;
+    const targetEmail = String(targetUserObj?.email || "").toLowerCase().trim();
+    const list = getFilteredMeetingsForUser(requestedUid, targetEmail);
     res.json(list);
   });
 
@@ -9783,7 +10250,7 @@ async function startServer() {
     db.deleted_gcal_ids = Array.isArray(db.deleted_gcal_ids) ? db.deleted_gcal_ids : [];
     db.deleted_meeting_keys = Array.isArray(db.deleted_meeting_keys) ? db.deleted_meeting_keys : [];
 
-    const deletedIds = new Set(db.deleted_meeting_ids);
+    const deletedIds = new Set([...db.deleted_meeting_ids, ...(db.deleted_entity_ids || [])]);
     const deletedSet = new Set(db.deleted_gcal_ids);
     const deletedKeys = new Set(db.deleted_meeting_keys);
 
@@ -9791,19 +10258,19 @@ async function startServer() {
     const todayStr = today.toISOString().slice(0, 10);
     const tomorrow = new Date(today.getTime() + 86400000).toISOString().slice(0, 10);
 
-    // Mark existing workspace meetings as gcal_synced and seed Google Calendar schedule if none synced yet
+    // Mark only this user's own meetings as gcal_synced
     let changed = false;
     db.meetings.forEach((m: any) => {
-      if (m && !m.gcal_synced) {
+      if (m && !m.gcal_synced && isMeetingVisibleToUser(m, uid, email)) {
         m.gcal_synced = true;
-        m.gcal_event_id = m.gcal_event_id || `gcal_sync_${m.id}`;
+        m.gcal_event_id = m.gcal_event_id || `gcal_sync_${uid}_${m.id}`;
         changed = true;
       }
     });
 
     const sampleGcalEvents = [
       {
-        gcal_event_id: `gcal_weekly_sync_${todayStr}`,
+        gcal_event_id: `gcal_weekly_sync_${uid}_${todayStr}`,
         title: "Weekly Team Sync & Progress Review",
         description: `Sinkronisasi otomatis dari Google Calendar (${email})`,
         date: todayStr,
@@ -9813,7 +10280,7 @@ async function startServer() {
         meet_link: "https://meet.google.com/asli-sync-cal",
       },
       {
-        gcal_event_id: `gcal_product_standup_${tomorrow}`,
+        gcal_event_id: `gcal_product_standup_${uid}_${tomorrow}`,
         title: "Cross-Division Alignment & Planning",
         description: `Agenda terjadwal dari Google Calendar (${email})`,
         date: tomorrow,
@@ -9826,14 +10293,17 @@ async function startServer() {
 
     sampleGcalEvents.forEach((ev) => {
       const gcalId = ev.gcal_event_id;
+      const scopedId = `gcal_${uid}_${gcalId}`;
       const evKey = makeMeetingKey(ev);
-      if (deletedSet.has(gcalId) || deletedIds.has(`gcal_${gcalId}`) || deletedKeys.has(evKey)) return;
+      if (deletedSet.has(gcalId) || deletedIds.has(scopedId) || deletedKeys.has(evKey)) return;
       const exists = db.meetings.some(
-        (m: any) => m.gcal_event_id === gcalId || m.id === `gcal_${gcalId}` || makeMeetingKey(m) === evKey
+        (m: any) =>
+          (m.owner_user_id === uid || m.created_by === uid) &&
+          (m.gcal_event_id === gcalId || m.id === scopedId || makeMeetingKey(m) === evKey)
       );
       if (!exists) {
         db.meetings.push({
-          id: `gcal_${gcalId}`,
+          id: scopedId,
           title: ev.title,
           description: ev.description,
           date: ev.date,
@@ -9842,6 +10312,7 @@ async function startServer() {
           location: ev.location,
           meet_link: ev.meet_link,
           attendee_ids: [uid],
+          owner_user_id: uid,
           is_gcal: true,
           gcal_synced: true,
           gcal_event_id: gcalId,
@@ -9852,32 +10323,26 @@ async function startServer() {
       }
     });
 
-    const list = db.meetings
-      .filter((m: any) => {
-        if (!m || !m.id) return false;
-        const gcalId = String(m.gcal_event_id || (String(m.id).startsWith("gcal_") ? String(m.id).replace(/^gcal_/, "") : ""));
-        const key = makeMeetingKey(m);
-        return !deletedIds.has(m.id) && !(gcalId && deletedSet.has(gcalId)) && !deletedKeys.has(key);
-      })
-      .sort((a: any, b: any) => new Date(`${a.date}T${a.start_time}`).getTime() - new Date(`${b.date}T${b.start_time}`).getTime());
+    const userList = getFilteredMeetingsForUser(uid, email);
 
     if (changed) {
       saveDbToFile();
-      broadcast({ type: "meetings:synced", data: list });
+      broadcast({ type: "meetings:synced", user_id: uid, data: userList });
     }
-    res.json({ connected: true, email, events: list });
+    res.json({ connected: true, email, events: userList });
   });
 
   app.post("/api/meetings/sync-gcal", (req, res) => {
     const reqUser = getReqUser(req);
     const uid = reqUser?.user_id || currentSessionUser?.user_id || "user_admin1";
+    const userEmail = String(reqUser?.email || currentSessionUser?.email || "").toLowerCase().trim();
     const incoming = Array.isArray(req.body?.events) ? req.body.events : [];
     db.meetings = Array.isArray(db.meetings) ? db.meetings : [];
     db.deleted_meeting_ids = Array.isArray(db.deleted_meeting_ids) ? db.deleted_meeting_ids : [];
     db.deleted_gcal_ids = Array.isArray(db.deleted_gcal_ids) ? db.deleted_gcal_ids : [];
     db.deleted_meeting_keys = Array.isArray(db.deleted_meeting_keys) ? db.deleted_meeting_keys : [];
 
-    const deletedIds = new Set(db.deleted_meeting_ids);
+    const deletedIds = new Set([...db.deleted_meeting_ids, ...(db.deleted_entity_ids || [])]);
     const deletedSet = new Set(db.deleted_gcal_ids);
     const deletedKeys = new Set(db.deleted_meeting_keys);
 
@@ -9890,14 +10355,26 @@ async function startServer() {
 
     let changed = false;
     incoming.forEach((ev: any) => {
-      const gcalId = String(ev.gcal_event_id || ev.id || "").replace(/^gcal_/, "");
+      const rawGcalId = String(ev.gcal_event_id || ev.id || "").replace(/^gcal_/, "");
+      if (!rawGcalId) return;
+      const scopedId = `gcal_${uid}_${rawGcalId}`;
       const evKey = makeMeetingKey(ev);
-      if (!gcalId || deletedSet.has(gcalId) || deletedIds.has(`gcal_${gcalId}`) || deletedKeys.has(evKey)) return;
+      if (
+        deletedSet.has(rawGcalId) ||
+        deletedIds.has(scopedId) ||
+        deletedIds.has(`gcal_${rawGcalId}`) ||
+        deletedKeys.has(evKey)
+      ) {
+        return;
+      }
 
       const mappedAttendees = new Set<string>([uid]);
+      const attendeeEmails: string[] = [];
       if (Array.isArray(ev.attendee_emails)) {
         ev.attendee_emails.forEach((em: string) => {
-          const foundUid = emailToUserId.get(String(em || "").toLowerCase());
+          const cleanEm = String(em || "").toLowerCase().trim();
+          if (cleanEm) attendeeEmails.push(cleanEm);
+          const foundUid = emailToUserId.get(cleanEm);
           if (foundUid) mappedAttendees.add(foundUid);
         });
       }
@@ -9909,15 +10386,24 @@ async function startServer() {
 
       const existing = db.meetings.find(
         (m: any) =>
-          m.gcal_event_id === gcalId ||
-          m.id === `gcal_${gcalId}` ||
-          makeMeetingKey(m) === evKey
+          m.id === scopedId ||
+          ((m.owner_user_id === uid || (!m.owner_user_id && m.created_by === uid)) &&
+            (m.gcal_event_id === rawGcalId || m.id === `gcal_${rawGcalId}` || makeMeetingKey(m) === evKey))
       );
 
       if (existing) {
-        if (!existing.gcal_synced || existing.gcal_event_id !== gcalId || existing.title !== ev.title || existing.date !== ev.date || existing.start_time !== ev.start_time || existing.end_time !== ev.end_time) {
+        if (
+          !existing.gcal_synced ||
+          existing.owner_user_id !== uid ||
+          existing.gcal_event_id !== rawGcalId ||
+          existing.title !== ev.title ||
+          existing.date !== ev.date ||
+          existing.start_time !== ev.start_time ||
+          existing.end_time !== ev.end_time
+        ) {
           existing.gcal_synced = true;
-          existing.gcal_event_id = gcalId;
+          existing.owner_user_id = existing.owner_user_id || uid;
+          existing.gcal_event_id = rawGcalId;
           existing.title = ev.title || existing.title;
           existing.description = ev.description ?? existing.description;
           existing.date = ev.date || existing.date;
@@ -9927,11 +10413,14 @@ async function startServer() {
           existing.meet_link = ev.meet_link || existing.meet_link;
           existing.html_link = ev.html_link || existing.html_link || null;
           existing.attendee_ids = Array.from(new Set([...(existing.attendee_ids || []), ...Array.from(mappedAttendees)]));
+          if (attendeeEmails.length > 0) {
+            existing.attendee_emails = Array.from(new Set([...(existing.attendee_emails || []), ...attendeeEmails]));
+          }
           changed = true;
         }
       } else {
         db.meetings.push({
-          id: `gcal_${gcalId}`,
+          id: scopedId,
           title: ev.title || "Google Calendar Event",
           description: ev.description || "",
           date: ev.date || new Date().toISOString().slice(0, 10),
@@ -9941,9 +10430,11 @@ async function startServer() {
           meet_link: ev.meet_link || "",
           html_link: ev.html_link || null,
           attendee_ids: Array.from(mappedAttendees),
+          attendee_emails: attendeeEmails,
+          owner_user_id: uid,
           is_gcal: true,
           gcal_synced: true,
-          gcal_event_id: gcalId,
+          gcal_event_id: rawGcalId,
           created_by: uid,
           created_at: new Date().toISOString()
         });
@@ -9951,21 +10442,12 @@ async function startServer() {
       }
     });
 
-    db.meetings = db.meetings.filter((m: any) => {
-      if (!m || !m.id) return false;
-      const gcalId = String(m.gcal_event_id || (String(m.id).startsWith("gcal_") ? String(m.id).replace(/^gcal_/, "") : ""));
-      const key = makeMeetingKey(m);
-      return !deletedIds.has(m.id) && !(gcalId && deletedSet.has(gcalId)) && !deletedKeys.has(key);
-    });
-
-    const list = [...db.meetings].sort(
-      (a: any, b: any) => new Date(`${a.date}T${a.start_time}`).getTime() - new Date(`${b.date}T${b.start_time}`).getTime()
-    );
+    const userList = getFilteredMeetingsForUser(uid, userEmail);
     if (changed) {
       saveDbToFile();
-      broadcast({ type: "meetings:synced", data: list });
+      broadcast({ type: "meetings:synced", user_id: uid, data: userList });
     }
-    res.json(list);
+    res.json(userList);
   });
 
   function parseIcsDateTimeToWib(rawProp: string, rawVal: string): { date: string; time: string } | null {
@@ -10079,7 +10561,7 @@ async function startServer() {
     const uid = reqUser?.user_id || currentSessionUser?.user_id || "user_admin1";
     const prefs = (db.user_preferences && db.user_preferences[uid]) || {};
     res.json({
-      ics_url: prefs.gcal_ics_url || db.workspace?.gcal_ics_url || "",
+      ics_url: prefs.gcal_ics_url || "",
       last_ics_sync_at: prefs.gcal_last_sync_at || null
     });
   });
@@ -10168,9 +10650,10 @@ async function startServer() {
       db.deleted_gcal_ids = Array.isArray(db.deleted_gcal_ids) ? db.deleted_gcal_ids : [];
       db.deleted_meeting_keys = Array.isArray(db.deleted_meeting_keys) ? db.deleted_meeting_keys : [];
 
-      const deletedIds = new Set(db.deleted_meeting_ids);
+      const deletedIds = new Set([...db.deleted_meeting_ids, ...(db.deleted_entity_ids || [])]);
       const deletedSet = new Set(db.deleted_gcal_ids);
       const deletedKeys = new Set(db.deleted_meeting_keys);
+      const userEmail = String(reqUser?.email || currentSessionUser?.email || "").toLowerCase().trim();
 
       const emailToUserId = new Map<string, string>();
       (db.users || []).forEach((u: any) => {
@@ -10181,24 +10664,40 @@ async function startServer() {
 
       let importedCount = 0;
       parsedEvents.forEach((ev: any) => {
-        const gcalId = String(ev.gcal_event_id || ev.id || "").replace(/^gcal_/, "");
+        const rawGcalId = String(ev.gcal_event_id || ev.id || "").replace(/^gcal_/, "");
+        if (!rawGcalId) return;
+        const scopedId = `gcal_${uid}_${rawGcalId}`;
         const evKey = makeMeetingKey(ev);
-        if (!gcalId || deletedSet.has(gcalId) || deletedIds.has(`gcal_${gcalId}`) || deletedKeys.has(evKey)) return;
+        if (
+          deletedSet.has(rawGcalId) ||
+          deletedIds.has(scopedId) ||
+          deletedIds.has(`gcal_${rawGcalId}`) ||
+          deletedKeys.has(evKey)
+        ) {
+          return;
+        }
 
         const mappedAttendees = new Set<string>([uid]);
+        const attendeeEmails: string[] = [];
         if (Array.isArray(ev.attendee_emails)) {
           ev.attendee_emails.forEach((em: string) => {
-            const foundUid = emailToUserId.get(String(em || "").toLowerCase());
+            const cleanEm = String(em || "").toLowerCase().trim();
+            if (cleanEm) attendeeEmails.push(cleanEm);
+            const foundUid = emailToUserId.get(cleanEm);
             if (foundUid) mappedAttendees.add(foundUid);
           });
         }
 
         const existing = db.meetings.find(
-          (m: any) => m.gcal_event_id === gcalId || m.id === `gcal_${gcalId}` || makeMeetingKey(m) === evKey
+          (m: any) =>
+            m.id === scopedId ||
+            ((m.owner_user_id === uid || (!m.owner_user_id && m.created_by === uid)) &&
+              (m.gcal_event_id === rawGcalId || m.id === `gcal_${rawGcalId}` || makeMeetingKey(m) === evKey))
         );
         if (existing) {
           existing.gcal_synced = true;
-          existing.gcal_event_id = gcalId;
+          existing.owner_user_id = existing.owner_user_id || uid;
+          existing.gcal_event_id = rawGcalId;
           existing.title = ev.title || existing.title;
           existing.description = ev.description ?? existing.description;
           existing.date = ev.date || existing.date;
@@ -10207,10 +10706,13 @@ async function startServer() {
           existing.location = ev.location || existing.location;
           existing.meet_link = ev.meet_link || existing.meet_link;
           existing.attendee_ids = Array.from(new Set([...(existing.attendee_ids || []), ...Array.from(mappedAttendees)]));
+          if (attendeeEmails.length > 0) {
+            existing.attendee_emails = Array.from(new Set([...(existing.attendee_emails || []), ...attendeeEmails]));
+          }
           importedCount++;
         } else {
           db.meetings.push({
-            id: `gcal_${gcalId}`,
+            id: scopedId,
             title: ev.title,
             description: ev.description || "",
             date: ev.date,
@@ -10219,9 +10721,11 @@ async function startServer() {
             location: ev.location || "Google Calendar",
             meet_link: ev.meet_link || "",
             attendee_ids: Array.from(mappedAttendees),
+            attendee_emails: attendeeEmails,
+            owner_user_id: uid,
             is_gcal: true,
             gcal_synced: true,
-            gcal_event_id: gcalId,
+            gcal_event_id: rawGcalId,
             created_by: uid,
             created_at: new Date().toISOString()
           });
@@ -10229,18 +10733,11 @@ async function startServer() {
         }
       });
 
-      const list = db.meetings
-        .filter((m: any) => {
-          if (!m || !m.id) return false;
-          const gcalId = String(m.gcal_event_id || (String(m.id).startsWith("gcal_") ? String(m.id).replace(/^gcal_/, "") : ""));
-          const key = makeMeetingKey(m);
-          return !deletedIds.has(m.id) && !(gcalId && deletedSet.has(gcalId)) && !deletedKeys.has(key);
-        })
-        .sort((a: any, b: any) => new Date(`${a.date}T${a.start_time}`).getTime() - new Date(`${b.date}T${b.start_time}`).getTime());
+      const userList = getFilteredMeetingsForUser(uid, userEmail);
 
       saveDbToFile();
-      broadcast({ type: "meetings:synced", data: list });
-      res.json({ imported_count: importedCount, total_parsed: parsedEvents.length, events: list });
+      broadcast({ type: "meetings:synced", user_id: uid, data: userList });
+      res.json({ imported_count: importedCount, total_parsed: parsedEvents.length, events: userList });
     } catch (e: any) {
       res.status(400).json({ detail: e?.message || "Gagal mengimpor Google Calendar (.ics)" });
     }
@@ -10341,9 +10838,10 @@ async function startServer() {
       }
     });
 
-    const deletedIdSet = new Set(db.deleted_meeting_ids);
-    const deletedGcalSet = new Set(db.deleted_gcal_ids);
-    const deletedKeySet = new Set(db.deleted_meeting_keys);
+    const deletedIdSet = new Set<string>(db.deleted_meeting_ids || []);
+    const deletedGcalSet = new Set<string>(db.deleted_gcal_ids || []);
+    const deletedKeySet = new Set<string>(db.deleted_meeting_keys || []);
+    recordServerDeletedIds([...Array.from(deletedIdSet), ...Array.from(deletedGcalSet)], "deleted_meeting_ids");
 
     db.meetings = (db.meetings || []).filter((m: any) => {
       const gId = m.gcal_event_id || (String(m.id).startsWith("gcal_") ? String(m.id).replace(/^gcal_/, "") : "");
@@ -10351,7 +10849,7 @@ async function startServer() {
       return !deletedIdSet.has(m.id) && !(gId && deletedGcalSet.has(gId)) && !deletedKeySet.has(mKey);
     });
 
-    saveDbToFile();
+    saveDbToFile(true);
     broadcast({ type: "meeting:delete", id: paramId, deleted_ids: Array.from(deletedIdSet), deleted_keys: Array.from(deletedKeySet) });
     res.json({ success: true });
   });
@@ -11122,9 +11620,14 @@ async function startServer() {
       }
     }
 
+    const removedMsgIds = (db.messages || [])
+      .filter((m: any) => m && m.conversation_id === id)
+      .map((m: any) => m.id)
+      .filter(Boolean);
     db.messages = (db.messages || []).filter((m: any) => m.conversation_id !== id);
 
     if (isCircleOwn) {
+      recordServerDeletedIds(removedMsgIds);
       if (convIdx !== -1) {
         db.conversations[convIdx].last_message_preview = "Asisten Workspace & Notifikasi Approval";
         db.conversations[convIdx].unread = 0;
@@ -11134,6 +11637,7 @@ async function startServer() {
       broadcast({
         type: "conversation:deleted",
         id,
+        deleted_message_ids: removedMsgIds,
         member_ids: mems.length ? mems : [CIRCLE_BOT_ID, userId],
         conv_type: "dm",
         is_circle_clear: true,
@@ -11142,6 +11646,7 @@ async function startServer() {
       return res.json({ success: true, id, is_circle_clear: true });
     }
 
+    recordServerDeletedIds([id, ...removedMsgIds]);
     db.conversations = (db.conversations || []).filter((c: any) => c && c.id !== id);
     if (conv.type === "group") {
       db.groups = (db.groups || []).filter((g: any) => g && g.id !== id);
@@ -11158,6 +11663,7 @@ async function startServer() {
     broadcast({
       type: "conversation:deleted",
       id,
+      deleted_message_ids: removedMsgIds,
       member_ids: mems,
       conv_type: conv.type || "dm",
       is_circle_clear: false,
@@ -11746,8 +12252,14 @@ async function startServer() {
         return res.status(403).json({ detail: "Hanya pembuat atau admin grup yang dapat menghapus grup." });
       }
     }
+    const removedGroupMsgs = (db.messages || [])
+      .filter((m: any) => m && m.conversation_id === req.params.id)
+      .map((m: any) => m.id)
+      .filter(Boolean);
+    db.messages = (db.messages || []).filter((m: any) => m.conversation_id !== req.params.id);
     db.groups = (db.groups || []).filter((x: any) => x.id !== req.params.id);
     db.conversations = (db.conversations || []).filter((x: any) => x.id !== req.params.id);
+    recordServerDeletedIds([req.params.id, ...removedGroupMsgs]);
 
     if (targetGroup && (targetGroup.group_type === "department" || String(targetGroup.id || "").startsWith("group_official_"))) {
       const gName = String(targetGroup.name || "").trim().toLowerCase();
@@ -11758,7 +12270,7 @@ async function startServer() {
     }
 
     saveDbToFile(true);
-    broadcast({ type: "group:deleted", id: req.params.id });
+    broadcast({ type: "group:deleted", id: req.params.id, deleted_message_ids: removedGroupMsgs });
     broadcast({ type: "groups:changed" });
     broadcast({ type: "workspace:changed" });
     broadcast({ type: "org:changed", units: db.org_units });
@@ -11882,6 +12394,7 @@ async function startServer() {
 
   app.delete("/api/stickers/:id", (req, res) => {
     db.stickers = (db.stickers || []).filter((s: any) => s.id !== req.params.id);
+    recordServerDeletedIds([req.params.id]);
     saveDbToFile(true);
     broadcast({ type: "stickers:changed", id: req.params.id });
     res.json({ success: true });
@@ -12315,6 +12828,7 @@ async function startServer() {
 
   app.delete("/api/task-automations/:id", (req, res) => {
     db.task_automations = (db.task_automations || []).filter((a: any) => a.id !== req.params.id);
+    recordServerDeletedIds([req.params.id]);
     saveDbToFile();
     res.json({ success: true });
   });
@@ -12434,7 +12948,12 @@ async function startServer() {
     if (!reqUser || !["super_admin", "workspace_admin", "department_manager", "project_manager"].includes(reqUser.role)) {
       return res.status(403).json({ detail: "Hanya Admin / Manajer yang dapat melihat log audit." });
     }
-    res.json(db.audit_logs || []);
+    const cleanLogs = (db.audit_logs || []).map((log: any) => ({
+      ...log,
+      actor_name: resolveActorName(log?.actor_id, log?.actor_name, db.users),
+      action: humanizeLogAction(log?.action || "", db.users),
+    }));
+    res.json(cleanLogs);
   });
 
   app.get("/api/admin/users", (req, res) => {
@@ -12470,6 +12989,7 @@ async function startServer() {
       return res.status(403).json({ detail: "Hanya Admin / Manajer yang dapat menghapus undangan." });
     }
     db.invitations = db.invitations.filter((i: any) => i.id !== req.params.id);
+    recordServerDeletedIds([req.params.id]);
     saveDbToFile();
     res.json({ success: true });
   });
@@ -12823,6 +13343,11 @@ async function startServer() {
     const reqUser = getReqUser(req);
     if (!reqUser) return res.status(401).json({ detail: "Unauthorized" });
     if (!Array.isArray(db.circle_notes)) db.circle_notes = [];
+    const delNoteSet = new Set([
+      ...(Array.isArray(db.deleted_note_ids) ? db.deleted_note_ids : []),
+      ...(Array.isArray(db.deleted_entity_ids) ? db.deleted_entity_ids : []),
+    ]);
+    db.circle_notes = db.circle_notes.filter((n: any) => n && n.id && !delNoteSet.has(String(n.id)));
     const list = db.circle_notes
       .filter((n: any) => n && n.user_id === reqUser.user_id)
       .map(normalizeStickyNote)
@@ -12906,9 +13431,10 @@ async function startServer() {
       return res.status(403).json({ detail: "Anda tidak memiliki izin menghapus catatan ini." });
     }
     db.circle_notes = db.circle_notes.filter((n: any) => n && n.id !== req.params.id);
+    recordServerDeletedIds([req.params.id], "deleted_note_ids");
     saveDbToFile(true);
     broadcast({ type: "notes:changed", action: "delete", user_id: target.user_id, deleted_id: req.params.id });
-    res.json({ success: true, id: req.params.id });
+    res.json({ success: true, id: req.params.id, deleted_id: req.params.id });
   });
 
   app.post("/api/notes/:id/send-to-group", (req, res) => {
@@ -13126,6 +13652,7 @@ async function startServer() {
   });
 
   app.get("/api/workspace", (req, res) => {
+    ensureWorkspaceCheckpointTemplates();
     res.json(db.workspace);
   });
 
@@ -13247,6 +13774,223 @@ async function startServer() {
   };
   app.patch("/api/workspace", handleWorkspaceUpdate);
   app.put("/api/workspace", handleWorkspaceUpdate);
+
+  // Shared Workspace Checkpoint Preset Templates (synced across all accounts in real time)
+  app.get("/api/workspace/checkpoint-templates", (_req, res) => {
+    const templates = ensureWorkspaceCheckpointTemplates();
+    res.json({
+      templates,
+      deleted_ids: db.workspace.deleted_checkpoint_template_ids || [],
+    });
+  });
+
+  app.post("/api/workspace/checkpoint-templates", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser) {
+      return res.status(401).json({ detail: "Autentikasi diperlukan." });
+    }
+    ensureWorkspaceCheckpointTemplates();
+    const cleanLabel = String(req.body?.label || "").trim();
+    const cleanItems = (Array.isArray(req.body?.items) ? req.body.items : [])
+      .map((x: any) => String(x || "").trim())
+      .filter(Boolean);
+    if (!cleanLabel) {
+      return res.status(400).json({ detail: "Nama template wajib diisi." });
+    }
+    if (cleanItems.length === 0) {
+      return res.status(400).json({ detail: "Tambahkan minimal 1 tahap checkpoint untuk template." });
+    }
+    const nowIso = new Date().toISOString();
+    const tplId = String(req.body?.id || `tpl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`).trim();
+    const newTpl = {
+      id: tplId,
+      label: cleanLabel,
+      items: cleanItems,
+      created_by: reqUser.user_id,
+      updated_by: reqUser.user_id,
+      updated_at: nowIso,
+    };
+
+    // Un-tombstone if previously deleted
+    db.deleted_checkpoint_template_ids = (db.deleted_checkpoint_template_ids || []).filter(
+      (id: string) => id !== tplId
+    );
+    db.workspace.deleted_checkpoint_template_ids = db.deleted_checkpoint_template_ids;
+
+    const list = Array.isArray(db.workspace.checkpoint_templates)
+      ? [...db.workspace.checkpoint_templates]
+      : [];
+    const existingIdx = list.findIndex((t: any) => t && t.id === tplId);
+    if (existingIdx >= 0) {
+      list[existingIdx] = { ...list[existingIdx], ...newTpl };
+    } else {
+      list.push(newTpl);
+    }
+    db.workspace.checkpoint_templates = list;
+    db.workspace.checkpoint_templates_initialized = true;
+
+    saveDbToFile(true);
+    broadcast({
+      type: "checkpoint_templates:changed",
+      templates: db.workspace.checkpoint_templates,
+      deleted_ids: db.workspace.deleted_checkpoint_template_ids,
+    });
+    broadcast({ type: "workspace:updated", data: db.workspace });
+    broadcast({ type: "workspace:changed", data: db.workspace });
+
+    res.json({
+      template: newTpl,
+      templates: db.workspace.checkpoint_templates,
+      deleted_ids: db.workspace.deleted_checkpoint_template_ids,
+    });
+  });
+
+  const handleUpdateCheckpointTemplate = (req: any, res: any) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser) {
+      return res.status(401).json({ detail: "Autentikasi diperlukan." });
+    }
+    ensureWorkspaceCheckpointTemplates();
+    const targetId = String(req.params.id || "").trim();
+    const oldLabel = String(req.body?.old_label || "").trim().toLowerCase();
+    const cleanLabel = String(req.body?.label || "").trim();
+    const cleanItems = (Array.isArray(req.body?.items) ? req.body.items : [])
+      .map((x: any) => String(x || "").trim())
+      .filter(Boolean);
+    if (!cleanLabel) {
+      return res.status(400).json({ detail: "Nama template wajib diisi." });
+    }
+    if (cleanItems.length === 0) {
+      return res.status(400).json({ detail: "Tambahkan minimal 1 tahap checkpoint untuk template." });
+    }
+
+    const list = Array.isArray(db.workspace.checkpoint_templates)
+      ? [...db.workspace.checkpoint_templates]
+      : [];
+    const idx = list.findIndex(
+      (t: any) =>
+        t &&
+        (String(t.id) === targetId ||
+          (oldLabel && String(t.label || "").trim().toLowerCase() === oldLabel) ||
+          String(t.label || "").trim().toLowerCase() === targetId.toLowerCase())
+    );
+    const nowIso = new Date().toISOString();
+    let updatedTpl: any;
+    if (idx >= 0) {
+      updatedTpl = {
+        ...list[idx],
+        label: cleanLabel,
+        items: cleanItems,
+        updated_by: reqUser.user_id,
+        updated_at: nowIso,
+      };
+      list[idx] = updatedTpl;
+    } else {
+      updatedTpl = {
+        id: targetId || `tpl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        label: cleanLabel,
+        items: cleanItems,
+        created_by: reqUser.user_id,
+        updated_by: reqUser.user_id,
+        updated_at: nowIso,
+      };
+      list.push(updatedTpl);
+    }
+    db.workspace.checkpoint_templates = list;
+    db.workspace.checkpoint_templates_initialized = true;
+
+    saveDbToFile(true);
+    broadcast({
+      type: "checkpoint_templates:changed",
+      templates: db.workspace.checkpoint_templates,
+      deleted_ids: db.workspace.deleted_checkpoint_template_ids,
+    });
+    broadcast({ type: "workspace:updated", data: db.workspace });
+    broadcast({ type: "workspace:changed", data: db.workspace });
+
+    res.json({
+      template: updatedTpl,
+      templates: db.workspace.checkpoint_templates,
+      deleted_ids: db.workspace.deleted_checkpoint_template_ids,
+    });
+  };
+  app.put("/api/workspace/checkpoint-templates/:id", handleUpdateCheckpointTemplate);
+  app.patch("/api/workspace/checkpoint-templates/:id", handleUpdateCheckpointTemplate);
+
+  app.delete("/api/workspace/checkpoint-templates/:id", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser) {
+      return res.status(401).json({ detail: "Autentikasi diperlukan." });
+    }
+    ensureWorkspaceCheckpointTemplates();
+    const targetId = String(req.params.id || "").trim();
+    const queryLabel = String(req.query?.label || "").trim().toLowerCase();
+
+    const list = Array.isArray(db.workspace.checkpoint_templates)
+      ? db.workspace.checkpoint_templates
+      : [];
+    const removedIds: string[] = [];
+    if (targetId) removedIds.push(targetId);
+
+    const remaining = list.filter((t: any) => {
+      if (!t) return false;
+      const tid = String(t.id || "").trim();
+      const tlabel = String(t.label || "").trim().toLowerCase();
+      const isMatch =
+        (targetId && (tid === targetId || tlabel === targetId.toLowerCase())) ||
+        (queryLabel && tlabel === queryLabel);
+      if (isMatch && tid) {
+        removedIds.push(tid);
+      }
+      return !isMatch;
+    });
+
+    const nextDel = Array.from(
+      new Set([
+        ...(db.deleted_checkpoint_template_ids || []),
+        ...(db.workspace.deleted_checkpoint_template_ids || []),
+        ...removedIds,
+      ].filter(Boolean))
+    );
+    db.deleted_checkpoint_template_ids = nextDel;
+    db.workspace.deleted_checkpoint_template_ids = nextDel;
+    db.workspace.checkpoint_templates = remaining;
+    db.workspace.checkpoint_templates_initialized = true;
+
+    // Also prune from any legacy per-user prefs so stale per-user lists can't resurface
+    if (db.prefs && typeof db.prefs === "object") {
+      const delSet = new Set(nextDel);
+      for (const prefObj of Object.values(db.prefs)) {
+        if (!prefObj || typeof prefObj !== "object") continue;
+        const p = prefObj as any;
+        if (Array.isArray(p.user_checkpoint_templates)) {
+          p.user_checkpoint_templates = p.user_checkpoint_templates.filter(
+            (ut: any) => ut && !delSet.has(String(ut.id || "")) && (!queryLabel || String(ut.label || "").trim().toLowerCase() !== queryLabel)
+          );
+        }
+        if (Array.isArray(p.checkpoint_templates)) {
+          p.checkpoint_templates = p.checkpoint_templates.filter(
+            (ut: any) => ut && !delSet.has(String(ut.id || "")) && (!queryLabel || String(ut.label || "").trim().toLowerCase() !== queryLabel)
+          );
+        }
+      }
+    }
+
+    saveDbToFile(true);
+    broadcast({
+      type: "checkpoint_templates:changed",
+      templates: db.workspace.checkpoint_templates,
+      deleted_ids: db.workspace.deleted_checkpoint_template_ids,
+    });
+    broadcast({ type: "workspace:updated", data: db.workspace });
+    broadcast({ type: "workspace:changed", data: db.workspace });
+
+    res.json({
+      success: true,
+      deleted_ids: nextDel,
+      templates: db.workspace.checkpoint_templates,
+    });
+  });
 
   registerMarketplaceRoutes(app, { db, getReqUser, saveDbToFile, broadcast, createNotification });
 
@@ -13388,6 +14132,7 @@ async function startServer() {
     const actorId = actor?.user_id || "user_admin1";
     const target = db.drive_shortcuts.find((s: any) => s.id === req.params.id);
     db.drive_shortcuts = db.drive_shortcuts.filter((s: any) => s.id !== req.params.id);
+    recordServerDeletedIds([req.params.id]);
     if (target) {
       db.activity.unshift({
         id: `act_${Date.now()}`,
@@ -13396,9 +14141,364 @@ async function startServer() {
         created_at: new Date().toISOString()
       });
     }
-    saveDbToFile();
-    broadcast({ type: "drive_shortcuts:changed", data: db.drive_shortcuts });
+    saveDbToFile(true);
+    broadcast({ type: "drive_shortcuts:changed", data: db.drive_shortcuts, deleted_id: req.params.id });
     res.json({ success: true });
+  });
+
+  // ============================================================================
+  // Instagram Latest Post Tracker API (Real-Time Content Live Monitor)
+  // ============================================================================
+  function parseInstagramInput(rawInput: string) {
+    const raw = String(rawInput || "").trim();
+    let username = "";
+    let shortcode = "";
+    let postUrl = "";
+
+    const postMatch = raw.match(/instagram\.com\/(?:[^/]+\/)?(?:p|reel|tv)\/([A-Za-z0-9_-]+)/i);
+    if (postMatch) {
+      shortcode = postMatch[1];
+      postUrl = `https://www.instagram.com/p/${shortcode}/`;
+    }
+
+    const userUrlMatch = raw.match(/instagram\.com\/([A-Za-z0-9._]+)/i);
+    if (userUrlMatch && !["p", "reel", "tv", "stories", "explore"].includes(userUrlMatch[1].toLowerCase())) {
+      username = userUrlMatch[1].replace(/^@/, "").toLowerCase();
+    } else if (!postMatch) {
+      username = raw.replace(/^@/, "").split(/[/?#]/)[0].trim().toLowerCase();
+    }
+
+    return { username, shortcode, postUrl };
+  }
+
+  async function fetchInstagramPublicMeta(username: string, postUrl?: string, shortcode?: string) {
+    const result: {
+      display_name?: string;
+      avatar_url?: string;
+      latest_post_url?: string;
+      latest_shortcode?: string;
+      latest_caption?: string;
+      latest_thumb?: string;
+      latest_posted_at?: string;
+      followers_text?: string;
+    } = {};
+
+    const headers = {
+      "User-Agent":
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
+    };
+
+    try {
+      if (username) {
+        const apiResp = await fetch(
+          `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`,
+          {
+            headers: {
+              ...headers,
+              "x-ig-app-id": "936619743392459",
+              Referer: `https://www.instagram.com/${username}/`,
+            },
+            signal: AbortSignal.timeout(4500),
+          }
+        );
+        if (apiResp.ok) {
+          const json: any = await apiResp.json();
+          const user = json?.data?.user;
+          if (user) {
+            result.display_name = user.full_name || username;
+            result.avatar_url = user.profile_pic_url_hd || user.profile_pic_url || "";
+            const edges = user.edge_owner_to_timeline_media?.edges;
+            if (Array.isArray(edges) && edges.length > 0) {
+              const latestNode = edges[0]?.node;
+              if (latestNode?.shortcode) {
+                result.latest_shortcode = latestNode.shortcode;
+                result.latest_post_url = `https://www.instagram.com/p/${latestNode.shortcode}/`;
+                result.latest_thumb = latestNode.display_url || latestNode.thumbnail_src || "";
+                const capEdges = latestNode.edge_media_to_caption?.edges;
+                if (Array.isArray(capEdges) && capEdges[0]?.node?.text) {
+                  result.latest_caption = String(capEdges[0].node.text).slice(0, 220);
+                }
+                if (latestNode.taken_at_timestamp) {
+                  result.latest_posted_at = new Date(Number(latestNode.taken_at_timestamp) * 1000).toISOString();
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch {}
+
+    try {
+      const targetUrl =
+        postUrl ||
+        (shortcode ? `https://www.instagram.com/p/${shortcode}/` : "") ||
+        (username ? `https://www.instagram.com/${username}/` : "");
+      if (targetUrl && (!result.latest_caption || !result.display_name)) {
+        const htmlResp = await fetch(targetUrl, {
+          headers,
+          signal: AbortSignal.timeout(4500),
+        });
+        if (htmlResp.ok) {
+          const html = await htmlResp.text();
+          const extractMeta = (prop: string) => {
+            const m =
+              html.match(new RegExp(`<meta[^>]+(?:property|name)=["']${prop}["'][^>]+content=["']([^"']+)["']`, "i")) ||
+              html.match(new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']${prop}["']`, "i"));
+            return m ? m[1] : "";
+          };
+          const ogTitle = extractMeta("og:title");
+          const ogDesc = extractMeta("og:description");
+          const ogImage = extractMeta("og:image");
+          if (ogTitle && !result.display_name) {
+            const cleanName = ogTitle.split("(@")[0]?.replace(/•.*$/, "")?.trim();
+            if (cleanName && !cleanName.toLowerCase().includes("instagram")) {
+              result.display_name = cleanName;
+            }
+          }
+          if (ogImage && !result.latest_thumb) {
+            result.latest_thumb = ogImage;
+          }
+          if (ogDesc && !result.latest_caption) {
+            result.latest_caption = ogDesc.slice(0, 220);
+          }
+        }
+      }
+    } catch {}
+
+    return result;
+  }
+
+  function ensureInstagramTrackedAccounts() {
+    db.workspace = db.workspace || {};
+    db.workspace.deleted_instagram_account_ids = Array.isArray(db.workspace.deleted_instagram_account_ids)
+      ? db.workspace.deleted_instagram_account_ids
+      : [];
+    const delSet = new Set([
+      ...db.workspace.deleted_instagram_account_ids,
+      ...(Array.isArray(db.deleted_entity_ids) ? db.deleted_entity_ids : []),
+    ]);
+
+    if (!Array.isArray(db.workspace.instagram_accounts)) {
+      const nowIso = new Date().toISOString();
+      db.workspace.instagram_accounts = [
+        {
+          id: "ig_acc_asliri",
+          username: "asli.ri",
+          display_name: "ASLI RI Official",
+          category: "Brand Utama",
+          profile_url: "https://www.instagram.com/asli.ri/",
+          latest_post_url: "",
+          latest_shortcode: "",
+          latest_caption: "Monitoring jadwal tayang konten harian & campaign terbaru.",
+          latest_posted_at: nowIso,
+          is_live_today: true,
+          target_frequency: "Daily",
+          last_checked_at: nowIso,
+          notes: "Konten feed & reels utama",
+        },
+        {
+          id: "ig_acc_marketing",
+          username: "instagram",
+          display_name: "Creative & Campaign Reference",
+          category: "Campaign / Kolaborasi",
+          profile_url: "https://www.instagram.com/instagram/",
+          latest_post_url: "",
+          latest_shortcode: "",
+          latest_caption: "Pantau update konten terbaru langsung dari embed profil.",
+          latest_posted_at: nowIso,
+          is_live_today: false,
+          target_frequency: "Daily",
+          last_checked_at: nowIso,
+          notes: "Cek status tayang reels hari ini",
+        },
+      ].filter((a) => !delSet.has(a.id));
+    } else {
+      db.workspace.instagram_accounts = db.workspace.instagram_accounts.filter(
+        (a: any) => a && a.id && !delSet.has(String(a.id))
+      );
+    }
+    return db.workspace.instagram_accounts;
+  }
+
+  app.get("/api/instagram-tracker", (_req, res) => {
+    const accounts = ensureInstagramTrackedAccounts();
+    res.json({ accounts });
+  });
+
+  app.post("/api/instagram-tracker", async (req, res) => {
+    const reqUser = getReqUser(req) || currentSessionUser;
+    const accounts = ensureInstagramTrackedAccounts();
+    const {
+      username: rawUser,
+      display_name,
+      category,
+      latest_post_url,
+      latest_caption,
+      is_live_today,
+      notes,
+    } = req.body || {};
+
+    const parsed = parseInstagramInput(rawUser || latest_post_url || "");
+    const postParsed = latest_post_url ? parseInstagramInput(latest_post_url) : { username: "", shortcode: "", postUrl: "" };
+    const cleanUsername = (parsed.username || postParsed.username || String(rawUser || "").replace(/^@/, "").trim().toLowerCase()).replace(/[^a-z0-9._]/g, "");
+    const shortcode = postParsed.shortcode || parsed.shortcode || "";
+    const resolvedPostUrl = postParsed.postUrl || parsed.postUrl || (shortcode ? `https://www.instagram.com/p/${shortcode}/` : "");
+
+    if (!cleanUsername && !shortcode) {
+      return res.status(400).json({ detail: "Masukkan username Instagram (contoh: @namaakun) atau link postingan/reel Instagram." });
+    }
+
+    const meta = await fetchInstagramPublicMeta(cleanUsername, resolvedPostUrl, shortcode);
+    const nowIso = new Date().toISOString();
+    const finalUsername = cleanUsername || "instagram_post";
+    const finalShortcode = shortcode || meta.latest_shortcode || "";
+    const finalPostUrl = resolvedPostUrl || meta.latest_post_url || "";
+    const finalPostedAt = meta.latest_posted_at || nowIso;
+
+    const newAcc = {
+      id: `ig_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      username: finalUsername,
+      display_name: String(display_name || meta.display_name || `@${finalUsername}`).trim(),
+      category: String(category || "Brand / Divisi").trim(),
+      avatar_url: meta.avatar_url || "",
+      profile_url: `https://www.instagram.com/${finalUsername}/`,
+      latest_post_url: finalPostUrl,
+      latest_shortcode: finalShortcode,
+      latest_caption: String(latest_caption || meta.latest_caption || "Konten terbaru sedang dipantau.").trim(),
+      latest_thumb: meta.latest_thumb || "",
+      latest_posted_at: finalPostedAt,
+      is_live_today:
+        typeof is_live_today === "boolean"
+          ? is_live_today
+          : Boolean(finalShortcode || (meta.latest_posted_at && finalPostedAt.slice(0, 10) === nowIso.slice(0, 10))),
+      last_checked_at: nowIso,
+      updated_by_name: reqUser?.name || "Member",
+      notes: String(notes || "").trim(),
+    };
+
+    accounts.unshift(newAcc);
+    db.workspace.instagram_accounts = accounts;
+    saveDbToFile(true);
+    broadcast({ type: "instagram_tracker:changed", accounts });
+    res.json({ account: newAcc, accounts });
+  });
+
+  app.patch("/api/instagram-tracker/:id", async (req, res) => {
+    const reqUser = getReqUser(req) || currentSessionUser;
+    const accounts = ensureInstagramTrackedAccounts();
+    const target = accounts.find((a: any) => a && a.id === req.params.id);
+    if (!target) return res.status(404).json({ detail: "Akun Instagram tidak ditemukan." });
+
+    const {
+      username,
+      display_name,
+      category,
+      latest_post_url,
+      latest_caption,
+      is_live_today,
+      notes,
+      latest_posted_at,
+    } = req.body || {};
+
+    if (username !== undefined) {
+      const parsed = parseInstagramInput(username);
+      if (parsed.username) {
+        target.username = parsed.username;
+        target.profile_url = `https://www.instagram.com/${parsed.username}/`;
+      }
+    }
+    if (display_name !== undefined) target.display_name = String(display_name).trim();
+    if (category !== undefined) target.category = String(category).trim();
+    if (notes !== undefined) target.notes = String(notes).trim();
+    if (latest_caption !== undefined) target.latest_caption = String(latest_caption).trim();
+    if (typeof is_live_today === "boolean") {
+      target.is_live_today = is_live_today;
+      if (is_live_today) {
+        target.latest_posted_at = new Date().toISOString();
+      }
+    }
+    if (latest_posted_at !== undefined) target.latest_posted_at = latest_posted_at;
+
+    if (latest_post_url !== undefined) {
+      const rawUrl = String(latest_post_url || "").trim();
+      if (!rawUrl) {
+        target.latest_post_url = "";
+        target.latest_shortcode = "";
+      } else {
+        const parsedPost = parseInstagramInput(rawUrl);
+        if (parsedPost.shortcode) {
+          target.latest_shortcode = parsedPost.shortcode;
+          target.latest_post_url = parsedPost.postUrl;
+          target.is_live_today = true;
+          target.latest_posted_at = new Date().toISOString();
+          const meta = await fetchInstagramPublicMeta(target.username, parsedPost.postUrl, parsedPost.shortcode);
+          if (meta.latest_caption && !latest_caption) target.latest_caption = meta.latest_caption;
+          if (meta.latest_thumb) target.latest_thumb = meta.latest_thumb;
+        } else {
+          target.latest_post_url = rawUrl;
+        }
+      }
+    }
+
+    target.last_checked_at = new Date().toISOString();
+    target.updated_by_name = reqUser?.name || target.updated_by_name || "Member";
+
+    saveDbToFile(true);
+    broadcast({ type: "instagram_tracker:changed", accounts });
+    res.json({ account: target, accounts });
+  });
+
+  app.post("/api/instagram-tracker/:id/refresh", async (req, res) => {
+    const accounts = ensureInstagramTrackedAccounts();
+    const target = accounts.find((a: any) => a && a.id === req.params.id);
+    if (!target) return res.status(404).json({ detail: "Akun Instagram tidak ditemukan." });
+
+    const meta = await fetchInstagramPublicMeta(target.username, target.latest_post_url, target.latest_shortcode);
+    const nowIso = new Date().toISOString();
+    if (meta.display_name && (!target.display_name || target.display_name.startsWith("@"))) {
+      target.display_name = meta.display_name;
+    }
+    if (meta.avatar_url) target.avatar_url = meta.avatar_url;
+    if (meta.latest_shortcode) {
+      const isNewPost = target.latest_shortcode !== meta.latest_shortcode;
+      target.latest_shortcode = meta.latest_shortcode;
+      target.latest_post_url = meta.latest_post_url || `https://www.instagram.com/p/${meta.latest_shortcode}/`;
+      if (isNewPost) {
+        target.is_live_today = true;
+      }
+    }
+    if (meta.latest_caption) target.latest_caption = meta.latest_caption;
+    if (meta.latest_thumb) target.latest_thumb = meta.latest_thumb;
+    if (meta.latest_posted_at) {
+      target.latest_posted_at = meta.latest_posted_at;
+      if (meta.latest_posted_at.slice(0, 10) === nowIso.slice(0, 10)) {
+        target.is_live_today = true;
+      }
+    }
+    target.last_checked_at = nowIso;
+
+    saveDbToFile(true);
+    broadcast({ type: "instagram_tracker:changed", accounts });
+    res.json({ account: target, accounts });
+  });
+
+  app.delete("/api/instagram-tracker/:id", (req, res) => {
+    const accounts = ensureInstagramTrackedAccounts();
+    const delId = String(req.params.id || "").trim();
+    db.workspace.instagram_accounts = accounts.filter((a: any) => a && a.id !== delId);
+    db.workspace.deleted_instagram_account_ids = Array.from(
+      new Set([...(db.workspace.deleted_instagram_account_ids || []), delId])
+    );
+    recordServerDeletedIds([delId]);
+    saveDbToFile(true);
+    broadcast({
+      type: "instagram_tracker:changed",
+      accounts: db.workspace.instagram_accounts,
+      deleted_id: delId,
+    });
+    res.json({ success: true, accounts: db.workspace.instagram_accounts, deleted_id: delId });
   });
 
   // Global Workspace Search Endpoint
