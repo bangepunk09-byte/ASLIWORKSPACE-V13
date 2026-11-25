@@ -348,7 +348,7 @@ function Panel({ conv, reload, onClose, onLeft }) {
             </DialogTitle>
             <DialogDescription>
               {String(conv.id || "").startsWith("conv_circle_")
-                ? tr("messages_clear_chat_desc", "Seluruh riwayat pesan dengan Circle akan dihapus, namun obrolan tetap tersedia.")
+                ? tr("messages_clear_chat_desc", "Seluruh riwayat pesan dengan Asli akan dihapus, namun obrolan tetap tersedia.")
                 : tr("messages_delete_chat_desc", "Seluruh isi pesan dan percakapan ini akan dihapus secara permanen.")}
             </DialogDescription>
           </DialogHeader>
@@ -460,7 +460,7 @@ const getInitialConv = (cid, me, hint = null) => {
 
   const isOfficial = String(cid || "").startsWith("group_official_");
   const isCircleId = String(cid || "").startsWith("conv_circle_");
-  let name = isCircleId ? "Circle" : "";
+  let name = isCircleId ? "Asli" : "";
   if (isOfficial) {
     name = cid.replace("group_official_", "");
     name = name.charAt(0).toUpperCase() + name.slice(1);
@@ -828,9 +828,9 @@ export default function ChatView({ cid, initialConv = null, onChange, onRead, on
   const other = activeConv.type === "dm" ? (
     isCircleAssistantConv ? {
       user_id: "user_circle_assistant",
-      name: ws?.assistant_name || "Circle",
+      name: ws?.assistant_name || "Asli",
       job_title: tr("messages_assistant_role", "Asisten AI Workspace"),
-      avatar: ws?.assistant_avatar || "https://api.dicebear.com/7.x/bottts/svg?seed=CircleWorkspace&backgroundColor=FF5364"
+      avatar: ws?.assistant_avatar || "https://api.dicebear.com/7.x/bottts/svg?seed=AsliWorkspace&backgroundColor=FF5364"
     } : (userMap?.[otherMemberId] || null)
   ) : null;
 
@@ -969,7 +969,7 @@ export default function ChatView({ cid, initialConv = null, onChange, onRead, on
                     : activeConv.group_type === "private" && activeConv.is_member === false
                     ? tr("chat_private_locked_title", "Grup Privat Terkunci")
                     : isCircleAssistantConv
-                    ? tr("chat_circle_welcome_title", "Halo! Saya Circle, Asisten Analitik Workspace Anda.")
+                    ? tr("chat_circle_welcome_title", "Halo! Saya Asli, Asisten Analitik Workspace Anda.")
                     : `${tr("chat_start_greeting_prefix", "Mulai sapa")} ${title}.`}
                 </p>
                 {isDeptLocked ? (

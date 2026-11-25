@@ -220,7 +220,7 @@ export function UserProfileSettings() {
     <Card title="Data Diri Lengkap" testid="user-profile-settings-card">
       <form onSubmit={handleSave} className="space-y-4 pt-1">
         <p className="text-xs text-sub leading-relaxed">
-          Ubah informasi profil dan data diri Anda yang akan dilihat oleh rekan kerja di seluruh workspace CIRCLE.
+          Ubah informasi profil dan data diri Anda yang akan dilihat oleh rekan kerja di seluruh workspace ASLI.
         </p>
 
         {/* Avatar Upload & Preset Selector */}
@@ -440,7 +440,7 @@ export function UserProfileSettings() {
       <form onSubmit={handleChangePassword} className="space-y-4 pt-1">
         <p className="text-xs text-sub leading-relaxed">
           {hasPassword
-            ? "Perbarui password akun Anda secara berkala untuk menjaga keamanan akses ke workspace CIRCLE."
+            ? "Perbarui password akun Anda secara berkala untuk menjaga keamanan akses ke workspace ASLI."
             : "Akun Anda belum memiliki password lokal. Buat password di bawah ini agar Anda bisa login menggunakan Email & Password."}
         </p>
 

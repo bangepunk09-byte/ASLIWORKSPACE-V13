@@ -143,7 +143,7 @@ function Sidebar({ compact, setCompact, openSearch }) {
         {!compact && (
           <div className="min-w-0 flex-1">
             <p className="truncate text-[15px] font-extrabold tracking-tight" data-testid="workspace-brand">
-              {ws?.brand_name || "CIRCLE"}
+              {ws?.brand_name || "ASLI"}
             </p>
             <p className="truncate text-xs text-sub" data-testid="workspace-name">
               {ws?.name}
@@ -392,7 +392,7 @@ function MobileNav({ openSearch }) {
   };
 
   const currentNav = NAV.find((n) => (n.to === "/" ? loc.pathname === "/" : loc.pathname.startsWith(n.to)));
-  const activeTitle = currentNav ? t(`nav_${currentNav.id}`, currentNav.label) : (ws?.brand_name || "CIRCLE");
+  const activeTitle = currentNav ? t(`nav_${currentNav.id}`, currentNav.label) : (ws?.brand_name || "ASLI");
 
   const marketplaceOn = ws?.marketplace_enabled !== false;
   const collabItems = NAV.filter(
@@ -416,7 +416,7 @@ function MobileNav({ openSearch }) {
           <Logo size={26} ws={ws} />
           <div className="min-w-0">
             <span className="block truncate text-[13px] font-extrabold tracking-tight text-ink leading-snug">
-              {ws?.brand_name || "CIRCLE"}
+              {ws?.brand_name || "ASLI"}
             </span>
             <span className="block truncate text-[10.5px] font-medium text-sub leading-snug">
               {activeTitle}

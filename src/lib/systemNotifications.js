@@ -77,10 +77,10 @@ export async function showSystemNotification(notif, options = {}) {
     return false;
   }
 
-  const title = notif?.title || "CIRCLE Workspace";
-  const body = notif?.body || "Ada pembaruan baru di CIRCLE Workspace.";
+  const title = notif?.title || "ASLI Workspace";
+  const body = notif?.body || "Ada pembaruan baru di ASLI Workspace.";
   const targetUrl = resolveNotificationUrl(notif);
-  const tag = String(notif?.tag || notif?.conversation_id || notif?.task_id || notif?.id || `circle-${Date.now()}`);
+  const tag = String(notif?.tag || notif?.conversation_id || notif?.task_id || notif?.id || `asli-${Date.now()}`);
 
   const swReg = await getActiveSWRegistration();
   if (swReg && typeof swReg.showNotification === "function") {

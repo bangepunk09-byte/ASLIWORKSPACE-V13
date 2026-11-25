@@ -225,7 +225,7 @@ export default function TopNotificationPopup({ notif, onClose }) {
           )}
           <div className="min-w-0 flex-1">
             <h4 className="text-sm font-bold text-ink truncate leading-normal">{title || tr("notif_popup_default_title", "Notifikasi Baru")}</h4>
-            <p className="text-xs text-sub line-clamp-2 whitespace-normal break-words mt-0.5">{body || tr("notif_popup_default_body", "Ada pembaruan di CIRCLE Workspace.")}</p>
+            <p className="text-xs text-sub line-clamp-2 whitespace-normal break-words mt-0.5">{body || tr("notif_popup_default_body", "Ada pembaruan di ASLI Workspace.")}</p>
           </div>
         </div>
 

@@ -1312,7 +1312,7 @@ function buildGoogleCalendarTemplateUrl({ title, date, start, end, location, not
       action: "TEMPLATE",
       text: title || "Meeting",
       dates: `${cleanDate}T${cleanStart}/${cleanDate}T${cleanEnd}`,
-      details: notes || "Jadwal meeting dari CIRCLE Workspace",
+      details: notes || "Jadwal meeting dari ASLI Workspace",
       location: location || "Google Meet",
     });
     if (attendeeEmail) {
@@ -1410,7 +1410,7 @@ function SetProfileMeetingDialog({ open, onOpenChange, profileUser, me, onCreate
             const gcalPayload = {
               summary: title.trim(),
               location: location.trim() || "Google Meet",
-              description: notes.trim() || `Dijadwalkan melalui profil ${profileUser?.name} di CIRCLE Workspace`,
+              description: notes.trim() || `Dijadwalkan melalui profil ${profileUser?.name} di ASLI Workspace`,
               start: { dateTime: startIso },
               end: { dateTime: endIso },
               attendees: attendeeEmails

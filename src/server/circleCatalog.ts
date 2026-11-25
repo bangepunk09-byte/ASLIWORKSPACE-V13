@@ -390,7 +390,7 @@ export const CIRCLE_FEATURE_CATALOG: CircleFeatureItem[] = [
     command: "/notes",
     category: "Fokus & Catatan Kerja",
     title: "Lihat Semua Catatan Tersimpan",
-    description: "Buka kembali seluruh memo dan catatan pribadi yang pernah Anda simpan di Circle.",
+    description: "Buka kembali seluruh memo dan catatan pribadi yang pernah Anda simpan di Asli.",
     template: "/notes",
     example: "/notes",
     instant: true
@@ -660,8 +660,8 @@ export const CIRCLE_FEATURE_CATALOG: CircleFeatureItem[] = [
     id: "admin_help",
     command: "/help",
     category: "Admin, Drive & Audit",
-    title: "Daftar Lengkap Perintah Circle",
-    description: "Tampilkan katalog perintah cepat yang bisa langsung dijalankan di obrolan Circle.",
+    title: "Daftar Lengkap Perintah Asli",
+    description: "Tampilkan katalog perintah cepat yang bisa langsung dijalankan di obrolan Asli.",
     template: "/help",
     example: "/help",
     instant: true

@@ -93,10 +93,10 @@ function getDefaultConvsForUser(user) {
     {
       id: `conv_circle_${userId}`,
       type: "dm",
-      name: "Circle",
+      name: "Asli",
       member_ids: ["user_circle_assistant", userId],
       unread: 0,
-      last_message_preview: "Halo! Saya Circle, asisten workspace Anda.",
+      last_message_preview: "Halo! Saya Asli, asisten workspace Anda.",
       last_message_at: new Date().toISOString()
     }
   ];
@@ -302,8 +302,8 @@ export default function Messages() {
     .map((c) => {
       const mems = Array.isArray(c.member_ids) ? c.member_ids : (Array.isArray(c.members) ? c.members : []);
       const otherId = mems.find((x) => x && x !== me?.user_id) || me?.user_id;
-      const botAvatar = ws?.assistant_avatar || "https://api.dicebear.com/7.x/bottts/svg?seed=CircleWorkspace&backgroundColor=FF5364";
-      const botName = ws?.assistant_name || "Circle";
+      const botAvatar = ws?.assistant_avatar || "https://api.dicebear.com/7.x/bottts/svg?seed=AsliWorkspace&backgroundColor=FF5364";
+      const botName = ws?.assistant_name || "Asli";
 
       const isBotDM = c.type === "dm" && (otherId === "user_circle_assistant" || c.id?.startsWith("conv_circle_"));
       const rawOther = userMap ? userMap[otherId] : null;
@@ -579,7 +579,7 @@ export default function Messages() {
             </DialogTitle>
             <DialogDescription>
               {isDeleteTargetCircle
-                ? t("messages_clear_chat_desc", "Seluruh riwayat pesan dengan Circle akan dihapus, namun obrolan tetap tersedia.")
+                ? t("messages_clear_chat_desc", "Seluruh riwayat pesan dengan Asli akan dihapus, namun obrolan tetap tersedia.")
                 : t("messages_delete_chat_desc", "Seluruh isi pesan dan percakapan ini akan dihapus secara permanen.")}
             </DialogDescription>
           </DialogHeader>

@@ -139,7 +139,7 @@ export async function createGoogleDriveFolder(tokenOrName, maybeName = "", descr
       },
       body: JSON.stringify({
         name: String(name || "New Folder").trim(),
-        description: description.trim() || "Folder dibuat melalui CIRCLE Workspace",
+        description: description.trim() || "Folder dibuat melalui ASLI Workspace",
         mimeType: "application/vnd.google-apps.folder"
       })
     }

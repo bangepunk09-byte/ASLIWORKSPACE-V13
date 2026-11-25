@@ -62,7 +62,7 @@ export interface MarketplaceConfig {
 }
 
 export const DEFAULT_MARKETPLACE_CONFIG: MarketplaceConfig = {
-  store_name: "CIRCLE Market",
+  store_name: "ASLI Market",
   store_tagline: "Jual beli aman, preloved terkurasi & titip beli sesama rekan kerja.",
   cart_btn_label: "Keranjang",
   sell_btn_label: "Jual Barang / Jasa",
@@ -633,9 +633,9 @@ export function registerMarketplaceRoutes(app: Express, deps: MarketplaceDeps) {
       return {
         ...gatewayMeta,
         method,
-        channel: gwEnabled ? `QRIS (${gatewayMeta.provider_label})` : "QRIS CIRCLE",
+        channel: gwEnabled ? `QRIS (${gatewayMeta.provider_label})` : "QRIS ASLI",
         reference_code: `QRIS-${orderNumber}`,
-        qris_payload: `00020101021226620014ID.CO.QRIS.WWW011893600914000${digits}520459995303360540${amount}5802ID5913CIRCLE MARKET6007JAKARTA62180514${orderNumber}`,
+        qris_payload: `00020101021226620014ID.CO.QRIS.WWW011893600914000${digits}520459995303360540${amount}5802ID5911ASLI MARKET6007JAKARTA62180514${orderNumber}`,
         expires_at: expiresAt,
         instruction: gwEnabled
           ? `Pindai QRIS dinamis ${gatewayMeta.provider_label} dengan mobile banking / e-wallet. Status pembayaran otomatis terverifikasi via Webhook.`
@@ -655,7 +655,7 @@ export function registerMarketplaceRoutes(app: Express, deps: MarketplaceDeps) {
         method,
         channel: `VA ${cleanChannel}`,
         va_number: `${bankPrefixes[cleanChannel]}${digits}`,
-        account_name: gwEnabled ? `${gatewayMeta.provider_label.toUpperCase()} · CIRCLE MARKET` : "CIRCLE INTERNAL ESCROW",
+        account_name: gwEnabled ? `${gatewayMeta.provider_label.toUpperCase()} · ASLI MARKET` : "ASLI INTERNAL ESCROW",
         reference_code: `VA-${cleanChannel}-${digits}`,
         expires_at: expiresAt,
         instruction: gwEnabled

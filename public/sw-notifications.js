@@ -1,4 +1,4 @@
-// CIRCLE Workspace PWA Service Worker Extension: System Push & Notification Click Handling
+// ASLI Workspace PWA Service Worker Extension: System Push & Notification Click Handling
 
 self.addEventListener("push", function (event) {
   if (!event) return;
@@ -13,7 +13,7 @@ self.addEventListener("push", function (event) {
     }
   }
 
-  const title = data.title || "CIRCLE Workspace";
+  const title = data.title || "ASLI Workspace";
   const targetUrl =
     data.url ||
     (data.conversation_id
@@ -25,10 +25,10 @@ self.addEventListener("push", function (event) {
       : "/notifications");
 
   const options = {
-    body: data.body || "Ada pembaruan baru di CIRCLE Workspace.",
+    body: data.body || "Ada pembaruan baru di ASLI Workspace.",
     icon: data.icon || "/pwa-192x192.png",
     badge: data.badge || "/pwa-192x192.png",
-    tag: data.tag || data.id || "circle-notif",
+    tag: data.tag || data.id || "asli-notif",
     renotify: true,
     vibrate: [120, 60, 120],
     data: {

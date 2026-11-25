@@ -67,7 +67,7 @@ export default function CircleFeatureHub({ open, onOpenChange, onRunCommand, onF
               </div>
               <div>
                 <DialogTitle className="text-base font-extrabold text-ink">
-                  {tr("chat_hub_title_prefix", "Pusat Perintah &")} {catalog.total_features || "60+"} {tr("chat_hub_title_suffix", "Fitur Circle AI")}
+                  {tr("chat_hub_title_prefix", "Pusat Perintah &")} {catalog.total_features || "60+"} {tr("chat_hub_title_suffix", "Fitur ASLI AI")}
                 </DialogTitle>
                 <DialogDescription className="text-xs text-sub">
                   {tr("chat_hub_desc", "Pilih fitur untuk langsung dijalankan atau isi otomatis ke kolom chat.")}
@@ -117,7 +117,7 @@ export default function CircleFeatureHub({ open, onOpenChange, onRunCommand, onF
 
         <div className="flex-1 overflow-y-auto p-4 sm:p-5 scroll-thin">
           {loading ? (
-            <div className="py-12 text-center text-sm text-sub">{tr("chat_hub_loading", "Memuat katalog fitur Circle AI...")}</div>
+            <div className="py-12 text-center text-sm text-sub">{tr("chat_hub_loading", "Memuat katalog fitur ASLI AI...")}</div>
           ) : filtered.length === 0 ? (
             <div className="py-12 text-center text-sm text-sub">
               {tr("chat_hub_empty_prefix", "Tidak ada fitur yang cocok dengan pencarian")} <b className="text-ink">"{query}"</b>.

@@ -162,7 +162,7 @@ function buildGoogleCalendarTemplateUrl(m, userMap = {}) {
   const endPart = String(m.end_time || "10:00").replace(/:/g, "").slice(0, 4) + "00";
   const params = new URLSearchParams({
     action: "TEMPLATE",
-    text: m.title || "Agenda Rapat CIRCLE",
+    text: m.title || "Agenda Rapat ASLI",
     dates: `${datePart}T${startPart}/${datePart}T${endPart}`,
     ctz: "Asia/Jakarta",
     details: `${m.description || ""}${m.meet_link ? `\n\nLink Meeting: ${m.meet_link}` : ""}`.trim(),
@@ -616,7 +616,7 @@ export default function Schedule() {
 
           const gcalRes = await createEvent({
             summary: form.title,
-            description: `${form.description || ""}\n\nCIRCLE Workspace Scheduled Meeting`,
+            description: `${form.description || ""}\n\nASLI Workspace Scheduled Meeting`,
             location: form.location || "Google Meet",
             start: { dateTime: startIso, timeZone: "Asia/Jakarta" },
             end: { dateTime: endIso, timeZone: "Asia/Jakarta" },

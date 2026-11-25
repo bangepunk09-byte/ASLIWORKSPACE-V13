@@ -599,7 +599,7 @@ export default function BackupRestorePanel() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = snap.fileName || `circle-backup-${snap.ddMmYyyy}.json`;
+      a.download = snap.fileName || `asli-backup-${snap.ddMmYyyy}.json`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -636,7 +636,7 @@ export default function BackupRestorePanel() {
       const parts = getWibDateParts(new Date());
       const a = document.createElement("a");
       a.href = url;
-      a.download = `circle-workspace-backup-${parts.ddMmYyyy}-${parts.hour}${parts.minute}.json`;
+      a.download = `asli-workspace-backup-${parts.ddMmYyyy}-${parts.hour}${parts.minute}.json`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -667,7 +667,7 @@ export default function BackupRestorePanel() {
         summary: sum,
       });
     } catch {
-      toast.error("File backup tidak valid. Pastikan memilih file .json hasil ekspor CIRCLE Workspace.");
+      toast.error("File backup tidak valid. Pastikan memilih file .json hasil ekspor ASLI Workspace.");
     } finally {
       e.target.value = "";
     }
@@ -850,12 +850,18 @@ export default function BackupRestorePanel() {
               </button>
             </div>
           ) : (
-            <div className="flex flex-wrap items-center justify-between gap-2.5 rounded-2xl border border-emerald-200 dark:border-emerald-900/50 bg-emerald-50/70 dark:bg-emerald-950/30 px-3.5 py-2.5">
+            <div className={`flex flex-wrap items-center justify-between gap-2.5 rounded-2xl border px-3.5 py-2.5 ${
+              cloudSyncStatus?.lastErrorIsQuota
+                ? "border-amber-200 dark:border-amber-900/50 bg-amber-50/70 dark:bg-amber-950/30"
+                : "border-emerald-200 dark:border-emerald-900/50 bg-emerald-50/70 dark:bg-emerald-950/30"
+            }`}>
               <div className="flex items-center gap-2 min-w-0 flex-1">
-                <CheckCircle2 size={16} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
+                <CheckCircle2 size={16} className={`${cloudSyncStatus?.lastErrorIsQuota ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"} shrink-0`} />
                 <div className="min-w-0">
                   <p className="text-xs font-semibold text-ink truncate">
-                    Auto Live Sync Firestore Aktif ({fbUser.email}) — sinkronisasi real-time tim &amp; snapshot per jam aktif.
+                    {cloudSyncStatus?.lastErrorIsQuota
+                      ? `Firestore Dijeda Sementara (${fbUser.email}) — kuota tulis harian gratis tercapai, reset besok (00:05 UTC).`
+                      : `Auto Live Sync Firestore Aktif (${fbUser.email}) — sinkronisasi real-time tim aktif.`}
                   </p>
                   {cloudSyncStatus?.lastSyncedAt && (
                     <p className="text-[11px] text-sub">
@@ -863,15 +869,37 @@ export default function BackupRestorePanel() {
                     </p>
                   )}
                   {cloudSyncStatus?.lastError && (
-                    <p className="text-[11px] font-semibold text-rose-600 dark:text-rose-400">
+                    <p className={`text-[11px] font-semibold ${cloudSyncStatus?.lastErrorIsQuota ? "text-amber-800 dark:text-amber-200" : "text-rose-600 dark:text-rose-400"}`}>
                       {cloudSyncStatus.lastError}
+                      {cloudSyncStatus?.lastErrorIsQuota && cloudSyncStatus?.quotaUpgradeUrl && (
+                        <>
+                          {" "}
+                          <a
+                            href={cloudSyncStatus.quotaUpgradeUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="underline font-bold"
+                          >
+                            Lihat Database Firestore
+                          </a>
+                          {" · "}
+                          <a
+                            href="https://firebase.google.com/pricing#cloud-firestore"
+                            target="_blank"
+                            rel="noreferrer"
+                            className="underline font-bold"
+                          >
+                            Info Kuota Spark
+                          </a>
+                        </>
+                      )}
                     </p>
                   )}
                 </div>
               </div>
               <button
                 type="button"
-                disabled={Boolean(cloudSyncStatus?.syncing)}
+                disabled={Boolean(cloudSyncStatus?.syncing || cloudSyncStatus?.lastErrorIsQuota)}
                 onClick={async () => {
                   await syncCloudNow?.();
                   await fetchSummary({ silent: true });
@@ -881,7 +909,13 @@ export default function BackupRestorePanel() {
                 data-testid="sync-cloud-now-btn"
               >
                 <RefreshCw size={12} className={cloudSyncStatus?.syncing ? "animate-spin" : ""} />
-                <span>{cloudSyncStatus?.syncing ? "Menyimpan..." : "Sync Cloud Sekarang"}</span>
+                <span>
+                  {cloudSyncStatus?.syncing
+                    ? "Menyimpan..."
+                    : cloudSyncStatus?.lastErrorIsQuota
+                    ? "Kuota Reset Besok"
+                    : "Sync Cloud Sekarang"}
+                </span>
               </button>
             </div>
           )}

@@ -370,7 +370,7 @@ export function PeopleAccess() {
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-3">
             <p className="text-xs text-sub leading-relaxed max-w-md">
-              Permintaan akses masuk karyawan baru dan permohonan <b>reset lupa password</b> diteruskan melalui Asisten <b className="text-ink">"Circle"</b> berupa Approval Card.
+              Permintaan akses masuk karyawan baru dan permohonan <b>reset lupa password</b> diteruskan melalui Asisten <b className="text-ink">"Asli"</b> berupa Approval Card.
             </p>
             <div className="flex flex-wrap items-center gap-2">
               <button
@@ -666,7 +666,7 @@ export function PeopleAccess() {
                   <span>⚠️</span> Persetujuan Manajer Divisi
                 </p>
                 <p className="text-[11.5px] opacity-90">
-                  Penghapusan akun <b>{deleteTargetUser.name}</b> akan diajukan ke <b>Manajer Divisi {deleteTargetUser.department || "General"}</b> melalui Asisten <b>"Circle"</b> berupa kartu persetujuan (approval card). Akun akan dihapus permanen setelah disetujui.
+                  Penghapusan akun <b>{deleteTargetUser.name}</b> akan diajukan ke <b>Manajer Divisi {deleteTargetUser.department || "General"}</b> melalui Asisten <b>"Asli"</b> berupa kartu persetujuan (approval card). Akun akan dihapus permanen setelah disetujui.
                 </p>
               </div>
             </div>
@@ -964,9 +964,9 @@ export function WeeklyReportCard() {
       if (data?.email_delivered) {
         toast.success(`Email Laporan Progres Mingguan berhasil terkirim ke inbox: ${data.sent_to}`);
       } else if (data?.email_error) {
-        toast.warning(`Laporan terkirim ke chat Circle (${data.sent_to}), namun pengiriman Gmail gagal: ${data.email_error}`);
+        toast.warning(`Laporan terkirim ke chat Asli (${data.sent_to}), namun pengiriman Gmail gagal: ${data.email_error}`);
       } else {
-        toast.info(`Laporan terkirim ke chat Circle (${data.sent_to}). Izinkan popup Google Gmail agar masuk ke kotak masuk email.`);
+        toast.info(`Laporan terkirim ke chat Asli (${data.sent_to}). Izinkan popup Google Gmail agar masuk ke kotak masuk email.`);
       }
     } catch (e) {
       toast.error(errMsg(e));
@@ -1327,7 +1327,7 @@ export function WorkspaceBranding() {
         <Logo ws={ws} size={56} />
         <div className="min-w-0 flex-1">
           <p className="text-sm font-bold">Foto Profil / Logo Workspace</p>
-          <p className="text-xs text-sub">Tampil di header sidebar, login, dan seluruh workspace CIRCLE.</p>
+          <p className="text-xs text-sub">Tampil di header sidebar, login, dan seluruh workspace ASLI.</p>
           <div className="mt-2 flex items-center gap-3">
             <label className="cursor-pointer rounded-xl bg-brand px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:opacity-90 transition-opacity">
               Ubah Foto Profil Workspace
@@ -1884,7 +1884,7 @@ export function StickersAdmin() {
     <Card title="Paket & Perpustakaan Stiker Workspace" testid="stickers-admin">
       <div className="space-y-4">
         <p className="text-xs text-sub leading-relaxed">
-          Kelola paket stiker dan perpustakaan stiker workspace CIRCLE. Anggota tim juga dapat membuat stiker custom sendiri secara langsung dari sticker picker di obrolan chat.
+          Kelola paket stiker dan perpustakaan stiker workspace ASLI. Anggota tim juga dapat membuat stiker custom sendiri secara langsung dari sticker picker di obrolan chat.
         </p>
 
         <div className="flex gap-2">
@@ -1958,14 +1958,14 @@ export function StickersAdmin() {
 
 export function AssistantBranding() {
   const { ws, reloadWs, isAdmin } = useApp();
-  const [name, setName] = useState(ws.assistant_name || "Circle");
+  const [name, setName] = useState(ws.assistant_name || "Asli");
   const [avatar, setAvatar] = useState(ws.assistant_avatar || "");
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
-    setName(ws.assistant_name || "Circle");
+    setName(ws.assistant_name || "Asli");
     setAvatar(ws.assistant_avatar || "");
   }, [ws]);
 
@@ -2007,7 +2007,7 @@ export function AssistantBranding() {
     setSaving(true);
     try {
       await api.patch("/workspace", { assistant_name: name, assistant_avatar: avatar });
-      toast.success("Pengaturan Circle Assistant berhasil disimpan!");
+      toast.success("Pengaturan Asisten ASLI berhasil disimpan!");
       reloadWs();
     } catch (e) {
       toast.error(errMsg(e));
@@ -2016,11 +2016,11 @@ export function AssistantBranding() {
     }
   };
 
-  const defaultAvatar = "https://api.dicebear.com/7.x/bottts/svg?seed=CircleWorkspace&backgroundColor=FF5364";
+  const defaultAvatar = "https://api.dicebear.com/7.x/bottts/svg?seed=AsliWorkspace&backgroundColor=FF5364";
   const displayAvatar = avatar || defaultAvatar;
 
   return (
-    <Card title="Pengaturan Circle Assistant" testid="assistant-branding-card">
+    <Card title="Pengaturan Asisten ASLI" testid="assistant-branding-card">
       {/* Bot Avatar Section - Matches Workspace Identity & Branding card style */}
       <div className="mb-5 flex flex-wrap items-center gap-4 rounded-2xl border bg-surface2/50 p-4">
         <img
@@ -2060,11 +2060,11 @@ export function AssistantBranding() {
       {/* Bot Name & Save Settings */}
       <div className="space-y-4">
         <div>
-          <label className="mb-1 block text-xs font-semibold text-sub">Nama Circle Assistant</label>
+          <label className="mb-1 block text-xs font-semibold text-sub">Nama Asisten AI</label>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Mis. Circle, Assistant, Soni"
+            placeholder="Mis. Asli, Assistant, Soni"
             className="h-10 w-full rounded-xl border bg-surface2 px-3 text-sm outline-none font-medium"
             data-testid="assistant-name-input"
           />

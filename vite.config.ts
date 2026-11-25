@@ -22,8 +22,8 @@ export default defineConfig(() => {
         ],
         manifest: {
           id: '/',
-          name: 'CIRCLE Workspace ASLI RI',
-          short_name: 'CIRCLE',
+          name: 'ASLI Workspace',
+          short_name: 'ASLI',
           description:
             'Enterprise collaboration portal with Google Auth, Calendar, and Drive integration.',
           theme_color: '#ffffff',

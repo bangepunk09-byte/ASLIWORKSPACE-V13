@@ -164,7 +164,7 @@ export async function downloadTaskReportPDF({
   doc.setFont("helvetica", "bold");
   doc.setFontSize(9);
   doc.setTextColor(100, 116, 139);
-  doc.text("CIRCLE WORKSPACE · LAPORAN TUGAS", 14, 13);
+  doc.text("ASLI WORKSPACE · LAPORAN TUGAS", 14, 13);
 
   doc.setFontSize(16);
   doc.setTextColor(15, 23, 42);
@@ -254,7 +254,7 @@ export async function downloadTaskReportPDF({
 
   const slug = String(boardName || "semua-board").toLowerCase().replace(/[^a-z0-9]+/g, "-");
   const datePart = new Date().toISOString().slice(0, 10);
-  doc.save(`circle-tasks-${slug}-${datePart}.pdf`);
+  doc.save(`asli-tasks-${slug}-${datePart}.pdf`);
 }
 
 export function downloadTaskReportHTML({
@@ -319,7 +319,7 @@ export function downloadTaskReportHTML({
 <body>
   <div class="top">
     <div>
-      <div style="font-size:11px;font-weight:700;letter-spacing:1px;color:#64748b">CIRCLE WORKSPACE · LAPORAN TUGAS</div>
+      <div style="font-size:11px;font-weight:700;letter-spacing:1px;color:#64748b">ASLI WORKSPACE · LAPORAN TUGAS</div>
       <h1 style="margin:4px 0 0;font-size:20px">Laporan Tugas — ${esc(boardName)}</h1>
     </div>
     <div style="text-align:right;font-size:12px;color:#475569">
@@ -351,7 +351,7 @@ export function downloadTaskReportHTML({
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `circle-tasks-${new Date().toISOString().slice(0, 10)}.html`;
+  a.download = `asli-tasks-${new Date().toISOString().slice(0, 10)}.html`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -371,7 +371,7 @@ export async function downloadTaskDetailPDF({ task, userMap = {}, labelMap = {},
   doc.setFont("helvetica", "bold");
   doc.setFontSize(9);
   doc.setTextColor(100, 116, 139);
-  doc.text(`CIRCLE WORKSPACE · ${task.number_str || "DETAIL TUGAS"}`, 14, 15);
+  doc.text(`ASLI WORKSPACE · ${task.number_str || "DETAIL TUGAS"}`, 14, 15);
 
   doc.setFontSize(17);
   doc.setTextColor(15, 23, 42);
@@ -440,5 +440,5 @@ export async function downloadTaskDetailPDF({ task, userMap = {}, labelMap = {},
   }
 
   const numSlug = String(task.number_str || task.id || "task").toLowerCase().replace(/[^a-z0-9]+/g, "-");
-  doc.save(`circle-${numSlug}.pdf`);
+  doc.save(`asli-${numSlug}.pdf`);
 }

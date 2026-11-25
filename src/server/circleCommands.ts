@@ -263,14 +263,14 @@ function getGuideResponse(topicRaw: string): string {
         `• **4 Tampilan Database**: Ganti tampilan melalui switcher **Board | List | Timeline | Calendar** di kanan toolbar Tugas.`,
         `• **Checkpoints & Subtugas**: Buka kartu tugas untuk menambahkan tahap Checkpoint (dengan PIC & tenggat per tahap) yang otomatis menghitung progres %.`,
         `• **2-Person Approval**: Gunakan tombol *Kirim Approval* ke grup chat—ketika minimal 2 reviewer menyetujui (50% → 100%), status otomatis berpindah ke **Done**.`,
-        `• **Kendala (Blocker)**: Tandai komentar sebagai *Kendala* agar langsung terdeteksi oleh manajer & Circle Assistant.`
+        `• **Kendala (Blocker)**: Tandai komentar sebagai *Kendala* agar langsung terdeteksi oleh manajer & Asisten ASLI.`
       ].join("\n")
     },
     {
       match: /(chat|pesan|polling|stiker|grup)/,
       title: "Panduan Chatting, Stiker Kustom & Polling Grup",
       body: [
-        `• **Polling Grup & Beranda**: Klik ikon grafik batang di komposer grup atau ketik \`/poll\` di Circle untuk voting cepat.`,
+        `• **Polling Grup & Beranda**: Klik ikon grafik batang di komposer grup atau ketik \`/poll\` di Asli untuk voting cepat.`,
         `• **Stiker Kustom**: Buka ikon Stiker -> tombol **+ Bikin** untuk membuat stiker teks/emoji atau unggah gambar sendiri.`,
         `• **Konversi Pesan ke Tugas**: Klik menu titik tiga pada pesan chat lalu pilih *Buat Tugas* untuk menyalin konteks obrolan ke papan tugas.`
       ].join("\n")
@@ -292,13 +292,13 @@ function getGuideResponse(topicRaw: string): string {
   }
 
   return [
-    `📘 **Product Knowledge Center — CIRCLE Workspace**`,
+    `📘 **Product Knowledge Center — ASLI Workspace**`,
     ``,
     `1. **Manajemen Tugas 4-View** — Board Kanban, List (kustomisasi kolom), Timeline Gantt, dan Calendar.`,
     `2. **Kolaborasi Real-Time** — DM, Grup Divisi Terverifikasi, Polling, Stiker Kustom, Beranda Feed & Hashtag Trending.`,
     `3. **Jadwal & Google Workspace** — Agenda Meeting internal & sinkronisasi jadwal tim.`,
     `4. **Keamanan & Auto Backup** — Penyimpanan permanen JSON/Firestore + Auto Backup harian jam **23:59 WIB** (\`Tahun/Bulan/Hari-Bulan-Tahun\`).`,
-    `5. **Circle AI Copilot (60+ Fitur)** — Eksekusi tugas, analitik load tim, KPI/SLA, notulensi MoM, brief konten, dan terjemahan bisnis.`,
+    `5. **ASLI AI Copilot (60+ Fitur)** — Eksekusi tugas, analitik load tim, KPI/SLA, notulensi MoM, brief konten, dan terjemahan bisnis.`,
     ``,
     `_Ketik \`/guide task\`, \`/guide backup\`, \`/guide chat\`, atau \`/guide akses\` untuk detail fitur tertentu._`
   ].join("\n");
@@ -343,9 +343,9 @@ export async function tryExecuteCircleCommand(params: {
   const partsPipe = argRaw.split("|").map((s) => s.trim());
 
   // =========================================================================
-  // 1. /help — Daftar Lengkap Fitur Circle AI
+  // 1. /help — Daftar Lengkap Fitur ASLI AI
   // =========================================================================
-  if (cmdToken === "/help" || lower === "daftar fitur circle" || lower === "perintah circle") {
+  if (cmdToken === "/help" || lower === "daftar fitur asli" || lower === "perintah asli" || lower === "daftar fitur circle" || lower === "perintah circle") {
     const groups = new Map<string, typeof CIRCLE_FEATURE_CATALOG>();
     CIRCLE_FEATURE_CATALOG.forEach((f) => {
       if (!groups.has(f.category)) groups.set(f.category, []);
@@ -358,8 +358,8 @@ export async function tryExecuteCircleCommand(params: {
     return {
       handled: true,
       text: [
-        `🚀 **Katalog Lengkap Circle AI (${CIRCLE_FEATURE_CATALOG.length} Fitur Siap Pakai)**`,
-        `Anda bisa langsung mengetik perintah di bawah atau membuka tombol **Fitur Circle AI** di layar chat.`,
+        `🚀 **Katalog Lengkap ASLI AI (${CIRCLE_FEATURE_CATALOG.length} Fitur Siap Pakai)**`,
+        `Anda bisa langsung mengetik perintah di bawah atau membuka tombol **Fitur ASLI AI** di layar chat.`,
         ``,
         ...sections
       ].join("\n\n")
@@ -430,7 +430,7 @@ export async function tryExecuteCircleCommand(params: {
       body = body.replace(brdMatch[0], " ").trim();
     }
 
-    const cleanTitle = body.replace(/\s+/g, " ").trim() || "Tugas Baru dari Circle";
+    const cleanTitle = body.replace(/\s+/g, " ").trim() || "Tugas Baru dari Asli";
     let maxTsk = 0;
     for (const tk of (db.tasks || [])) {
       const m = typeof tk?.number_str === "string" ? tk.number_str.match(/TSK-(\d+)/i) : null;
@@ -469,7 +469,7 @@ export async function tryExecuteCircleCommand(params: {
       created_at: now.toISOString(),
       updated_at: now.toISOString()
     };
-    addTaskActivity(db, newTask, actorId, `membuat tugas baru "${newTask.title}" melalui Circle Assistant`);
+    addTaskActivity(db, newTask, actorId, `membuat tugas baru "${newTask.title}" melalui Asisten ASLI`);
     db.tasks.unshift(newTask);
 
     const picNames = assigneeIds.map((uid) => findHumanUserByRef(db, uid)?.name || uid).join(", ") || "Belum di-assign";
@@ -478,7 +478,7 @@ export async function tryExecuteCircleCommand(params: {
       createdTask: newTask,
       effects: { createdTask: newTask, tasksChanged: true, needsSave: true },
       text: [
-        `✨ **Tugas Baru Berhasil Dibuat oleh Circle!**`,
+        `✨ **Tugas Baru Berhasil Dibuat oleh Asli!**`,
         ``,
         `📌 **${newTask.number_str}: ${newTask.title}**`,
         `• Status: **To Do** · Prioritas: **${priority.toUpperCase()}**`,
@@ -504,7 +504,7 @@ export async function tryExecuteCircleCommand(params: {
     const sub = { id: `sub_${Date.now()}`, title: subTitle, done: false };
     task.subtasks.push(sub);
     task.updated_at = now.toISOString();
-    addTaskActivity(db, task, actorId, `menambahkan subtugas "${subTitle}" via Circle`);
+    addTaskActivity(db, task, actorId, `menambahkan subtugas "${subTitle}" via Asli`);
     return {
       handled: true,
       effects: { tasksChanged: true, updatedTask: task, needsSave: true },
@@ -532,7 +532,7 @@ export async function tryExecuteCircleCommand(params: {
     const doneCount = task.checkpoints.filter((c: any) => c.done).length;
     task.progress = Math.round((doneCount / task.checkpoints.length) * 100);
     task.updated_at = now.toISOString();
-    addTaskActivity(db, task, actorId, `menambahkan checkpoint "${cpTitle}" via Circle`);
+    addTaskActivity(db, task, actorId, `menambahkan checkpoint "${cpTitle}" via Asli`);
     return {
       handled: true,
       effects: { tasksChanged: true, updatedTask: task, needsSave: true },
@@ -552,7 +552,7 @@ export async function tryExecuteCircleCommand(params: {
     task.progress = 100;
     task.completed_at = now.toISOString();
     task.updated_at = now.toISOString();
-    addTaskActivity(db, task, actorId, `menandai tugas selesai (Done) via Circle`);
+    addTaskActivity(db, task, actorId, `menandai tugas selesai (Done) via Asli`);
     return {
       handled: true,
       effects: { tasksChanged: true, updatedTask: task, needsSave: true },
@@ -576,7 +576,7 @@ export async function tryExecuteCircleCommand(params: {
       task.completed_at = now.toISOString();
     }
     task.updated_at = now.toISOString();
-    addTaskActivity(db, task, actorId, `mengubah status tugas menjadi ${stRaw} via Circle`);
+    addTaskActivity(db, task, actorId, `mengubah status tugas menjadi ${stRaw} via Asli`);
     return {
       handled: true,
       effects: { tasksChanged: true, updatedTask: task, needsSave: true },
@@ -595,7 +595,7 @@ export async function tryExecuteCircleCommand(params: {
     }
     task.priority = prRaw;
     task.updated_at = now.toISOString();
-    addTaskActivity(db, task, actorId, `mengubah prioritas menjadi ${prRaw.toUpperCase()} via Circle`);
+    addTaskActivity(db, task, actorId, `mengubah prioritas menjadi ${prRaw.toUpperCase()} via Asli`);
     return {
       handled: true,
       effects: { tasksChanged: true, updatedTask: task, needsSave: true },
@@ -615,7 +615,7 @@ export async function tryExecuteCircleCommand(params: {
     task.assignee_id = targetUser.user_id;
     task.assignee_ids = Array.from(new Set([...(Array.isArray(task.assignee_ids) ? task.assignee_ids : []), targetUser.user_id]));
     task.updated_at = now.toISOString();
-    addTaskActivity(db, task, actorId, `menugaskan kepada ${targetUser.name} via Circle`);
+    addTaskActivity(db, task, actorId, `menugaskan kepada ${targetUser.name} via Asli`);
     return {
       handled: true,
       effects: { tasksChanged: true, updatedTask: task, needsSave: true },
@@ -634,7 +634,7 @@ export async function tryExecuteCircleCommand(params: {
     }
     task.deadline = parsedDl.iso;
     task.updated_at = now.toISOString();
-    addTaskActivity(db, task, actorId, `memperbarui deadline menjadi ${formatWibDateTime(parsedDl.iso)} via Circle`);
+    addTaskActivity(db, task, actorId, `memperbarui deadline menjadi ${formatWibDateTime(parsedDl.iso)} via Asli`);
     return {
       handled: true,
       effects: { tasksChanged: true, updatedTask: task, needsSave: true },
@@ -666,7 +666,7 @@ export async function tryExecuteCircleCommand(params: {
       created_at: now.toISOString()
     });
     task.updated_at = now.toISOString();
-    addTaskActivity(db, task, actorId, isIssue ? `melaporkan kendala via Circle: "${bodyText}"` : `menambahkan komentar via Circle: "${bodyText}"`);
+    addTaskActivity(db, task, actorId, isIssue ? `melaporkan kendala via Asli: "${bodyText}"` : `menambahkan komentar via Asli: "${bodyText}"`);
     return {
       handled: true,
       effects: { tasksChanged: true, updatedTask: task, needsSave: true },
@@ -1061,12 +1061,12 @@ export async function tryExecuteCircleCommand(params: {
     const m = {
       id: `mtg_${Date.now()}`,
       title: mTitle,
-      description: `Dijadwalkan via Circle Assistant oleh ${actorName}`,
+      description: `Dijadwalkan via Asisten ASLI oleh ${actorName}`,
       date: parsed.dateStr,
       start_time: parsed.timeStr,
       end_time: endTime,
       location: "Google Meet",
-      meet_link: `https://meet.google.com/circle-${Math.random().toString(36).substring(2, 6)}`,
+      meet_link: `https://meet.google.com/asli-${Math.random().toString(36).substring(2, 6)}`,
       attendee_ids: [actorId],
       gcal_synced: false,
       created_by: actorId,
@@ -1078,7 +1078,7 @@ export async function tryExecuteCircleCommand(params: {
     db.activity.unshift({
       id: `act_${Date.now()}`,
       actor_id: actorId,
-      action: `menjadwalkan meeting "${m.title}" via Circle`,
+      action: `menjadwalkan meeting "${m.title}" via Asli`,
       task_id: m.id,
       task_title: m.title,
       created_at: now.toISOString()
@@ -2024,10 +2024,10 @@ export async function tryExecuteCircleCommand(params: {
       return {
         handled: true,
         text: [
-          `✨ **Circle Gemini AI Aktif!**`,
+          `✨ **ASLI Gemini AI Aktif!**`,
           `Kamu bisa langsung chat bebas dengan bahasa sehari-hari atau gunakan \`/ai [pertanyaan/instruksi]\`.`,
           ``,
-          `**Contoh yang bisa kamu tanyakan ke Circle:**`,
+          `**Contoh yang bisa kamu tanyakan ke Asli:**`,
           `• **Analisa Workspace Live:** _"Siapa yang lagi under pressure dan tugas apa yang paling kritis hari ini?"_`,
           `• **Brainstorming & Strategi:** \`/ai Buatkan 5 ide campaign kreatif untuk akhir tahun beserta KPI-nya\``,
           `• **Copywriting & Konten:** \`/caption\`, \`/content-brief\`, \`/polish\`, \`/email\`, \`/translate\`, \`/summarize\``,
@@ -2041,7 +2041,7 @@ export async function tryExecuteCircleCommand(params: {
       const aiResp = await tryGeminiAssist(
         aiClient,
         [
-          `Kamu adalah Circle (ditenagai oleh Google Gemini AI), asisten AI eksekutif & partner brainstorming di workspace "${intel.workspace_name}".`,
+          `Kamu adalah Asli (ditenagai oleh Google Gemini AI), asisten AI eksekutif & partner brainstorming di workspace "${intel.workspace_name}".`,
           `Jika pertanyaan menyangkut data internal workspace, mengaculah 100% pada data JSON live berikut: ${JSON.stringify(intel)}.`,
           `Jika pertanyaan berupa brainstorming, copywriting, strategi, coding, atau pengetahuan umum, jawab dengan cerdas, lengkap, rapi (gunakan bullet • dan **bold**), serta solutif dalam Bahasa Indonesia.`
         ].join("\n"),

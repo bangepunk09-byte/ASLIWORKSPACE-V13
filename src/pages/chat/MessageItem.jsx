@@ -488,7 +488,7 @@ function AccessRequestCard({ m }) {
             <h4 className="text-xs font-bold text-ink leading-tight truncate">
               {isDeleteReq ? tr("chat_access_del_title", "Persetujuan Hapus Karyawan") : isPasswordReset ? tr("chat_access_pw_title", "Permintaan Reset Password") : tr("chat_access_login_title", "Permintaan Akses Masuk")}
             </h4>
-            <p className="text-[10px] text-sub font-medium truncate">{tr("chat_access_subtitle", "Asisten Workspace: Circle")}</p>
+            <p className="text-[10px] text-sub font-medium truncate">{tr("chat_access_subtitle", "Asisten Workspace: Asli")}</p>
           </div>
         </div>
         <span className={`inline-flex shrink-0 items-center rounded-full px-2.5 py-0.5 text-[11px] font-bold whitespace-nowrap ${

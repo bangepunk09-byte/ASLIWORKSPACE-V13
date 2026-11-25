@@ -480,7 +480,7 @@ export function buildWorkspaceIntelligence(db: Record<string, any>, senderUser?:
 
   return {
     generated_at_wib: formatWibDateTime(now.toISOString()),
-    workspace_name: db.workspace?.name || "CIRCLE Workspace",
+    workspace_name: db.workspace?.name || "ASLI Workspace",
     employees: {
       total: allUsers.length,
       active: allUsers.filter((u: any) => (u.status || "active") === "active").length,
@@ -675,7 +675,7 @@ function formatTaskListLines(tasks: any[], limit = 8): string {
 function buildCapabilityHelpMessage(intel: ReturnType<typeof buildWorkspaceIntelligence>): string {
   const divNames = intel.divisions.map((d) => d.name).join(", ") || "Marketing, Sales, IT, Finance, Legal, HRGA, Management";
   return [
-    `Halo! Saya **Circle**, asisten analitik & otomasi workspace **${intel.workspace_name}** dengan **${CIRCLE_FEATURE_CATALOG.length}+ fitur aktif**.`,
+    `Halo! Saya **Asli**, asisten analitik & otomasi workspace **${intel.workspace_name}** dengan **${CIRCLE_FEATURE_CATALOG.length}+ fitur aktif**.`,
     `Berikut hal-hal yang langsung bisa saya bantu:`,
     ``,
     `⚡ **Eksekusi Tugas & Sprint**`,
@@ -690,7 +690,7 @@ function buildCapabilityHelpMessage(intel: ReturnType<typeof buildWorkspaceIntel
     `💬 **Beranda, Konten, AI Bahasa & Pencarian**`,
     `• \`/post\` · \`/poll\` · \`/announce\` · \`/trending\` · \`/project-health\` · \`/content-brief\` · \`/caption\` · \`/translate\` · \`/polish\` · \`/summarize\` · \`/calc\` · \`/search\` · \`/guide\``,
     ``,
-    `💡 Ketik \`/help\` untuk katalog detail atau klik tombol **Fitur Circle AI** di layar obrolan!`,
+    `💡 Ketik \`/help\` untuk katalog detail atau klik tombol **Fitur ASLI AI** di layar obrolan!`,
     `_Divisi terpantau: ${divNames}_`
   ].join("\n");
 }
@@ -1148,11 +1148,11 @@ export async function generateCircleBotReply(params: {
     const recentHistory = historyMessages
       .slice(-6)
       .filter((m: any) => m?.text && !m.deleted)
-      .map((m: any) => `${m.sender_id === CIRCLE_BOT_ID ? "Circle" : (senderUser?.name || "User")}: ${String(m.text).slice(0, 350)}`)
+      .map((m: any) => `${m.sender_id === CIRCLE_BOT_ID ? "Asli" : (senderUser?.name || "User")}: ${String(m.text).slice(0, 350)}`)
       .join("\n");
 
     const systemInstruction = [
-      `Kamu adalah Circle (ditenagai oleh Google Gemini AI), asisten AI eksekutif, analis data, & partner brainstorming untuk workspace perusahaan "${intel.workspace_name}".`,
+      `Kamu adalah Asli (ditenagai oleh Google Gemini AI), asisten AI eksekutif, analis data, & partner brainstorming untuk workspace perusahaan "${intel.workspace_name}".`,
       `KEMAMPUAN UTAMAMU:`,
       `A) ANALISA DATA WORKSPACE LIVE: Menjawab pertanyaan tentang data internal workspace (karyawan, divisi, beban kerja/load Optimal/Stabil/Under Pressure, tugas telat/overdue, ketepatan waktu/SLA, deadline, proyek, board, feed Beranda, chat, polling, meeting, drive, permintaan akses, aktivitas, KPI) secara AKURAT, JELAS, dan INFORMATIF.`,
       `B) ASISTEN AI GEMINI SERBAGUNA: Membantu pengguna untuk brainstorming ide kreatif/kampanye, menyusun strategi bisnis/marketing, copywriting, membuat SOP, menganalisa masalah, coding/teknis, menerjemahkan bahasa, merangkum teks, maupun menjawab pertanyaan pengetahuan umum dengan cerdas dan solutif.`,

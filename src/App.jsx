@@ -82,7 +82,7 @@ function AuthCallback() {
 
 function Protected({ children }) {
   const { session, t } = useApp();
-  if (session === undefined) return <Spinner label={t("err_loading_circle", "Loading CIRCLE")} />;
+  if (session === undefined) return <Spinner label={t("err_loading_circle", "Loading ASLI")} />;
   if (!session?.user?.user_id) return <Navigate to="/login" replace />;
   if (session.user?.needs_onboarding) return <Onboarding />;
   return children;

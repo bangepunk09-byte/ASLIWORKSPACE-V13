@@ -20,7 +20,7 @@ export function PWAInstallButton({ variant = "default", compact = false }) {
           <CheckCircle2 size={20} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
           <div className="min-w-0 flex-1">
             <p className="text-xs font-bold text-ink">{tr("pwa_installed_title", "Aplikasi PWA Terpasang")}</p>
-            <p className="text-[11px] text-sub">{tr("pwa_installed_desc", "CIRCLE berjalan dalam mode aplikasi mandiri.")}</p>
+            <p className="text-[11px] text-sub">{tr("pwa_installed_desc", "ASLI berjalan dalam mode aplikasi mandiri.")}</p>
           </div>
         </div>
       );
@@ -32,7 +32,7 @@ export function PWAInstallButton({ variant = "default", compact = false }) {
     if (canNativeInstall) {
       const accepted = await install();
       if (accepted) {
-        toast.success(tr("pwa_install_success", "Aplikasi CIRCLE berhasil dipasang ke perangkat Anda!"));
+        toast.success(tr("pwa_install_success", "Aplikasi ASLI berhasil dipasang ke perangkat Anda!"));
         return;
       }
     }
@@ -56,7 +56,7 @@ export function PWAInstallButton({ variant = "default", compact = false }) {
         <button
           type="button"
           onClick={handleInstallClick}
-          title={tr("pwa_guide_title", "Install Aplikasi CIRCLE")}
+          title={tr("pwa_guide_title", "Install Aplikasi ASLI")}
           className={`inline-flex items-center justify-center gap-1.5 rounded-lg border border-brand/30 bg-brand/10 text-brand hover:bg-brand hover:text-white transition-colors font-semibold text-[11px] ${
             compact ? "h-8 w-8 p-0 mx-auto" : "h-8 flex-1 min-w-0 px-2.5"
           }`}
@@ -72,7 +72,7 @@ export function PWAInstallButton({ variant = "default", compact = false }) {
               <Smartphone size={19} />
             </div>
             <div className="min-w-0">
-              <p className="text-xs font-bold text-ink">{tr("pwa_card_title", "Pasang CIRCLE di Layar Utama")}</p>
+              <p className="text-xs font-bold text-ink">{tr("pwa_card_title", "Pasang ASLI di Layar Utama")}</p>
               <p className="text-[11px] text-sub">{tr("pwa_card_desc", "Akses lebih cepat, layar penuh, dan dukungan offline.")}</p>
             </div>
           </div>
@@ -105,13 +105,13 @@ export function PWAInstallButton({ variant = "default", compact = false }) {
               <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand text-white">
                 <Smartphone size={18} />
               </div>
-              <span>{tr("pwa_guide_title", "Install Aplikasi CIRCLE")}</span>
+              <span>{tr("pwa_guide_title", "Install Aplikasi ASLI")}</span>
             </DialogTitle>
           </DialogHeader>
 
           <div className="mt-2 space-y-4 text-sm">
             <p className="text-xs text-sub leading-relaxed">
-              {tr("pwa_guide_desc", "Pasang CIRCLE Workspace langsung di perangkat Anda untuk pengalaman layar penuh, akses instan, dan dukungan offline.")}
+              {tr("pwa_guide_desc", "Pasang ASLI Workspace langsung di perangkat Anda untuk pengalaman layar penuh, akses instan, dan dukungan offline.")}
             </p>
 
             {isInIframe && (

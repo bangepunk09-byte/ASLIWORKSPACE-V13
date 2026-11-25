@@ -3,7 +3,6 @@ import { getAuth, onAuthStateChanged, User } from 'firebase/auth';
 import {
   getFirestore,
   doc,
-  getDoc,
   getDocFromServer,
   getDocs,
   setDoc,
@@ -31,11 +30,11 @@ export const firebaseAuth = getAuth(app);
 export const SHARED_LIVE_BACKUP_ID = 'shared_workspace_live';
 const QUOTA_PAUSE_KEY = `circle_firestore_quota_paused_until_${firebaseConfig.projectId || 'default'}`;
 const LAST_UPLOADED_DIGEST_KEY = `circle_firestore_last_uploaded_digest_v1_${firebaseConfig.projectId || 'default'}`;
-const LAST_HOURLY_KEY = `circle_firestore_last_hourly_key_v1_${firebaseConfig.projectId || 'default'}`;
 try {
   localStorage.removeItem('circle_firestore_quota_paused_until');
 } catch {}
-const FIRESTORE_PRICING_URL = 'https://firebase.google.com/pricing#cloud-firestore';
+export const FIRESTORE_PRICING_URL = 'https://firebase.google.com/pricing#cloud-firestore';
+export const FIRESTORE_CONSOLE_UPGRADE_URL = `https://console.firebase.google.com/project/${firebaseConfig.projectId}/firestore/databases/${firebaseConfig.firestoreDatabaseId}/data?openUpgradeDialog=true`;
 
 export enum OperationType {
   CREATE = 'create',
@@ -126,6 +125,10 @@ function getQuotaPausedUntil(): number {
   }
 }
 
+export function getQuotaPauseUntilTimestamp(): number {
+  return getQuotaPausedUntil();
+}
+
 export function isFirestoreQuotaPaused(): boolean {
   return Date.now() < getQuotaPausedUntil();
 }
@@ -136,19 +139,42 @@ export function clearFirestoreQuotaPause(): void {
   } catch {}
 }
 
-function activateQuotaPause(): string {
-  const until = getNextUtcMidnightMs();
-  try {
-    localStorage.setItem(QUOTA_PAUSE_KEY, String(until));
-  } catch {}
+function activateQuotaPause(customUntilMs?: number): string {
+  const until = customUntilMs && customUntilMs > Date.now() ? customUntilMs : getNextUtcMidnightMs();
+  const prev = getQuotaPausedUntil();
+  if (until > prev) {
+    try {
+      localStorage.setItem(QUOTA_PAUSE_KEY, String(until));
+    } catch {}
+  }
   // Immediately abort Firestore SDK internal PersistentWriteStream exponential backoff queue
   void disableNetwork(firestoreDb).catch(() => {});
-  return FIRESTORE_PRICING_URL;
+  return FIRESTORE_CONSOLE_UPGRADE_URL;
+}
+
+export function syncServerQuotaPauseUntil(untilMs: number): boolean {
+  if (!Number.isFinite(untilMs) || untilMs <= Date.now()) return false;
+  const upgradeUrl = activateQuotaPause(untilMs);
+  updateCloudSyncStatus({
+    syncing: false,
+    lastError:
+      'Quota exceeded. Kuota tulis harian gratis Firestore tercapai (reset besok UTC). Data tetap aman tersimpan di server & IndexedDB lokal.',
+    lastErrorIsQuota: true,
+    quotaUpgradeUrl: upgradeUrl,
+  });
+  return true;
 }
 
 const initialQuotaPaused = isFirestoreQuotaPaused();
 if (initialQuotaPaused) {
   void disableNetwork(firestoreDb).catch(() => {});
+} else {
+  // Startup Firestore connectivity check (non-blocking)
+  void getDocFromServer(doc(firestoreDb, 'test', 'connection')).catch((error) => {
+    if (error instanceof Error && error.message.toLowerCase().includes('client is offline')) {
+      console.warn('Firestore offline check note:', error.message);
+    }
+  });
 }
 
 let currentCloudStatus: CloudSyncStatus = {
@@ -163,7 +189,7 @@ let currentCloudStatus: CloudSyncStatus = {
     ? 'Quota exceeded. Kuota tulis harian gratis Firestore tercapai (reset besok UTC). Data tetap aman tersimpan di server & IndexedDB lokal.'
     : null,
   lastErrorIsQuota: initialQuotaPaused,
-  quotaUpgradeUrl: initialQuotaPaused ? FIRESTORE_PRICING_URL : null,
+  quotaUpgradeUrl: initialQuotaPaused ? FIRESTORE_CONSOLE_UPGRADE_URL : null,
 };
 
 const cloudStatusListeners = new Set<(status: CloudSyncStatus) => void>();
@@ -237,7 +263,8 @@ function formatReadableFirestoreError(error: unknown): {
 export function handleFirestoreError(
   error: unknown,
   operationType: OperationType,
-  path: string | null
+  path: string | null,
+  options?: { silentConsoleOnQuota?: boolean }
 ): never {
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
@@ -265,7 +292,11 @@ export function handleFirestoreError(
     lastErrorIsQuota: formatted.isQuota,
     quotaUpgradeUrl: formatted.upgradeUrl,
   });
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  if (formatted.isQuota && options?.silentConsoleOnQuota) {
+    console.warn('Firestore quota reached — sync paused until UTC midnight:', path);
+  } else {
+    console.error('Firestore Error: ', JSON.stringify(errInfo));
+  }
   throw new Error(JSON.stringify(errInfo));
 }
 
@@ -273,8 +304,20 @@ async function guardedFirestoreWrite<T>(
   fn: () => Promise<T>,
   operationType: OperationType,
   path: string,
-  timeoutMs = 6500
+  timeoutMs = 6500,
+  options?: { silentConsoleOnQuota?: boolean }
 ): Promise<T> {
+  if (isFirestoreQuotaPaused()) {
+    const upgradeUrl = activateQuotaPause();
+    updateCloudSyncStatus({
+      syncing: false,
+      lastError:
+        'Quota exceeded. Kuota tulis harian gratis Firestore tercapai (reset besok UTC). Data tetap aman tersimpan di server & IndexedDB lokal.',
+      lastErrorIsQuota: true,
+      quotaUpgradeUrl: upgradeUrl,
+    });
+    throw new Error('Quota exceeded (paused until next UTC day).');
+  }
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
@@ -286,7 +329,7 @@ async function guardedFirestoreWrite<T>(
       }),
     ]);
   } catch (error) {
-    return handleFirestoreError(error, operationType, path);
+    return handleFirestoreError(error, operationType, path, options);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
@@ -522,23 +565,25 @@ function fastStringHash(str: string): string {
   return `${str.length}:${h >>> 0}`;
 }
 
+function getStableChunkPayloadHash(chunkId: string, payload: Record<string, unknown> | undefined): string {
+  if (!payload || typeof payload !== 'object') return fastStringHash('{}');
+  if (chunkId === 'core_0') {
+    const { revision: _rev, ...rest } = payload;
+    return fastStringHash(JSON.stringify(rest));
+  }
+  return fastStringHash(JSON.stringify(payload));
+}
+
 function buildChunkHashMap(chunks: PreparedChunk[]): Map<string, string> {
   const map = new Map<string, string>();
   for (const c of chunks) {
-    map.set(c.chunkId, fastStringHash(JSON.stringify(c.payload)));
+    map.set(c.chunkId, getStableChunkPayloadHash(c.chunkId, c.payload));
   }
   return map;
 }
 
 function computeChunksDigest(chunks: PreparedChunk[]): string {
-  const parts = chunks.map((c) => {
-    // Exclude volatile revision inside core_0 when comparing pure data state across accounts
-    if (c.chunkId === 'core_0') {
-      const { revision: _rev, ...rest } = c.payload || {};
-      return `core_0:${fastStringHash(JSON.stringify(rest))}`;
-    }
-    return `${c.chunkId}:${fastStringHash(JSON.stringify(c.payload))}`;
-  });
+  const parts = chunks.map((c) => `${c.chunkId}:${getStableChunkPayloadHash(c.chunkId, c.payload)}`);
   return fastStringHash(parts.join('|'));
 }
 
@@ -559,20 +604,6 @@ function setPersistedUploadedDigest(targetId: string, digest: string): void {
     const map = raw ? JSON.parse(raw) : {};
     const next = map && typeof map === 'object' ? { ...map, [targetId]: digest } : { [targetId]: digest };
     localStorage.setItem(LAST_UPLOADED_DIGEST_KEY, JSON.stringify(next));
-  } catch {}
-}
-
-function getPersistedLastHourlyKey(): string {
-  try {
-    return localStorage.getItem(LAST_HOURLY_KEY) || '';
-  } catch {
-    return '';
-  }
-}
-
-function setPersistedLastHourlyKey(key: string): void {
-  try {
-    localStorage.setItem(LAST_HOURLY_KEY, key);
   } catch {}
 }
 
@@ -610,13 +641,14 @@ async function upsertBackupDocumentWithChunks(
   chunks: PreparedChunk[],
   summary: Record<string, unknown>,
   user: User,
-  existingSnapData?: any
+  existingSnapData?: any,
+  writeOpts?: { silentConsoleOnQuota?: boolean }
 ) {
   const headerRef = doc(firestoreDb, 'workspaceBackups', backupId);
   const exists = Boolean(existingSnapData);
 
   const nextHashes = new Map<string, string>();
-  chunks.forEach((c) => nextHashes.set(c.chunkId, fastStringHash(JSON.stringify(c.payload))));
+  chunks.forEach((c) => nextHashes.set(c.chunkId, getStableChunkPayloadHash(c.chunkId, c.payload)));
 
   let docHashes = lastWrittenChunkHashes.get(backupId);
   const nextChunkIds = new Set(chunks.map((c) => c.chunkId));
@@ -645,7 +677,7 @@ async function upsertBackupDocumentWithChunks(
         existingChunkDocs.forEach((d) => {
           const data = d.data();
           if (data?.payload) {
-            docHashes!.set(d.id, fastStringHash(JSON.stringify(data.payload)));
+            docHashes!.set(d.id, getStableChunkPayloadHash(d.id, data.payload));
           }
         });
         lastWrittenChunkHashes.set(backupId, docHashes);
@@ -711,7 +743,9 @@ async function upsertBackupDocumentWithChunks(
       }
     },
     exists ? OperationType.UPDATE : OperationType.CREATE,
-    headerPath
+    headerPath,
+    6500,
+    writeOpts
   );
 
   for (let i = 0; i < chunksToWrite.length; i += 200) {
@@ -742,7 +776,9 @@ async function upsertBackupDocumentWithChunks(
     await guardedFirestoreWrite(
       () => batch.commit(),
       OperationType.WRITE,
-      `workspaceBackups/${backupId}/chunks`
+      `workspaceBackups/${backupId}/chunks`,
+      6500,
+      writeOpts
     );
   }
 
@@ -759,7 +795,9 @@ async function upsertBackupDocumentWithChunks(
       await guardedFirestoreWrite(
         () => batch.commit(),
         OperationType.DELETE,
-        `workspaceBackups/${backupId}/chunks`
+        `workspaceBackups/${backupId}/chunks`,
+        6500,
+        writeOpts
       );
     } catch {}
   }
@@ -775,7 +813,11 @@ export async function saveBackupToFirestore(backupPayload: any, customLabel?: st
     );
   }
 
-  clearFirestoreQuotaPause();
+  if (isFirestoreQuotaPaused()) {
+    throw new Error(
+      'Kuota tulis harian gratis Firestore sudah tercapai hari ini (reset besok 00:05 UTC). Gunakan Unduh Backup JSON untuk cadangan instan.'
+    );
+  }
   await enableNetwork(firestoreDb).catch(() => {});
 
   const backupId = `bk_${Date.now()}`;
@@ -783,7 +825,7 @@ export async function saveBackupToFirestore(backupPayload: any, customLabel?: st
   const rawSummary = backupPayload?.summary || computePayloadSummary(backupPayload);
   const summary = (sanitizeFirestoreValue(rawSummary) || {}) as Record<string, unknown>;
   const label = (customLabel || `Backup ${new Date().toLocaleString('id-ID')}`).slice(0, 120);
-  const workspaceName = String(backupPayload?.workspace_name || 'CIRCLE Workspace').slice(0, 120);
+  const workspaceName = String(backupPayload?.workspace_name || 'ASLI Workspace').slice(0, 120);
 
   const backupDocPath = `workspaceBackups/${backupId}`;
   await guardedFirestoreWrite(
@@ -866,7 +908,7 @@ function mapBackupDocToRecord(id: string, data: any): CloudBackupRecord {
     id,
     ownerUid: String(data.ownerUid || ''),
     ownerEmail: String(data.ownerEmail || ''),
-    workspaceName: String(data.workspaceName || 'CIRCLE Workspace'),
+    workspaceName: String(data.workspaceName || 'ASLI Workspace'),
     label: String(data.label || id),
     version: Number(data.version || 2),
     chunkCount: Number(data.chunkCount || 0),
@@ -879,7 +921,7 @@ function mapBackupDocToRecord(id: string, data: any): CloudBackupRecord {
 
 export async function listFirestoreBackups(): Promise<CloudBackupRecord[]> {
   const user = firebaseAuth.currentUser;
-  if (!user) return [];
+  if (!user || isFirestoreQuotaPaused()) return [];
 
   const path = 'workspaceBackups';
   try {
@@ -919,11 +961,10 @@ export async function listFirestoreBackups(): Promise<CloudBackupRecord[]> {
 }
 
 let lastCheckedSharedToken = '';
-let lastHourlySnapshotHourKey = getPersistedLastHourlyKey();
 
 export async function saveLiveSyncToFirestore(
   backupPayload: any,
-  options?: { manualForce?: boolean }
+  options?: { manualForce?: boolean; bypassQuotaPause?: boolean }
 ): Promise<{
   id: string;
   chunkCount: number;
@@ -934,11 +975,11 @@ export async function saveLiveSyncToFirestore(
   const user = firebaseAuth.currentUser;
   if (!user || !user.emailVerified) return null;
 
-  if (options?.manualForce) {
+  if (options?.bypassQuotaPause) {
     clearFirestoreQuotaPause();
     await enableNetwork(firestoreDb).catch(() => {});
   } else if (isFirestoreQuotaPaused()) {
-    // Respect UTC-midnight quota circuit breaker on background syncs
+    // Respect UTC-midnight quota circuit breaker (do NOT fire doomed writes!)
     return null;
   }
 
@@ -965,7 +1006,7 @@ export async function saveLiveSyncToFirestore(
     const primaryLabel = teamEligible
       ? '[Live Sync Tim] Data Workspace Bersama'
       : '[Auto Live Sync] Data Workspace Terkini';
-    const workspaceName = String(payloadToSave?.workspace_name || 'CIRCLE Workspace').slice(0, 120);
+    const workspaceName = String(payloadToSave?.workspace_name || 'ASLI Workspace').slice(0, 120);
 
     let existingHeaderData: any = null;
     try {
@@ -1039,7 +1080,7 @@ export async function saveLiveSyncToFirestore(
     const cloudAlreadyMatches = Boolean(cloudSharedDigest && cloudSharedDigest === currentDigest);
     // If we already uploaded this exact payload digest in a previous session/reload and nothing changed, do ZERO writes!
     const unchangedSinceLastUpload = Boolean(
-      !options?.manualForce &&
+      !options?.bypassQuotaPause &&
         existingHeaderData &&
         persistedDigest &&
         persistedDigest === currentDigest
@@ -1064,7 +1105,7 @@ export async function saveLiveSyncToFirestore(
       };
     }
 
-    // Save ONLY the primary target using chunk delta comparison
+    // Save ONLY the single primary live-sync target using delta chunk comparison (no hourly duplicate copies)
     await upsertBackupDocumentWithChunks(
       primaryTargetId,
       primaryLabel,
@@ -1072,48 +1113,13 @@ export async function saveLiveSyncToFirestore(
       chunks,
       summary,
       user,
-      existingHeaderData
+      existingHeaderData,
+      { silentConsoleOnQuota: !options?.manualForce }
     );
 
     setPersistedUploadedDigest(primaryTargetId, currentDigest);
     if (teamEligible) {
       lastCheckedSharedToken = `${new Date().toISOString()}|${summaryRaw.tasks}|${summaryRaw.messages}|${summaryRaw.posts}|${summaryRaw.users}`;
-    }
-
-    // Create at most ONE hourly rolling snapshot per hour (shared for team, personal otherwise)
-    if (summaryRaw.tasks > 0 || summaryRaw.messages > 3) {
-      const now = new Date();
-      const pad = (n: number) => String(n).padStart(2, '0');
-      const hhmm = `${pad(now.getHours())}:00`;
-      const ddmm = `${pad(now.getDate())}-${pad(now.getMonth() + 1)}-${now.getFullYear()}`;
-      const yyyymmdd = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
-      const hh = pad(now.getHours());
-      const hourKey = `${yyyymmdd}_${hh}`;
-
-      if (hourKey !== lastHourlySnapshotHourKey) {
-        const hourId = teamEligible
-          ? `hourly_${hourKey}_shared`
-          : `hourly_${hourKey}_${user.uid.slice(0, 8)}`;
-        const hourLabel = teamEligible
-          ? `[Auto Per Jam Tim] ${ddmm} · ${hhmm}`
-          : `[Auto Per Jam] ${ddmm} · ${hhmm}`;
-        try {
-          const hourSnap = await getDoc(doc(firestoreDb, 'workspaceBackups', hourId));
-          lastHourlySnapshotHourKey = hourKey;
-          setPersistedLastHourlyKey(hourKey);
-          if (!hourSnap.exists()) {
-            await upsertBackupDocumentWithChunks(
-              hourId,
-              hourLabel,
-              workspaceName,
-              chunks,
-              summary,
-              user,
-              null
-            );
-          }
-        } catch {}
-      }
     }
 
     updateCloudSyncStatus({
@@ -1140,7 +1146,7 @@ export async function saveLiveSyncToFirestore(
 
 async function loadBackupFromFirestoreOptional(backupId: string) {
   const user = firebaseAuth.currentUser;
-  if (!user) return null;
+  if (!user || isFirestoreQuotaPaused()) return null;
 
   const headerPath = `workspaceBackups/${backupId}`;
   let headerSnap;
@@ -1229,10 +1235,10 @@ async function loadBackupFromFirestoreOptional(backupId: string) {
   }
 
   return {
-    app: 'CIRCLE Workspace',
+    app: 'ASLI Workspace',
     version: headerData.version || 2,
     revision: Number(headerData.revision ?? reconstructedData.revision ?? 0),
-    workspace_name: headerData.workspaceName || 'CIRCLE Workspace',
+    workspace_name: headerData.workspaceName || 'ASLI Workspace',
     summary: headerData.summary || {},
     data: reconstructedData,
     uploaded_files_base64: uploadedFilesBase64,
@@ -1241,7 +1247,7 @@ async function loadBackupFromFirestoreOptional(backupId: string) {
 
 export async function loadLiveSyncFromFirestore() {
   const user = firebaseAuth.currentUser;
-  if (!user || !user.emailVerified) return null;
+  if (!user || !user.emailVerified || isFirestoreQuotaPaused()) return null;
 
   const liveId = `live_sync_${user.uid}`;
   const candidateIds: string[] = [];

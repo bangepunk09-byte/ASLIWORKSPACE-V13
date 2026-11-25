@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Navigate, useSearchParams } from "react-router-dom";
-import { ShieldCheck, Sparkles, MessageCircle, CheckSquare, Users, Eye, EyeOff, Mail, Lock, User, Building2, Briefcase, CheckCircle2, ArrowRight, ShieldAlert, Check, Upload, KeyRound, RefreshCw, Clock, XCircle } from "lucide-react";
+import { ShieldCheck, Sparkles, MessageCircle, CheckSquare, Users, Eye, EyeOff, Mail, Lock, User, Building2, Briefcase, CheckCircle2, ArrowRight, ShieldAlert, Check, Upload, KeyRound, RefreshCw, Clock, XCircle, Phone, MapPin } from "lucide-react";
 import { toast } from "sonner";
 import { useApp } from "../context/AppContext";
 import { api, errMsg, uploadFile, fileUrl } from "../lib/api";
@@ -123,20 +123,76 @@ export default function Login() {
   const [sendingOtp, setSendingOtp] = useState(false);
   const [otpNotice, setOtpNotice] = useState("");
 
-  // Google fallback modal state (used if popup is blocked or Google OAuth is in Testing mode / Error 403)
+  // Google Sign-In / Onboarding modal state
   const [googleModalOpen, setGoogleModalOpen] = useState(false);
+  const [googleModalStep, setGoogleModalStep] = useState("lookup"); // "lookup" | "complete_data"
   const [googleFallbackReason, setGoogleFallbackReason] = useState("");
+  const [googleVerifiedByOAuth, setGoogleVerifiedByOAuth] = useState(false);
+  const [googleAutoApprove, setGoogleAutoApprove] = useState(false);
   const [googleForm, setGoogleForm] = useState({
     name: "",
     email: "",
-    department: "Marketing",
-    job_title: ""
+    department: "",
+    job_title: "",
+    phone: "",
+    work_mode: "On-site",
+    note: "",
+    password: "",
+    confirmPassword: "",
+    avatar: PRESET_AVATARS[0],
+    idToken: ""
   });
+  const [uploadingGooglePhoto, setUploadingGooglePhoto] = useState(false);
   const [busyGoogle, setBusyGoogle] = useState(false);
 
   const availableDivisions = Array.isArray(brand?.divisions) && brand.divisions.length > 0
     ? brand.divisions
     : DEFAULT_DIVISIONS;
+
+  const effectiveAllowedDomains = (() => {
+    const raw = ws?.allowed_domains ?? brand?.allowed_domains;
+    if (Array.isArray(raw) && raw.length > 0) {
+      return Array.from(
+        new Set(
+          raw
+            .flatMap((d) => String(d || "").split(","))
+            .map((d) => d.trim().toLowerCase().replace(/^@+/, ""))
+            .filter(Boolean)
+        )
+      );
+    }
+    if (typeof raw === "string" && raw.trim()) {
+      return Array.from(
+        new Set(
+          raw
+            .split(",")
+            .map((d) => d.trim().toLowerCase().replace(/^@+/, ""))
+            .filter(Boolean)
+        )
+      );
+    }
+    return ["asliri.id"];
+  })();
+  const autoJoinDomainEnabled = (ws?.auto_join_domain ?? brand?.auto_join_domain) !== false;
+  const requireApprovalEnabled = (ws?.require_approval ?? brand?.require_approval) !== false;
+
+  const getEmailDomain = (emailStr) => {
+    const clean = String(emailStr || "").trim().toLowerCase();
+    const atIdx = clean.lastIndexOf("@");
+    return atIdx >= 0 ? clean.slice(atIdx + 1) : "";
+  };
+
+  const isDomainAutoApproved = (emailStr) => {
+    if (!requireApprovalEnabled) return true;
+    if (!autoJoinDomainEnabled) return false;
+    const dom = getEmailDomain(emailStr);
+    return Boolean(dom && effectiveAllowedDomains.includes(dom));
+  };
+
+  const signupDomain = getEmailDomain(signupForm.email);
+  const signupAutoApproved = isDomainAutoApproved(signupForm.email);
+  const googleDomain = getEmailDomain(googleForm.email);
+  const effectiveGoogleAutoApprove = Boolean(googleAutoApprove || isDomainAutoApproved(googleForm.email));
 
   useEffect(() => {
     let active = true;
@@ -525,6 +581,66 @@ export default function Login() {
     }
   };
 
+  const handleGooglePhotoUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      return toast.error("Pilih file gambar untuk foto profil");
+    }
+    setUploadingGooglePhoto(true);
+    try {
+      const up = await uploadFile(file);
+      if (up?.id) {
+        const url = fileUrl(up.id);
+        setGoogleForm((prev) => ({ ...prev, avatar: url }));
+        toast.success("Foto profil berhasil diunggah!");
+      }
+    } catch {
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result === "string") {
+          setGoogleForm((prev) => ({ ...prev, avatar: reader.result }));
+          toast.success("Foto profil berhasil dipilih!");
+        }
+      };
+      reader.readAsDataURL(file);
+    } finally {
+      setUploadingGooglePhoto(false);
+      e.target.value = "";
+    }
+  };
+
+  const openGoogleOnboardingModal = ({
+    profile = {},
+    idToken = "",
+    verified = false,
+    autoApproveEligible = false,
+    fallbackReason = ""
+  }) => {
+    const deptFromProfile =
+      profile.department && availableDivisions.includes(profile.department)
+        ? profile.department
+        : "";
+    setGoogleFallbackReason(fallbackReason || "");
+    setGoogleVerifiedByOAuth(Boolean(verified));
+    setGoogleAutoApprove(Boolean(autoApproveEligible));
+    setGoogleForm({
+      name: profile.name || "",
+      email: profile.email || "",
+      department: deptFromProfile,
+      job_title: profile.job_title || "",
+      phone: profile.phone || "",
+      work_mode: profile.work_mode || "On-site",
+      note: profile.bio || "",
+      password: "",
+      confirmPassword: "",
+      avatar: profile.picture || signupForm.avatar || PRESET_AVATARS[0],
+      idToken: idToken || ""
+    });
+    setGoogleModalStep("complete_data");
+    setGoogleModalOpen(true);
+  };
+
   const submitGoogleAccount = async (payload) => {
     setBusyGoogle(true);
     const fallbackDept = availableDivisions.find((d) => d.toLowerCase() !== "management") || availableDivisions[0] || "Marketing";
@@ -532,12 +648,52 @@ export default function Login() {
       const { data } = await api.post("/auth/google", {
         email: payload.email,
         name: payload.name,
-        picture: payload.picture || signupForm.avatar,
-        department: payload.department || signupForm.department || fallbackDept,
-        job_title: payload.job_title || signupForm.job_title || "Anggota Tim",
+        picture: payload.picture || payload.avatar || signupForm.avatar,
+        avatar: payload.avatar || payload.picture || signupForm.avatar,
+        department: payload.department,
+        job_title: payload.job_title,
+        phone: payload.phone,
+        work_mode: payload.work_mode || "On-site",
+        note: payload.note || "",
+        password: payload.password || undefined,
         mode: payload.mode || mode,
-        idToken: payload.idToken || undefined
+        idToken: payload.idToken || undefined,
+        check_only: Boolean(payload.check_only),
+        profile_submitted: Boolean(payload.profile_submitted),
+        known_accounts: getKnownAccountsFromVault()
       });
+
+      if (data?.status === "needs_onboarding") {
+        openGoogleOnboardingModal({
+          profile: {
+            email: data.google_profile?.email || payload.email,
+            name: data.google_profile?.name || payload.name || "",
+            picture: data.google_profile?.picture || payload.picture || "",
+            department: data.google_profile?.department || "",
+            job_title: data.google_profile?.job_title || "",
+            phone: data.google_profile?.phone || "",
+            work_mode: data.google_profile?.work_mode || "On-site",
+            bio: data.google_profile?.bio || ""
+          },
+          idToken: payload.idToken || "",
+          verified: Boolean(payload.verifiedByOAuth),
+          autoApproveEligible: Boolean(data.auto_approve_eligible),
+          fallbackReason: payload.verifiedByOAuth ? "" : googleFallbackReason
+        });
+        return;
+      }
+
+      if (data?.status === "ready_to_login") {
+        await submitGoogleAccount({
+          email: data.email || payload.email,
+          mode: payload.mode || mode,
+          idToken: payload.idToken || undefined,
+          check_only: false,
+          profile_submitted: false
+        });
+        return;
+      }
+
       setGoogleModalOpen(false);
       if (data?.account_vault_entry || data?.user) {
         upsertAccountInVault(data.account_vault_entry || data.user);
@@ -547,11 +703,11 @@ export default function Login() {
           name: data.user?.name || payload.name,
           email: data.user?.email || payload.email,
           department: data.user?.department || payload.department || fallbackDept,
-          avatar: data.user?.avatar || payload.picture || signupForm.avatar
+          avatar: data.user?.avatar || payload.avatar || payload.picture || signupForm.avatar
         });
         setSuccessDialog(true);
         toast.success(data.detail || "Pendaftaran akun Google berhasil diajukan!");
-      } else if (data?.user) {
+      } else if (data?.user && data?.token) {
         setManualGoogleAuth(data.user);
         setSession(data);
         syncWorkspaceMirror(api, true).catch(() => {});
@@ -564,17 +720,10 @@ export default function Login() {
         const msg = errPost?.response?.data?.detail || "Akun Google Anda sedang menunggu persetujuan Super Admin.";
         setLoginAlert(msg);
         toast.warning(msg);
-      } else if (statusResp === "unregistered") {
+      } else if (statusResp === "inactive") {
         setGoogleModalOpen(false);
-        const msg =
-          errPost?.response?.data?.detail ||
-          "Email tersebut belum terdaftar. Silakan daftar terlebih dahulu untuk meminta persetujuan Super Admin.";
+        const msg = errPost?.response?.data?.detail || "Akun Anda dinonaktifkan atau ditolak.";
         setLoginAlert(msg);
-        setSignupForm((prev) => ({
-          ...prev,
-          email: payload.email || prev.email,
-          name: payload.name || prev.name,
-        }));
         toast.error(msg);
       } else {
         toast.error(errPost?.response?.data?.detail || errMsg(errPost, "Gagal memproses akun Google"));
@@ -585,25 +734,34 @@ export default function Login() {
   };
 
   const openGoogleEmailModal = (fallbackReasonCode = "") => {
-    const fallbackDept = availableDivisions.find((d) => d.toLowerCase() !== "management") || availableDivisions[0] || "Marketing";
-    setGoogleFallbackReason(fallbackReasonCode || "generic");
+    setGoogleFallbackReason(fallbackReasonCode ? String(fallbackReasonCode) : "");
+    setGoogleVerifiedByOAuth(false);
+    setGoogleAutoApprove(false);
+    setGoogleModalStep("lookup");
     setGoogleForm({
       name: signupForm.name || "",
       email: (mode === "login" ? loginEmail : signupForm.email) || loginEmail || "",
-      department: signupForm.department || fallbackDept,
-      job_title: signupForm.job_title || ""
+      department: "",
+      job_title: signupForm.job_title || "",
+      phone: "",
+      work_mode: "On-site",
+      note: signupForm.note || "",
+      password: "",
+      confirmPassword: "",
+      avatar: signupForm.avatar || PRESET_AVATARS[0],
+      idToken: ""
     });
     setGoogleModalOpen(true);
   };
 
   // Google Sign-In / Sign-Up
   const google = async () => {
-    const fallbackDept = availableDivisions.find((d) => d.toLowerCase() !== "management") || availableDivisions[0] || "Marketing";
     let errReason = "";
     try {
+      setBusyGoogle(true);
       const res = await googleBasicSignIn();
       if (res?.user?.email) {
-        let idToken = null;
+        let idToken = "";
         try {
           if (typeof res.user.getIdToken === "function") {
             idToken = await res.user.getIdToken();
@@ -611,17 +769,19 @@ export default function Login() {
         } catch {}
         await submitGoogleAccount({
           email: res.user.email,
-          name: res.user.displayName || res.user.email.split("@")[0],
-          picture: res.user.photoURL || signupForm.avatar,
-          department: signupForm.department || fallbackDept,
-          job_title: signupForm.job_title || "Anggota Tim",
+          name: res.user.displayName || "",
+          picture: res.user.photoURL || "",
           mode,
-          idToken
+          idToken,
+          check_only: true,
+          verifiedByOAuth: true
         });
         return;
       }
     } catch (err) {
       errReason = String(err?.code || err?.message || "generic");
+    } finally {
+      setBusyGoogle(false);
     }
 
     openGoogleEmailModal(errReason);
@@ -921,9 +1081,25 @@ export default function Login() {
                 />
               </div>
 
-              <div className="rounded-xl border border-amber-200 dark:border-amber-800/50 bg-amber-50/70 dark:bg-amber-950/30 p-2.5 text-[11px] text-amber-900 dark:text-amber-200 leading-relaxed">
-                {t("auth_approval_notice", "⚠️ Catatan Approval: Akun yang baru didaftarkan akan berstatus pending dan memerlukan persetujuan dari Super Admin sebelum dapat masuk.")}
-              </div>
+              {signupAutoApproved ? (
+                <div className="rounded-xl border border-emerald-200 dark:border-emerald-800/50 bg-emerald-50/75 dark:bg-emerald-950/30 p-2.5 text-[11px] text-emerald-900 dark:text-emerald-200 leading-relaxed flex items-start gap-2" data-testid="signup-auto-approve-notice">
+                  <CheckCircle2 size={14} className="shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" />
+                  <span>
+                    {requireApprovalEnabled && signupDomain
+                      ? <>Domain <b>@{signupDomain}</b> terdaftar sebagai domain perusahaan — akun Anda akan langsung aktif tanpa perlu persetujuan Admin.</>
+                      : "Akun Anda akan langsung aktif dan masuk ke workspace setelah pendaftaran."}
+                  </span>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-amber-200 dark:border-amber-800/50 bg-amber-50/70 dark:bg-amber-950/30 p-2.5 text-[11px] text-amber-900 dark:text-amber-200 leading-relaxed" data-testid="signup-approval-notice">
+                  {t("auth_approval_notice", "⚠️ Catatan Approval: Akun di luar domain perusahaan akan berstatus pending dan memerlukan persetujuan Super Admin.")}
+                  {autoJoinDomainEnabled && effectiveAllowedDomains.length > 0 && (
+                    <span className="block mt-1 text-[10px] opacity-90">
+                      Domain otomatis aktif tanpa approval: <b>{effectiveAllowedDomains.map((d) => `@${d}`).join(", ")}</b>
+                    </span>
+                  )}
+                </div>
+              )}
 
               <button
                 type="submit"
@@ -931,7 +1107,11 @@ export default function Login() {
                 className="btn-accent h-11 w-full rounded-2xl text-xs font-bold shadow-md transition-all hover:shadow-lg disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer mt-2"
                 data-testid="signup-submit-btn"
               >
-                {busySignup ? t("auth_submitting_signup", "Mengirim Pendaftaran...") : t("auth_submit_signup", "Daftar & Minta Approval Super Admin")}
+                {busySignup
+                  ? t("auth_submitting_signup", "Mengirim Pendaftaran...")
+                  : signupAutoApproved
+                  ? "Daftar & Langsung Aktif"
+                  : t("auth_submit_signup", "Daftar & Minta Approval Super Admin")}
               </button>
             </form>
           )}
@@ -946,143 +1126,382 @@ export default function Login() {
           {/* SECONDARY METHOD: Google Sign-In / Sign-Up */}
           <button
             type="button"
+            disabled={busyGoogle}
             onClick={google}
-            className="flex h-11 w-full items-center justify-center gap-3 rounded-2xl border bg-surface text-xs font-semibold shadow-xs transition-transform hover:-translate-y-0.5 active:translate-y-0 cursor-pointer"
+            className="flex h-11 w-full items-center justify-center gap-3 rounded-2xl border bg-surface text-xs font-semibold shadow-xs transition-transform hover:-translate-y-0.5 active:translate-y-0 cursor-pointer disabled:opacity-60"
             data-testid="login-google-button"
           >
             <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>
-            {mode === "signup" ? t("auth_google_signup", "Daftar dengan Akun Google") : t("auth_google_login", "Masuk dengan Akun Google")}
+            {busyGoogle
+              ? t("auth_google_modal_busy", "Memproses Akun Google...")
+              : mode === "signup"
+              ? t("auth_google_signup", "Daftar dengan Akun Google")
+              : t("auth_google_login", "Masuk dengan Akun Google")}
           </button>
 
           <button
             type="button"
-            onClick={() => openGoogleEmailModal(false)}
+            onClick={() => openGoogleEmailModal("")}
             className="mt-2 w-full text-center text-[11px] font-semibold text-brand hover:underline cursor-pointer"
             data-testid="login-google-direct-btn"
           >
-            {t("auth_google_fallback_link", "Muncul Error 403 / akses diblokir? Masuk langsung dengan Email Kantor / Google")}
+            {t("auth_google_fallback_link", "Muncul Error 403 / akses diblokir? Lanjutkan dengan Email Kantor / Google")}
           </button>
 
           <p className="mt-3.5 flex items-center justify-center gap-1.5 text-[11px] text-sub text-center">
             <ShieldCheck size={13} className="shrink-0 text-emerald-600 dark:text-emerald-400" />
-            <span>{t("auth_footer_security_note", "Semua permohonan akun ditinjau langsung oleh Super Admin workspace.")}</span>
+            <span>
+              {autoJoinDomainEnabled && effectiveAllowedDomains.length > 0
+                ? `Email domain ${effectiveAllowedDomains.map((d) => `@${d}`).join(", ")} otomatis aktif tanpa approval; domain lain ditinjau Super Admin.`
+                : t("auth_footer_security_note", "Semua permohonan akun ditinjau langsung oleh Super Admin workspace.")}
+            </span>
           </p>
         </div>
       </div>
 
-      {/* Google Account Quick Sign-In / Sign-Up Modal */}
+      {/* Google Account Sign-In & Required Data Completion Modal */}
       <Dialog open={googleModalOpen} onOpenChange={setGoogleModalOpen}>
-        <DialogContent className="max-w-md rounded-3xl bg-surface p-6 shadow-xl" data-testid="google-auth-dialog">
+        <DialogContent className="max-w-lg max-h-[92dvh] overflow-y-auto scroll-thin rounded-3xl bg-surface p-6 shadow-xl" data-testid="google-auth-dialog">
           <DialogHeader>
             <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-2xl border bg-surface2 shadow-xs">
               <svg width="24" height="24" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>
             </div>
             <DialogTitle className="text-center text-lg font-bold text-ink">
-              {mode === "signup" ? t("auth_google_signup", "Daftar dengan Akun Google") : t("auth_google_login", "Masuk dengan Akun Google")}
+              {googleModalStep === "complete_data"
+                ? "Lengkapi Data Akun Google"
+                : mode === "signup"
+                ? t("auth_google_signup", "Daftar dengan Akun Google")
+                : t("auth_google_login", "Masuk dengan Akun Google")}
             </DialogTitle>
+            <DialogDescription className="text-center text-xs text-sub leading-relaxed">
+              {googleModalStep === "complete_data"
+                ? effectiveGoogleAutoApprove
+                  ? "Akun Google Anda terhubung. Silakan isi data diri berikut terlebih dahulu sebelum masuk ke workspace."
+                  : "Silakan lengkapi data diri Anda terlebih dahulu sebelum mengirim permohonan akses ke Super Admin."
+                : t("auth_google_modal_login_desc", "Masukkan email Google Anda dan lengkapi data diri sebelum masuk ke workspace ASLI.")}
+            </DialogDescription>
           </DialogHeader>
 
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!googleForm.email.trim()) return toast.error("Masukkan alamat email Google Anda");
-              submitGoogleAccount({
-                email: googleForm.email.trim(),
-                name: googleForm.name.trim() || googleForm.email.split("@")[0],
-                department: googleForm.department,
-                job_title: googleForm.job_title || "Anggota Tim",
-                mode
-              });
-            }}
-            className="space-y-3.5 pt-2"
-          >
-            {googleFallbackReason && (
-              <div className="rounded-xl border border-amber-200 dark:border-amber-800/50 bg-amber-50/80 dark:bg-amber-950/30 p-2.5 text-[11px] text-amber-900 dark:text-amber-200 leading-relaxed">
-                {googleFallbackReason.includes("unauthorized-domain") ? (
-                  <>
-                    Domain <b>{window.location.hostname}</b> belum terdaftar di <b>Authorized Domains</b> Firebase Auth. Masukkan email Anda di bawah untuk sementara agar tetap bisa {mode === "login" ? "masuk" : "mendaftar"} ke workspace.
-                  </>
-                ) : googleFallbackReason.includes("popup-blocked") ? (
-                  <>
-                    Popup Google diblokir oleh browser Anda. Izinkan pop-up atau masukkan email Anda di bawah agar tetap bisa {mode === "login" ? "masuk" : "mendaftar"}.
-                  </>
-                ) : googleFallbackReason.includes("popup-closed-by-user") ? (
-                  <>
-                    Popup login Google ditutup sebelum selesai. Anda tetap bisa memasukkan email Anda di bawah untuk {mode === "login" ? "masuk" : "mendaftar"} ke workspace.
-                  </>
-                ) : (
-                  <>
-                    Popup Google OAuth sedang dibatasi atau gagal (<b>Error 403 / Testing Mode</b>). Masukkan email Anda di bawah agar tetap bisa {mode === "login" ? "masuk" : "mendaftar"} ke workspace.
-                  </>
-                )}
-              </div>
-            )}
-            <p className="text-center text-xs text-sub leading-relaxed">
-              {mode === "login"
-                ? t("auth_google_modal_login_desc", "Masukkan email Google Anda untuk langsung masuk ke workspace CIRCLE.")
-                : t("auth_google_modal_signup_desc", "Masukkan email Google dan divisi Anda untuk mendaftarkan akun baru.")}
-            </p>
+          {googleModalStep === "lookup" ? (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!googleForm.email.trim()) return toast.error("Masukkan alamat email Google Anda");
+                submitGoogleAccount({
+                  email: googleForm.email.trim(),
+                  mode,
+                  check_only: true,
+                  verifiedByOAuth: false
+                });
+              }}
+              className="space-y-3.5 pt-2"
+            >
+              {googleFallbackReason && (
+                <div className="rounded-xl border border-amber-200 dark:border-amber-800/50 bg-amber-50/80 dark:bg-amber-950/30 p-2.5 text-[11px] text-amber-900 dark:text-amber-200 leading-relaxed">
+                  {googleFallbackReason.includes("unauthorized-domain") ? (
+                    <>
+                      Domain <b>{window.location.hostname}</b> belum terdaftar di <b>Authorized Domains</b> Firebase Auth. Masukkan email Anda di bawah untuk melanjutkan.
+                    </>
+                  ) : googleFallbackReason.includes("popup-blocked") ? (
+                    <>
+                      Popup Google diblokir oleh browser Anda. Izinkan pop-up atau masukkan email Anda di bawah untuk melanjutkan.
+                    </>
+                  ) : googleFallbackReason.includes("popup-closed-by-user") ? (
+                    <>
+                      Popup login Google ditutup sebelum selesai. Anda tetap bisa memasukkan email Anda di bawah untuk melanjutkan.
+                    </>
+                  ) : (
+                    <>
+                      Popup Google OAuth sedang dibatasi atau gagal (<b>Error 403 / Testing Mode</b>). Masukkan email Anda di bawah untuk melanjutkan.
+                    </>
+                  )}
+                </div>
+              )}
 
-            <div>
-              <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_google_email_label", "Email Google *")}</label>
-              <input
-                type="email"
-                required
-                autoFocus
-                value={googleForm.email}
-                onChange={(e) => setGoogleForm({ ...googleForm, email: e.target.value })}
-                placeholder={t("auth_google_email_ph", "nama@gmail.com atau email Google Workspace")}
-                className="h-10 w-full rounded-xl border bg-surface2 px-3 text-xs text-ink outline-none focus:border-brand"
-                data-testid="google-modal-email"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_name_label", "Nama Lengkap *").replace(/\s*\*$/, "")}</label>
-              <input
-                type="text"
-                value={googleForm.name}
-                onChange={(e) => setGoogleForm({ ...googleForm, name: e.target.value })}
-                placeholder={t("auth_google_name_ph", "Nama sesuai akun Google Anda")}
-                className="h-10 w-full rounded-xl border bg-surface2 px-3 text-xs text-ink outline-none focus:border-brand"
-                data-testid="google-modal-name"
-              />
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               <div>
-                <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_division_label", "Divisi")}</label>
-                <AppSelect
-                  value={googleForm.department}
-                  onChange={(e) => setGoogleForm({ ...googleForm, department: e.target.value })}
-                  className="h-10 w-full rounded-xl border border-border bg-surface2/75 px-3.5 text-xs sm:text-sm font-semibold text-ink"
-                >
-                  {availableDivisions.map((d) => (
-                    <option key={d} value={d}>{d}</option>
-                  ))}
-                </AppSelect>
+                <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_google_email_label", "Email Google *")}</label>
+                <div className="relative flex items-center">
+                  <Mail size={15} className="absolute left-3 text-sub" />
+                  <input
+                    type="email"
+                    required
+                    autoFocus
+                    value={googleForm.email}
+                    onChange={(e) => setGoogleForm({ ...googleForm, email: e.target.value })}
+                    placeholder={t("auth_google_email_ph", "nama@gmail.com atau email Google Workspace")}
+                    className="h-10 w-full rounded-xl border bg-surface2 pl-9 pr-3 text-xs text-ink outline-none focus:border-brand"
+                    data-testid="google-modal-email"
+                  />
+                </div>
               </div>
+
+              <button
+                type="submit"
+                disabled={busyGoogle}
+                className="btn-accent h-11 w-full rounded-2xl text-xs font-bold shadow-md cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
+                data-testid="google-modal-continue"
+              >
+                {busyGoogle ? t("auth_google_modal_busy", "Memproses Akun Google...") : "Lanjutkan & Cek Data Akun"}
+                <ArrowRight size={14} />
+              </button>
+            </form>
+          ) : (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!googleForm.email.trim()) return toast.error("Email Google wajib diisi.");
+                if (!googleForm.name.trim()) return toast.error("Nama lengkap wajib diisi.");
+                if (!googleForm.department.trim()) return toast.error("Silakan pilih divisi Anda terlebih dahulu.");
+                if (!googleForm.job_title.trim()) return toast.error("Jabatan / posisi wajib diisi.");
+                if (!googleForm.phone.trim()) return toast.error("Nomor telepon / WhatsApp wajib diisi.");
+                if (googleForm.password && googleForm.password.length < 6) {
+                  return toast.error("Password cadangan minimal 6 karakter.");
+                }
+                if (googleForm.password && googleForm.password !== googleForm.confirmPassword) {
+                  return toast.error("Konfirmasi password tidak cocok.");
+                }
+                submitGoogleAccount({
+                  email: googleForm.email.trim(),
+                  name: googleForm.name.trim(),
+                  avatar: googleForm.avatar,
+                  picture: googleForm.avatar,
+                  department: googleForm.department.trim(),
+                  job_title: googleForm.job_title.trim(),
+                  phone: googleForm.phone.trim(),
+                  work_mode: googleForm.work_mode || "On-site",
+                  note: googleForm.note.trim(),
+                  password: googleForm.password || undefined,
+                  idToken: googleForm.idToken || undefined,
+                  mode,
+                  check_only: false,
+                  profile_submitted: true
+                });
+              }}
+              className="space-y-3.5 pt-2"
+              data-testid="google-onboarding-form"
+            >
+              {/* Google Verified Banner + Photo */}
+              <div className="rounded-2xl border bg-surface2 p-3">
+                <div className="flex items-center justify-between gap-2 mb-2.5">
+                  <div className="min-w-0">
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300">
+                      <Check size={11} />
+                      {googleVerifiedByOAuth ? "Akun Google Terverifikasi" : "Email Google"}
+                    </span>
+                    <p className="mt-1 truncate text-xs font-semibold text-ink">{googleForm.email}</p>
+                  </div>
+                  <label className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border bg-surface px-2.5 py-1.5 text-[11px] font-semibold text-ink hover:border-brand hover:text-brand transition-colors cursor-pointer">
+                    <Upload size={12} />
+                    <span>{uploadingGooglePhoto ? "Mengunggah..." : "Ganti Foto"}</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleGooglePhotoUpload}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+                <div className="flex items-center gap-3">
+                  <img
+                    src={googleForm.avatar}
+                    alt="Avatar"
+                    className="h-12 w-12 shrink-0 rounded-full object-cover border-2 border-brand shadow-xs"
+                  />
+                  <div className="grid grid-cols-6 gap-1.5 flex-1">
+                    {PRESET_AVATARS.slice(0, 6).map((avUrl, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => setGoogleForm({ ...googleForm, avatar: avUrl })}
+                        className={`h-8 w-8 rounded-full overflow-hidden border-2 transition-transform hover:scale-110 cursor-pointer ${
+                          googleForm.avatar === avUrl ? "border-brand ring-2 ring-brand/30 scale-105" : "border-transparent opacity-80 hover:opacity-100"
+                        }`}
+                      >
+                        <img src={avUrl} alt={`Avatar ${idx + 1}`} className="h-full w-full object-cover" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {!googleVerifiedByOAuth && (
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_google_email_label", "Email Google *")}</label>
+                  <input
+                    type="email"
+                    required
+                    value={googleForm.email}
+                    onChange={(e) => setGoogleForm({ ...googleForm, email: e.target.value })}
+                    placeholder={t("auth_google_email_ph", "nama@gmail.com atau email Google Workspace")}
+                    className="h-10 w-full rounded-xl border bg-surface2 px-3 text-xs text-ink outline-none focus:border-brand"
+                    data-testid="google-modal-email"
+                  />
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_name_label", "Nama Lengkap *")}</label>
+                  <div className="relative flex items-center">
+                    <User size={15} className="absolute left-3 text-sub" />
+                    <input
+                      type="text"
+                      required
+                      autoFocus
+                      value={googleForm.name}
+                      onChange={(e) => setGoogleForm({ ...googleForm, name: e.target.value })}
+                      placeholder={t("auth_google_name_ph", "Nama sesuai akun Google Anda")}
+                      className="h-10 w-full rounded-xl border bg-surface2 pl-9 pr-3 text-xs text-ink outline-none focus:border-brand"
+                      data-testid="google-modal-name"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-sub">No. Telepon / WhatsApp *</label>
+                  <div className="relative flex items-center">
+                    <Phone size={15} className="absolute left-3 text-sub" />
+                    <input
+                      type="tel"
+                      required
+                      value={googleForm.phone}
+                      onChange={(e) => setGoogleForm({ ...googleForm, phone: e.target.value })}
+                      placeholder="Contoh: 08123456789"
+                      className="h-10 w-full rounded-xl border bg-surface2 pl-9 pr-3 text-xs text-ink outline-none focus:border-brand"
+                      data-testid="google-modal-phone"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_division_label", "Divisi")} *</label>
+                  <AppSelect
+                    value={googleForm.department}
+                    onChange={(e) => setGoogleForm({ ...googleForm, department: e.target.value })}
+                    className="h-10 w-full rounded-xl border border-border bg-surface2/75 px-3.5 text-xs sm:text-sm font-semibold text-ink"
+                    data-testid="google-modal-dept"
+                  >
+                    <option value="">-- Pilih Divisi --</option>
+                    {availableDivisions.map((d) => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
+                  </AppSelect>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_job_label", "Jabatan / Posisi")} *</label>
+                  <div className="relative flex items-center">
+                    <Briefcase size={15} className="absolute left-3 text-sub pointer-events-none" />
+                    <input
+                      type="text"
+                      required
+                      value={googleForm.job_title}
+                      onChange={(e) => setGoogleForm({ ...googleForm, job_title: e.target.value })}
+                      placeholder={t("auth_job_placeholder", "Mis. UI/UX Designer")}
+                      className="h-10 w-full rounded-xl border bg-surface2 pl-9 pr-3 text-xs text-ink outline-none focus:border-brand"
+                      data-testid="google-modal-title"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-sub">Mode Kerja</label>
+                  <div className="relative flex items-center">
+                    <MapPin size={15} className="absolute left-3.5 text-sub pointer-events-none z-10" />
+                    <AppSelect
+                      value={googleForm.work_mode}
+                      onChange={(e) => setGoogleForm({ ...googleForm, work_mode: e.target.value })}
+                      style={{ paddingLeft: "2.35rem" }}
+                      className="h-10 w-full rounded-xl border border-border bg-surface2/75 pr-3 text-xs sm:text-sm font-semibold text-ink"
+                    >
+                      <option value="On-site">On-site</option>
+                      <option value="Hybrid">Hybrid</option>
+                      <option value="Remote">Remote</option>
+                    </AppSelect>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-sub">Password Cadangan (Opsional)</label>
+                  <input
+                    type="password"
+                    value={googleForm.password}
+                    onChange={(e) => setGoogleForm({ ...googleForm, password: e.target.value })}
+                    placeholder="Min. 6 karakter (jika perlu)"
+                    className="h-10 w-full rounded-xl border bg-surface2 px-3 text-xs text-ink outline-none focus:border-brand"
+                  />
+                </div>
+              </div>
+
+              {googleForm.password && (
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-sub">Konfirmasi Password Cadangan *</label>
+                  <input
+                    type="password"
+                    required
+                    value={googleForm.confirmPassword}
+                    onChange={(e) => setGoogleForm({ ...googleForm, confirmPassword: e.target.value })}
+                    placeholder="Ulangi password cadangan"
+                    className="h-10 w-full rounded-xl border bg-surface2 px-3 text-xs text-ink outline-none focus:border-brand"
+                  />
+                </div>
+              )}
+
               <div>
-                <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_job_label", "Jabatan / Posisi")}</label>
-                <input
-                  type="text"
-                  value={googleForm.job_title}
-                  onChange={(e) => setGoogleForm({ ...googleForm, job_title: e.target.value })}
-                  placeholder={t("auth_job_placeholder", "Mis. Specialist")}
-                  className="h-10 w-full rounded-xl border bg-surface2 px-3 text-xs text-ink outline-none"
+                <label className="mb-1 block text-xs font-semibold text-sub">Biodata / Catatan Singkat</label>
+                <textarea
+                  rows={2}
+                  value={googleForm.note}
+                  onChange={(e) => setGoogleForm({ ...googleForm, note: e.target.value })}
+                  placeholder="Ceritakan singkat peran/keahlian Anda..."
+                  className="w-full rounded-xl border bg-surface2 p-2.5 text-xs text-ink outline-none focus:border-brand resize-none"
                 />
               </div>
-            </div>
 
-            <button
-              type="submit"
-              disabled={busyGoogle}
-              className="btn-accent h-11 w-full rounded-2xl text-xs font-bold shadow-md cursor-pointer disabled:opacity-50 mt-2"
-              data-testid="google-modal-submit"
-            >
-              {busyGoogle ? t("auth_google_modal_busy", "Memproses Akun Google...") : mode === "login" ? t("auth_google_modal_login_btn", "Masuk Sekarang") : t("auth_google_signup", "Daftar dengan Akun Google")}
-            </button>
-          </form>
+              {effectiveGoogleAutoApprove ? (
+                <div className="rounded-xl border border-emerald-200 dark:border-emerald-800/50 bg-emerald-50/75 dark:bg-emerald-950/30 p-2.5 text-[11px] text-emerald-900 dark:text-emerald-200 leading-relaxed flex items-start gap-2">
+                  <CheckCircle2 size={14} className="shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" />
+                  <span>
+                    {googleDomain && effectiveAllowedDomains.includes(googleDomain)
+                      ? <>Domain <b>@{googleDomain}</b> aktif otomatis tanpa perlu approval Super Admin — setelah mengisi data, Anda langsung masuk ke workspace.</>
+                      : "Akun ini aktif otomatis tanpa perlu approval — setelah mengisi data, Anda langsung masuk ke workspace."}
+                  </span>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-amber-200 dark:border-amber-800/50 bg-amber-50/70 dark:bg-amber-950/30 p-2.5 text-[11px] text-amber-900 dark:text-amber-200 leading-relaxed">
+                  Setelah mengisi data, permohonan akun akan dikirim ke Super Admin untuk persetujuan sebelum Anda bisa masuk.
+                </div>
+              )}
+
+              <div className="flex gap-2 pt-1">
+                {!googleVerifiedByOAuth && (
+                  <button
+                    type="button"
+                    onClick={() => setGoogleModalStep("lookup")}
+                    className="h-11 rounded-2xl border bg-surface2 px-4 text-xs font-semibold text-ink hover:bg-surface cursor-pointer"
+                  >
+                    Kembali
+                  </button>
+                )}
+                <button
+                  type="submit"
+                  disabled={busyGoogle}
+                  className="btn-accent h-11 flex-1 rounded-2xl text-xs font-bold shadow-md cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
+                  data-testid="google-modal-submit"
+                >
+                  {busyGoogle
+                    ? t("auth_google_modal_busy", "Memproses Akun Google...")
+                    : effectiveGoogleAutoApprove
+                    ? "Simpan Data & Masuk Workspace"
+                    : "Kirim Data & Minta Approval Admin"}
+                  <ArrowRight size={14} />
+                </button>
+              </div>
+            </form>
+          )}
         </DialogContent>
       </Dialog>
 
@@ -1100,7 +1519,7 @@ export default function Login() {
 
           <div className="py-2 text-center space-y-3">
             <p className="text-xs text-sub leading-relaxed max-w-xs mx-auto">
-              {t("auth_signup_success_desc", "Permohonan pendaftaran akun Anda telah diterima. Asisten Circle telah meneruskan Approval Card ke Super Admin.")}
+              {t("auth_signup_success_desc", "Permohonan pendaftaran akun Anda telah diterima. Asisten Asli telah meneruskan Approval Card ke Super Admin.")}
             </p>
 
             {registeredData && (
@@ -1213,7 +1632,7 @@ export default function Login() {
                     ? `Disetujui oleh ${forgotTicket.approved_by || "Super Admin"}. Anda sekarang bisa masuk dengan password baru Anda.`
                     : forgotTicket.status === "rejected"
                     ? `Ditolak oleh ${forgotTicket.rejected_by || "Super Admin"}. Silakan hubungi Admin workspace atau ajukan ulang.`
-                    : `Asisten Circle telah mengirim Approval Card untuk ${forgotTicket.email} ke Super Admin / Manajer Divisi.`}
+                    : `Asisten Asli telah mengirim Approval Card untuk ${forgotTicket.email} ke Super Admin / Manajer Divisi.`}
                 </p>
               </div>
 
@@ -1454,7 +1873,7 @@ export default function Login() {
               </div>
 
               <div className="rounded-xl border border-amber-200 dark:border-amber-800/50 bg-amber-50/70 dark:bg-amber-950/30 p-2.5 text-[11px] text-amber-900 dark:text-amber-200 leading-relaxed">
-                Asisten <b>Circle</b> akan mengirim kartu persetujuan ke Super Admin / Manajer Divisi Anda. Setelah disetujui, password baru langsung aktif.
+                Asisten <b>Asli</b> akan mengirim kartu persetujuan ke Super Admin / Manajer Divisi Anda. Setelah disetujui, password baru langsung aktif.
               </div>
 
               <button

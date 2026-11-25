@@ -544,7 +544,7 @@ export default function Marketplace() {
     );
   }
 
-  const storeName = mc("store_name", "CIRCLE Market");
+  const storeName = mc("store_name", "ASLI Market");
   const storeTagline = mc(
     "store_tagline",
     "Jual beli aman, preloved terkurasi & titip beli sesama rekan kerja."

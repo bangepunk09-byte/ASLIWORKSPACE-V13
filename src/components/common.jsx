@@ -60,9 +60,9 @@ export const Avatar = memo(function Avatar({ user, size = 36, showStatus = true,
   const liveUser = (!isCircleBot && user?.user_id)
     ? (userMap?.[user.user_id] || (Array.isArray(users) ? users.find((u) => u.user_id === user.user_id) : null) || user)
     : user;
-  const name = isCircleBot ? (ws?.assistant_name || user?.name || "Circle") : (liveUser?.name || user?.name || "?");
+  const name = isCircleBot ? (ws?.assistant_name || user?.name || "Asli") : (liveUser?.name || user?.name || "?");
   const avatarSrc = isCircleBot
-    ? (ws?.assistant_avatar || user?.avatar || user?.picture || "https://api.dicebear.com/7.x/bottts/svg?seed=CircleWorkspace&backgroundColor=FF5364")
+    ? (ws?.assistant_avatar || user?.avatar || user?.picture || "https://api.dicebear.com/7.x/bottts/svg?seed=AsliWorkspace&backgroundColor=FF5364")
     : (liveUser?.avatar || liveUser?.picture || user?.avatar || user?.picture);
 
   const initials = name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase();

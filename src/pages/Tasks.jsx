@@ -544,7 +544,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
   const exp = async (format, ids) => {
     if (!isSuperAdmin) return toast.error(t("tasks_export_only_admin", "Hanya Super Admin yang dapat mengekspor tugas."));
     try {
-      const res = await downloadFrom("/tasks/export", { ...query(), format, ...(ids ? { ids: ids.join(",") } : {}) }, `circle-tasks.${format}`);
+      const res = await downloadFrom("/tasks/export", { ...query(), format, ...(ids ? { ids: ids.join(",") } : {}) }, `asli-tasks.${format}`);
       const count = res.headers["x-record-count"];
       toast.success(count ? `Berhasil mengekspor ${count} tugas` : "Ekspor tugas berhasil");
     } catch (e) { toast.error(errMsg(e, t("tasks_export_err", "Ekspor gagal"))); }
@@ -579,7 +579,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
       <div className="hidden print:block border-b-2 border-slate-800 pb-3 mb-4">
         <div className="flex items-end justify-between">
           <div>
-            <p className="text-[11px] font-bold uppercase tracking-widest text-slate-500">{t("tasks_print_report_eyebrow", "CIRCLE WORKSPACE · LAPORAN TUGAS")}</p>
+            <p className="text-[11px] font-bold uppercase tracking-widest text-slate-500">{t("tasks_print_report_eyebrow", "ASLI WORKSPACE · LAPORAN TUGAS")}</p>
             <h1 className="text-2xl font-extrabold text-slate-900">{t("tasks_print_report_title", "Laporan Tugas")} — {activeBoardName}</h1>
           </div>
           <div className="text-right text-xs text-slate-600">

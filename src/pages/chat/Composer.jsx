@@ -535,7 +535,7 @@ export default function Composer({ conv, reply, onCancelReply, onSent, onPoll, i
       {matchingSlash.length > 0 && (
         <div className="mb-2 max-h-60 overflow-y-auto rounded-2xl border border-subtle bg-surface p-1.5 shadow-xl scroll-thin" data-testid="circle-slash-autocomplete">
           <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-sub">
-            {tr("chat_composer_slash_hint", "Perintah Cepat Circle")} ({matchingSlash.length}) {tr("chat_composer_slash_sub", "· Tab/Klik untuk pilih")}
+            {tr("chat_composer_slash_hint", "Perintah Cepat Asli")} ({matchingSlash.length}) {tr("chat_composer_slash_sub", "· Tab/Klik untuk pilih")}
           </div>
           {matchingSlash.map((item, idx) => (
             <button
@@ -564,8 +564,8 @@ export default function Composer({ conv, reply, onCancelReply, onSent, onPoll, i
               type="button"
               onClick={onOpenFeatureHub}
               className="btn-ghost hidden sm:flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center text-brand hover:bg-brand/10"
-              title="Jelajahi 60+ Fitur Circle AI"
-              aria-label="Fitur Circle AI"
+              title="Jelajahi 60+ Fitur ASLI AI"
+              aria-label="Fitur ASLI AI"
               data-testid="composer-circle-hub-btn"
             >
               <Sparkles size={19} />

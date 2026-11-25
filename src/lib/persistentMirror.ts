@@ -1,8 +1,10 @@
 import {
   firebaseAuth,
+  getQuotaPauseUntilTimestamp,
   isFirestoreQuotaPaused,
   loadLiveSyncFromFirestore,
   saveLiveSyncToFirestore,
+  syncServerQuotaPauseUntil,
 } from './firestoreBackup';
 import {
   getItemId,
@@ -749,6 +751,10 @@ async function fetchPersistenceStatus(api: any, forceRefresh = false): Promise<a
     .get('/workspace/persistence-status')
     .then((res: any) => {
       cachedPersistenceStatus = { data: res?.data, at: Date.now() };
+      const serverPausedUntil = Number(res?.data?.firestore_quota_paused_until || 0);
+      if (serverPausedUntil > Date.now()) {
+        syncServerQuotaPauseUntil(serverPausedUntil);
+      }
       return res?.data;
     })
     .finally(() => {
@@ -760,7 +766,7 @@ async function fetchPersistenceStatus(api: any, forceRefresh = false): Promise<a
 function mergeHarvestIntoSnapshotPayload(basePayload: any, harvest: LocalCacheHarvest): any {
   const clone = basePayload
     ? JSON.parse(JSON.stringify(basePayload))
-    : { app: 'CIRCLE Workspace', version: 2, data: {} };
+    : { app: 'ASLI Workspace', version: 2, data: {} };
   const root = clone.data && typeof clone.data === 'object' ? clone.data : clone;
 
   const localDelTaskIds = getLocalDeletedTaskIds();
@@ -1694,7 +1700,7 @@ export async function attemptAutoHydrateServer(api: any): Promise<boolean> {
         chosenSource = 'firestore';
       } else {
         chosenPayload = {
-          app: 'CIRCLE Workspace',
+          app: 'ASLI Workspace',
           version: 2,
           data: {
             users: activeVaultAccounts,
@@ -1822,22 +1828,36 @@ export async function syncWorkspaceMirror(
         lastSyncedRevision = currentEnvelope.revision;
       }
 
-      if (firebaseAuth.currentUser?.emailVerified && (manualForce || !isFirestoreQuotaPaused())) {
+      const serverPausedUntil = Number(status?.firestore_quota_paused_until || 0);
+      if (serverPausedUntil > Date.now()) {
+        syncServerQuotaPauseUntil(serverPausedUntil);
+      }
+
+      if (firebaseAuth.currentUser?.emailVerified && !isFirestoreQuotaPaused()) {
         const now = Date.now();
         const currentRev = Number(currentEnvelope?.revision || rev || 0);
         const latestMerged = await loadMirrorSnapshot();
         const snapshotToUpload = latestMerged?.snapshot || currentEnvelope?.snapshot;
         const hasUnsyncedSig = currentUploadSig !== lastFirestoreUploadedSig;
         const meaningfulData = hasMeaningfulWorkspaceData(snapshotToUpload);
+        const FIRESTORE_AUTO_SYNC_INTERVAL_MS = 180000; // 3 min cooldown to preserve free-tier daily quota
 
         if (
           manualForce ||
-          (meaningfulData && (hasUnsyncedSig || force) && now - lastFirestoreSyncAt >= 4000)
+          (meaningfulData && hasUnsyncedSig && now - lastFirestoreSyncAt >= FIRESTORE_AUTO_SYNC_INTERVAL_MS)
         ) {
           lastFirestoreSyncAt = now;
           const result = await saveLiveSyncToFirestore(snapshotToUpload, {
             manualForce,
-          }).catch(() => null);
+          }).catch(() => {
+            if (isFirestoreQuotaPaused()) {
+              const until = getQuotaPauseUntilTimestamp();
+              if (until > Date.now()) {
+                void api?.post?.('/workspace/firestore-quota-pause', { paused_until: until }).catch(() => {});
+              }
+            }
+            return null;
+          });
 
           if (result) {
             lastFirestoreUploadedSig = currentUploadSig;

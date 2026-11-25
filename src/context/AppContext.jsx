@@ -20,7 +20,7 @@ import {
 import { setCachedDriveShortcuts } from "../data/initialDriveShortcuts";
 import { showSystemNotification, syncPushSubscription, syncAppBadge } from "../lib/systemNotifications";
 import { attemptAutoHydrateServer, syncWorkspaceMirror, scheduleRealtimeCloudSync, upsertAccountInVault, upsertAccountsListInVault, getKnownAccountsFromVault, hasCompletedInitialHydrate, rehydrateIfServerRestarted, recordDeletedTaskIds, recordDeletedCheckpointTemplateIds, recordDeletedEntityIds } from "../lib/persistentMirror";
-import { firebaseAuth, subscribeFirebaseAuth, getCloudSyncStatus, subscribeCloudSyncStatus } from "../lib/firestoreBackup";
+import { firebaseAuth, subscribeFirebaseAuth, getCloudSyncStatus, subscribeCloudSyncStatus, isFirestoreQuotaPaused } from "../lib/firestoreBackup";
 import { googleBasicSignIn } from "../lib/auth";
 import { prefetchMarketplaceState, reconcileMarketplaceEnabledCache } from "../pages/marketplace/marketplaceStore";
 import { setTopQuickActionNotifActive } from "../lib/sonnerCompat";
@@ -646,6 +646,10 @@ export function AppProvider({ children }) {
       toast.info("Hubungkan akun Google terlebih dahulu agar Cloud Firestore aktif.");
       return false;
     }
+    if (isFirestoreQuotaPaused()) {
+      toast.warning("Kuota tulis harian gratis Firestore sudah tercapai hari ini (reset besok 00:05 UTC). Data Anda tetap aman tersimpan di server & cache lokal.");
+      return false;
+    }
     const res = await syncWorkspaceMirror(api, true, () => loadAllRef.current?.().catch(() => {}), true);
     const latest = getCloudSyncStatus();
     if (latest.lastError) {
@@ -666,9 +670,13 @@ export function AppProvider({ children }) {
       const res = await googleBasicSignIn();
       if (res?.user) {
         await attemptAutoHydrateServer(api).catch(() => false);
-        await syncWorkspaceMirror(api, true, () => loadAllRef.current?.().catch(() => {}), true).catch(() => {});
+        await syncWorkspaceMirror(api, false, () => loadAllRef.current?.().catch(() => {}), false).catch(() => {});
         await loadAllRef.current?.().catch(() => {});
-        toast.success(`Cloud Firestore aktif (${res.user.email})!`);
+        if (isFirestoreQuotaPaused()) {
+          toast.info(`Akun Google terhubung (${res.user.email}). Sinkronisasi Firestore dijeda hingga reset kuota besok; data aman di server lokal.`);
+        } else {
+          toast.success(`Cloud Firestore aktif (${res.user.email})!`);
+        }
         return true;
       }
       return false;
@@ -868,10 +876,10 @@ export function AppProvider({ children }) {
               const curWs = wsRef.current || ws;
               const curPrefs = prefsRef.current || prefs;
               const userMapObj = Object.fromEntries((Array.isArray(curUsers) ? curUsers : []).map((u) => [u.user_id, u]));
-              const sender = userMapObj[evt.data.sender_id] || (evt.data.sender_id === "user_circle_assistant" ? { name: curWs?.assistant_name || "Circle", avatar: curWs?.assistant_avatar } : null);
+              const sender = userMapObj[evt.data.sender_id] || (evt.data.sender_id === "user_circle_assistant" ? { name: curWs?.assistant_name || "Asli", avatar: curWs?.assistant_avatar } : null);
               const msgTitle = evt.data.conversation_type === "group" && evt.data.conversation_name
                 ? `${sender?.name || "Rekan Kerja"} di ${evt.data.conversation_name}`
-                : `Pesan Baru dari ${sender?.name || "Circle"}`;
+                : `Pesan Baru dari ${sender?.name || "Asli"}`;
               const msgBody = evt.data.text || "Mengirimkan pesan baru";
               const nextNotif = {
                 id: `msg_notif_${Date.now()}`,

@@ -85,7 +85,7 @@ export default function PrintPreviewDialog({
           <div className="mx-auto bg-white text-slate-900 rounded-2xl border border-slate-200 shadow-sm p-6">
             <div className="flex flex-wrap items-end justify-between gap-2 border-b-2 border-slate-800 pb-3 mb-4">
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{tr("print_kicker", "CIRCLE WORKSPACE · LAPORAN TUGAS")}</p>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{tr("print_kicker", "ASLI WORKSPACE · LAPORAN TUGAS")}</p>
                 <h2 className="text-xl font-extrabold text-slate-900">
                   {mode === "detail" ? `${task?.number_str || ""} — ${task?.title || ""}` : `${tr("print_report_title", "Laporan Tugas")} — ${boardName}`}
                 </h2>

@@ -134,7 +134,7 @@ async function startServer() {
       sendWebPushToUser(params.user_id, {
         id: notif.id,
         title: notif.title,
-        body: notif.body || "Ada pembaruan baru di CIRCLE Workspace.",
+        body: notif.body || "Ada pembaruan baru di ASLI Workspace.",
         type: notif.type || "general",
         category: notif.category || "general",
         url: targetUrl,
@@ -251,13 +251,15 @@ async function startServer() {
 
   const initialServerTasks: any[] = [];
 
-  // In-memory mock data store for CIRCLE Workspace with explicit any/Record types
+  // In-memory mock data store for ASLI Workspace with explicit any/Record types
   const db: Record<string, any> = {
     files: {},
     meetings: [],
     workspace: {
       id: "ws_main",
-      name: "CIRCLE Workspace",
+      name: "ASLI Workspace",
+      brand_name: "ASLI",
+      assistant_name: "Asli",
       tagline: "Enterprise Collaboration & Management",
       logo_file_id: "default_workspace_logo",
       login_image_file_id: "default_login_bg",
@@ -363,7 +365,66 @@ async function startServer() {
         }
       } catch {}
     }
+    migrateLegacyCircleBranding();
     return true;
+  }
+
+  function migrateLegacyCircleBranding() {
+    if (db.workspace && typeof db.workspace === 'object') {
+      const wsName = String(db.workspace.name || '').trim();
+      if (!wsName || /^circle(\s+workspace)?$/i.test(wsName)) {
+        db.workspace.name = 'ASLI Workspace';
+      }
+      const wsBrand = String(db.workspace.brand_name || '').trim();
+      if (!wsBrand || /^circle(\s+workspace)?$/i.test(wsBrand)) {
+        db.workspace.brand_name = 'ASLI';
+      }
+      const asstName = String(db.workspace.assistant_name || '').trim();
+      if (!asstName || /^circle(\s*(assistant|ai))?$/i.test(asstName)) {
+        db.workspace.assistant_name = 'Asli';
+      }
+      if (typeof db.workspace.assistant_avatar === 'string' && db.workspace.assistant_avatar.includes('seed=CircleWorkspace')) {
+        db.workspace.assistant_avatar = db.workspace.assistant_avatar.replace('seed=CircleWorkspace', 'seed=AsliWorkspace');
+      }
+      if (db.workspace.marketplace_config && typeof db.workspace.marketplace_config === 'object') {
+        if (/^circle\s+market$/i.test(String(db.workspace.marketplace_config.store_name || '').trim())) {
+          db.workspace.marketplace_config.store_name = 'ASLI Market';
+        }
+      }
+      if (!Array.isArray(db.workspace.allowed_domains) || db.workspace.allowed_domains.length === 0) {
+        db.workspace.allowed_domains = ['asliri.id'];
+      }
+      if (db.workspace.auto_join_domain === undefined) {
+        db.workspace.auto_join_domain = true;
+      }
+      if (db.workspace.require_approval === undefined) {
+        db.workspace.require_approval = true;
+      }
+    }
+    if (Array.isArray(db.users)) {
+      const botUser = db.users.find((u: any) => u?.user_id === 'user_circle_assistant');
+      if (botUser) {
+        if (!botUser.name || /^circle(\s*\(workspace assistant\))?$/i.test(String(botUser.name).trim())) {
+          botUser.name = db.workspace?.assistant_name || 'Asli';
+        }
+        if (typeof botUser.avatar === 'string' && botUser.avatar.includes('seed=CircleWorkspace')) {
+          botUser.avatar = botUser.avatar.replace('seed=CircleWorkspace', 'seed=AsliWorkspace');
+        }
+        if (typeof botUser.picture === 'string' && botUser.picture.includes('seed=CircleWorkspace')) {
+          botUser.picture = botUser.picture.replace('seed=CircleWorkspace', 'seed=AsliWorkspace');
+        }
+      }
+    }
+    if (Array.isArray(db.conversations)) {
+      db.conversations.forEach((c: any) => {
+        if (c && String(c.id || '').startsWith('conv_circle_')) {
+          const nm = String(c.name || '').trim();
+          if (!nm || /^circle(\s*\(workspace assistant\))?$/i.test(nm)) {
+            c.name = db.workspace?.assistant_name || 'Asli';
+          }
+        }
+      });
+    }
   }
 
   function findNewestBackupSnapshotOnDisk(): string | null {
@@ -418,7 +479,7 @@ async function startServer() {
           const raw = fs.readFileSync(filePath, 'utf-8');
           const parsed = JSON.parse(raw);
           if (applyLoadedDbObject(parsed)) {
-            console.log(`Successfully loaded CIRCLE workspace database from ${path.basename(filePath)}.`);
+            console.log(`Successfully loaded ASLI workspace database from ${path.basename(filePath)}.`);
             if (isDatabaseInEmptySeedState()) {
               serverBootedFreshSeed = true;
               db.revision = 0;
@@ -439,7 +500,7 @@ async function startServer() {
       try {
         const parsed = JSON.parse(fs.readFileSync(newestBackup, 'utf-8'));
         if (applyLoadedDbObject(parsed)) {
-          console.log(`Recovered CIRCLE workspace database from snapshot ${path.basename(newestBackup)}.`);
+          console.log(`Recovered ASLI workspace database from snapshot ${path.basename(newestBackup)}.`);
           serverBootedFreshSeed = isDatabaseInEmptySeedState();
           if (serverBootedFreshSeed) db.revision = 0;
           return;
@@ -618,6 +679,7 @@ async function startServer() {
             db.drive_shortcuts = [...INITIAL_DRIVE_SHORTCUTS];
           }
           ensureMarketplaceData(db);
+          migrateLegacyCircleBranding();
           ensureWorkspaceCheckpointTemplates();
           migrateSecurityAtRest();
           sanitizeConversationsAndMessages();
@@ -625,7 +687,7 @@ async function startServer() {
           serverBootedFreshSeed = isDatabaseInEmptySeedState();
           flushDbToFileSync();
           console.log(
-            `[PostgreSQL] Hydrated CIRCLE workspace (rev ${db.revision}, users=${db.users.length}, tasks=${db.tasks.length}, messages=${db.messages.length}).`
+            `[PostgreSQL] Hydrated ASLI workspace (rev ${db.revision}, users=${db.users.length}, tasks=${db.tasks.length}, messages=${db.messages.length}).`
           );
         } else if (!isDatabaseInEmptySeedState()) {
           await saveWorkspaceToPostgres(db, { allowEmptyOverwrite: false });
@@ -983,14 +1045,14 @@ async function startServer() {
     );
   }
 
-  // Ensure Circle Assistant Bot user exists
+  // Ensure Assistant Bot user exists
   const CIRCLE_BOT_ID = "user_circle_assistant";
   let circleBot = db.users.find((u: any) => u.user_id === CIRCLE_BOT_ID);
   if (!circleBot) {
     circleBot = {
       user_id: CIRCLE_BOT_ID,
-      email: "circle-bot@asliri.local",
-      name: db.workspace.assistant_name || "Circle",
+      email: "asli-bot@asliri.local",
+      name: db.workspace.assistant_name || "Asli",
       role: "assistant",
       job_title: "Workspace AI Assistant",
       department: "System",
@@ -998,12 +1060,12 @@ async function startServer() {
       is_demo: false,
       is_bot: true,
       status: "active",
-      avatar: db.workspace.assistant_avatar || "https://api.dicebear.com/7.x/bottts/svg?seed=CircleWorkspace&backgroundColor=FF5364",
-      picture: db.workspace.assistant_avatar || "https://api.dicebear.com/7.x/bottts/svg?seed=CircleWorkspace&backgroundColor=FF5364"
+      avatar: db.workspace.assistant_avatar || "https://api.dicebear.com/7.x/bottts/svg?seed=AsliWorkspace&backgroundColor=FF5364",
+      picture: db.workspace.assistant_avatar || "https://api.dicebear.com/7.x/bottts/svg?seed=AsliWorkspace&backgroundColor=FF5364"
     };
     db.users.push(circleBot);
   } else {
-    circleBot.name = db.workspace.assistant_name || circleBot.name || "Circle";
+    circleBot.name = db.workspace.assistant_name || circleBot.name || "Asli";
     if (db.workspace.assistant_avatar) {
       circleBot.avatar = db.workspace.assistant_avatar;
       circleBot.picture = db.workspace.assistant_avatar;
@@ -2100,7 +2162,7 @@ async function startServer() {
         if (!ownerUid || seenCircleIds.has(c.id)) continue;
         seenCircleIds.add(c.id);
         c.type = "dm";
-        c.name = db.workspace?.assistant_name || "Circle";
+        c.name = db.workspace?.assistant_name || "Asli";
         c.member_ids = [CIRCLE_BOT_ID, ownerUid];
         c.members = [CIRCLE_BOT_ID, ownerUid];
         // Remove any messages in this Circle DM that were accidentally sent by other human users
@@ -2690,7 +2752,7 @@ async function startServer() {
   }
 
   function buildFullBackupPayload(
-    exportedBy: any = { user_id: "system_scheduler", name: "Auto Backup Harian", email: "system@circle.local" },
+    exportedBy: any = { user_id: "system_scheduler", name: "Auto Backup Harian", email: "system@asli.local" },
     options: { includeFiles?: boolean } = {}
   ) {
     const uploadedFilesBase64 = options.includeFiles === false ? {} : getCachedUploadedFilesBase64();
@@ -2760,12 +2822,12 @@ async function startServer() {
     snapshotData.revision = Number(db.revision || 0);
 
     return {
-      app: "CIRCLE Workspace",
+      app: "ASLI Workspace",
       version: 2,
       revision: Number(db.revision || 0),
       exported_at: new Date().toISOString(),
       exported_by: exportedBy,
-      workspace_name: db.workspace?.name || "CIRCLE Workspace",
+      workspace_name: db.workspace?.name || "ASLI Workspace",
       summary: buildBackupSummary(),
       data: snapshotData,
       uploaded_files_base64: uploadedFilesBase64,
@@ -2819,10 +2881,10 @@ async function startServer() {
 
     const exportedBy = actor
       ? { user_id: actor.user_id, name: actor.name, email: actor.email }
-      : { user_id: "system_auto_backup", name: "Auto Backup Harian (23:59 WIB)", email: "system@circle.local" };
+      : { user_id: "system_auto_backup", name: "Auto Backup Harian (23:59 WIB)", email: "system@asli.local" };
 
     const payload = buildFullBackupPayload(exportedBy);
-    const fileBase = `circle-backup-${parts.ddMmYyyy}-${parts.hhmmCompact}-${triggerType}`;
+    const fileBase = `asli-backup-${parts.ddMmYyyy}-${parts.hhmmCompact}-${triggerType}`;
     const jsonFileName = `${fileBase}.json`;
     const metaFileName = `${fileBase}.meta.json`;
     const jsonPath = path.join(dayDir, jsonFileName);
@@ -2994,7 +3056,7 @@ async function startServer() {
         })),
     ];
     res.json({
-      workspace_name: db.workspace?.name || "CIRCLE Workspace",
+      workspace_name: db.workspace?.name || "ASLI Workspace",
       summary: buildBackupSummary(),
       auto_backup: {
         config: ensureAutoBackupConfig(),
@@ -3139,7 +3201,7 @@ async function startServer() {
     if (req.query.download === "1" || req.query.download === "true") {
       const parts = getJakartaParts(new Date());
       res.setHeader("Content-Type", "application/json; charset=utf-8");
-      res.setHeader("Content-Disposition", `attachment; filename="circle-workspace-backup-${parts.ddMmYyyy}-${parts.hhmmCompact}.json"`);
+      res.setHeader("Content-Disposition", `attachment; filename="asli-workspace-backup-${parts.ddMmYyyy}-${parts.hhmmCompact}.json"`);
       return res.send(JSON.stringify(payload, null, 2));
     }
 
@@ -3197,7 +3259,7 @@ async function startServer() {
       (rawData.workspace && typeof rawData.workspace === "object");
 
     if (!hasRecognizedCollection) {
-      return res.status(400).json({ detail: "File backup tidak memiliki koleksi data CIRCLE Workspace yang valid." });
+      return res.status(400).json({ detail: "File backup tidak memiliki koleksi data ASLI Workspace yang valid." });
     }
 
     for (const k of arrayKeys) {
@@ -3878,6 +3940,10 @@ async function startServer() {
       deleted_entity_ids: Array.isArray(db.deleted_entity_ids) ? db.deleted_entity_ids : [],
       deleted_note_ids: Array.isArray(db.deleted_note_ids) ? db.deleted_note_ids : [],
       deleted_meeting_ids: Array.isArray(db.deleted_meeting_ids) ? db.deleted_meeting_ids : [],
+      firestore_quota_paused_until:
+        Number(db.workspace?.firestore_quota_paused_until || 0) > Date.now()
+          ? Number(db.workspace.firestore_quota_paused_until)
+          : 0,
       counts: {
         users: summary.users,
         tasks: summary.tasks,
@@ -3887,6 +3953,26 @@ async function startServer() {
         notes: summary.circle_notes,
       },
     });
+  });
+
+  app.post("/api/workspace/firestore-quota-pause", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser) {
+      return res.status(401).json({ detail: "Autentikasi diperlukan." });
+    }
+    const rawUntil = Number(req.body?.paused_until || 0);
+    const maxUntil = Date.now() + 36 * 60 * 60 * 1000;
+    if (!Number.isFinite(rawUntil) || rawUntil <= Date.now()) {
+      return res.status(400).json({ detail: "Timestamp paused_until tidak valid." });
+    }
+    const clampedUntil = Math.min(rawUntil, maxUntil);
+    if (!db.workspace) db.workspace = {};
+    const prev = Number(db.workspace.firestore_quota_paused_until || 0);
+    if (clampedUntil > prev) {
+      db.workspace.firestore_quota_paused_until = clampedUntil;
+      saveDbToFile(true);
+    }
+    res.json({ ok: true, firestore_quota_paused_until: Number(db.workspace.firestore_quota_paused_until || clampedUntil) });
   });
 
   app.get("/api/workspace/persistent-snapshot", (req, res) => {
@@ -4113,23 +4199,53 @@ async function startServer() {
     return { ok: true, email: clean, domain };
   }
 
-  function isAllowedCompanyDomain(domain: string): boolean {
-    if (!domain) return false;
+  function getNormalizedAllowedDomains(): string[] {
     const rawDomains = db.workspace?.allowed_domains;
     const hasConfigured =
       rawDomains !== undefined &&
       rawDomains !== null &&
       (Array.isArray(rawDomains) ? rawDomains.length > 0 : String(rawDomains).trim().length > 0);
-    const list: string[] = hasConfigured
+    const rawItems = hasConfigured
       ? Array.isArray(rawDomains)
         ? rawDomains
-        : String(rawDomains || "")
-            .split(",")
-            .map((d) => d.trim().toLowerCase())
-            .filter(Boolean)
+        : String(rawDomains || "").split(",")
       : ["asliri.id"];
-    const target = domain.toLowerCase().replace(/^@/, "");
-    return list.some((d) => String(d || "").trim().toLowerCase().replace(/^@/, "") === target);
+    const normalized = rawItems
+      .flatMap((d) => String(d || "").split(","))
+      .map((d) => d.trim().toLowerCase().replace(/^@+/, ""))
+      .filter(Boolean);
+    return normalized.length > 0 ? Array.from(new Set(normalized)) : ["asliri.id"];
+  }
+
+  function isAllowedCompanyDomain(domain: string): boolean {
+    if (!domain) return false;
+    const target = String(domain).trim().toLowerCase().replace(/^@+/, "");
+    if (!target) return false;
+    return getNormalizedAllowedDomains().some((d) => d === target);
+  }
+
+  function autoApprovePendingAccessRequestsForEmail(
+    cleanEmail: string,
+    approvedByLabel = "Otomatis (Domain Perusahaan)"
+  ): boolean {
+    if (!cleanEmail || !Array.isArray(db.access_requests)) return false;
+    let changed = false;
+    const nowIso = new Date().toISOString();
+    db.access_requests.forEach((r: any) => {
+      if (
+        r &&
+        r.status === "pending" &&
+        r.type !== "password_reset" &&
+        r.type !== "delete_user" &&
+        String(r.email || "").toLowerCase().trim() === cleanEmail
+      ) {
+        r.status = "approved";
+        r.approved_by = approvedByLabel;
+        r.approved_at = nowIso;
+        changed = true;
+      }
+    });
+    return changed;
   }
 
   // Email & Password Login (with scrypt constant-time verification, brute-force lockout & HMAC session token)
@@ -4197,6 +4313,10 @@ async function startServer() {
       db.workspace?.auto_join_domain !== false && isAllowedCompanyDomain(emailCheck.domain);
     if (user.status === "pending" && (canAutoJoinLoginDomain || db.workspace?.require_approval === false)) {
       user.status = "active";
+      if (autoApprovePendingAccessRequestsForEmail(cleanEmail)) {
+        broadcast({ type: "access_requests:changed" });
+      }
+      broadcast({ type: "users:changed" });
     }
 
     if (user.status === "pending") {
@@ -4230,7 +4350,7 @@ async function startServer() {
 
   // Email & Password Registration / Signup
   app.post("/api/auth/register", (req, res) => {
-    const { name, email, password, department, job_title, note, avatar } = req.body || {};
+    const { name, email, password, department, job_title, phone, work_mode, note, avatar } = req.body || {};
     if (!email || !password || !name) {
       return res.status(400).json({ detail: "Nama lengkap, email, dan password wajib diisi." });
     }
@@ -4248,26 +4368,30 @@ async function startServer() {
     const cleanEmail = emailCheck.email;
     const existingUser = db.users.find((u: any) => u.email?.toLowerCase() === cleanEmail);
 
-    if (existingUser && existingUser.status === "active") {
-      return res.status(400).json({ detail: "Email ini sudah memiliki akun aktif. Silakan langsung masuk (login)." });
-    }
-
-    if (existingUser && existingUser.status === "pending") {
-      return res.status(400).json({ detail: "Pendaftaran untuk email ini sudah diajukan dan sedang menunggu approval Super Admin." });
-    }
-
-    const reqId = `req_${Date.now()}`;
-    const newUserId = existingUser ? existingUser.user_id : `user_${Date.now()}`;
-    const selectedDept = String(department || "Marketing").trim();
-    const passwordHash = hashPassword(String(password));
-    const nowIso = new Date().toISOString();
-
     const invitation = (Array.isArray(db.invitations) ? db.invitations : []).find(
       (inv: any) => inv.email?.toLowerCase() === cleanEmail
     );
     const canAutoJoinDomain =
       db.workspace?.auto_join_domain !== false && isAllowedCompanyDomain(emailCheck.domain);
     const autoApproveNow = Boolean(invitation || canAutoJoinDomain || db.workspace?.require_approval === false);
+
+    if (existingUser && existingUser.status === "active") {
+      return res.status(400).json({ detail: "Email ini sudah memiliki akun aktif. Silakan langsung masuk (login)." });
+    }
+
+    if (existingUser && existingUser.status === "pending" && !autoApproveNow) {
+      return res.status(400).json({ detail: "Pendaftaran untuk email ini sudah diajukan dan sedang menunggu approval Super Admin." });
+    }
+
+    const reqId = `req_${Date.now()}`;
+    const newUserId = existingUser ? existingUser.user_id : `user_${Date.now()}`;
+    const selectedDept = String(department || "Marketing").trim();
+    const cleanPhone = String(phone || "").trim();
+    const cleanWorkMode = String(work_mode || "On-site").trim();
+    const cleanNote = String(note || "").trim();
+    const passwordHash = hashPassword(String(password));
+    const nowIso = new Date().toISOString();
+
     if (invitation) invitation.used = true;
 
     let newUserObj: any = null;
@@ -4281,8 +4405,14 @@ async function startServer() {
         token_version: 1,
         name: name.trim(),
         role: invitation?.role || "employee",
-        job_title: job_title || "Staff Member",
+        job_title: String(job_title || "").trim() || "Staff Member",
         department: selectedDept,
+        phone: cleanPhone,
+        work_mode: cleanWorkMode,
+        bio: cleanNote,
+        join_date: nowIso.slice(0, 10),
+        onboarding_completed: true,
+        auth_provider: "password",
         status: autoApproveNow ? "active" : "pending",
         online: autoApproveNow,
         is_demo: false,
@@ -4296,7 +4426,11 @@ async function startServer() {
       delete existingUser.password;
       existingUser.name = name.trim();
       if (department) existingUser.department = selectedDept;
-      if (job_title) existingUser.job_title = job_title;
+      if (job_title) existingUser.job_title = String(job_title).trim();
+      if (cleanPhone) existingUser.phone = cleanPhone;
+      if (cleanWorkMode) existingUser.work_mode = cleanWorkMode;
+      if (cleanNote) existingUser.bio = cleanNote;
+      existingUser.onboarding_completed = true;
       existingUser.avatar = defaultAvatar;
       existingUser.picture = defaultAvatar;
       existingUser.status = autoApproveNow ? "active" : "pending";
@@ -4308,6 +4442,9 @@ async function startServer() {
     if (autoApproveNow) {
       setUserOnlineStatus(newUserObj.user_id, true);
       ensureProfileCompletionReminder(newUserObj);
+      if (autoApprovePendingAccessRequestsForEmail(cleanEmail)) {
+        broadcast({ type: "access_requests:changed" });
+      }
       const token = issueUserSession(req, res, newUserObj);
       saveDbToFile(true);
       broadcast({ type: "users:changed" });
@@ -4329,8 +4466,9 @@ async function startServer() {
       name: name.trim(),
       email: cleanEmail,
       department: newUserObj.department || selectedDept,
-      job_title: job_title || "Staff Member",
-      note: note || "Pendaftaran akun baru via Email & Password",
+      job_title: String(job_title || "").trim() || "Staff Member",
+      phone: cleanPhone,
+      note: cleanNote || "Pendaftaran akun baru via Email & Password",
       status: "pending",
       created_at: new Date().toISOString()
     };
@@ -4355,7 +4493,7 @@ async function startServer() {
         conv = {
           id: `conv_circle_${admin.user_id}`,
           type: "dm",
-          name: "Circle (Workspace Assistant)",
+          name: "Asli (Workspace Assistant)",
           admin_ids: [],
           members: [CIRCLE_BOT_ID, admin.user_id],
           member_ids: [CIRCLE_BOT_ID, admin.user_id],
@@ -4408,14 +4546,30 @@ async function startServer() {
   });
 
   app.post("/api/auth/google", async (req, res) => {
-    const { email, name, picture, department, job_title, note, mode, known_accounts, idToken } = req.body || {};
+    const {
+      email,
+      name,
+      picture,
+      avatar,
+      department,
+      job_title,
+      phone,
+      work_mode,
+      note,
+      password,
+      mode,
+      known_accounts,
+      idToken,
+      check_only,
+      profile_submitted
+    } = req.body || {};
     if (Array.isArray(known_accounts) && known_accounts.length > 0) {
       mergeKnownAccountsIntoDb(known_accounts);
     }
     const verifiedFirebase = idToken ? await verifyFirebaseIdTokenSafe(idToken) : null;
     const resolvedEmail = verifiedFirebase?.email || email;
     const resolvedName = name || verifiedFirebase?.name;
-    const resolvedPicture = picture || verifiedFirebase?.picture;
+    const resolvedPicture = avatar || picture || verifiedFirebase?.picture;
     if (!resolvedEmail) return res.status(400).json({ detail: "Email wajib diisi" });
 
     const emailCheck = validateWorkspaceEmail(resolvedEmail);
@@ -4424,7 +4578,6 @@ async function startServer() {
     }
 
     const cleanEmail = emailCheck.email;
-    const isSignupIntent = mode === "signup";
     let user = db.users.find((u: any) => u.email?.toLowerCase() === cleanEmail);
     if (user && verifiedFirebase?.uid && !user.firebase_uid) {
       user.firebase_uid = verifiedFirebase.uid;
@@ -4442,11 +4595,9 @@ async function startServer() {
     );
     const canAutoJoinDomain =
       db.workspace?.auto_join_domain !== false && isAllowedCompanyDomain(emailCheck.domain);
-
-    const displayName = (resolvedName || cleanEmail.split("@")[0] || "Google User").trim();
-    const dept = String(department || "Marketing").trim();
-    const title = job_title || "Staff Member";
-    const avatarUrl = resolvedPicture || `https://api.dicebear.com/7.x/pixel-art/svg?seed=${encodeURIComponent(displayName)}`;
+    const isAutoApproveEligible = Boolean(
+      isSuperAdminEmail || invitation || canAutoJoinDomain || db.workspace?.require_approval === false
+    );
 
     const makeCleanUserSlug = (nameStr: string, emailStr: string) => {
       const raw = (nameStr || emailStr.split("@")[0] || "member")
@@ -4462,159 +4613,238 @@ async function startServer() {
       return candidate;
     };
 
-    if (!user) {
-      if (isSuperAdminEmail) {
+    if (user && (user.status === "inactive" || user.status === "rejected")) {
+      return res.status(403).json({
+        status: "inactive",
+        detail: "Akun Anda dinonaktifkan atau ditolak. Silakan hubungi Workspace Administrator."
+      });
+    }
+
+    const hasCompletedOnboarding = Boolean(
+      user &&
+        (user.onboarding_completed === true ||
+          (user.password_hash && String(user.name || "").trim() && String(user.department || "").trim()))
+    );
+
+    if (user && user.status === "pending" && hasCompletedOnboarding && !isAutoApproveEligible) {
+      return res.status(403).json({
+        status: "pending",
+        detail: "Permintaan akses untuk akun Anda sedang ditinjau oleh Super Admin / Manajer Divisi. Anda dapat masuk setelah disetujui.",
+        email: cleanEmail,
+        name: user.name
+      });
+    }
+
+    const needsOnboarding = !user || !hasCompletedOnboarding;
+
+    if (needsOnboarding && (check_only === true || profile_submitted !== true)) {
+      const existingTitle = String(user?.job_title || "").trim();
+      const sanitizeExistingTitle = ["Staff Member", "Anggota Tim", "Workspace Administrator"].includes(existingTitle)
+        ? ""
+        : existingTitle;
+      const existingName = String(user?.name || "").trim();
+      const sanitizeExistingName = existingName && existingName !== "Super Admin" ? existingName : "";
+      return res.json({
+        status: "needs_onboarding",
+        requires_profile_data: true,
+        existing_user: Boolean(user),
+        auto_approve_eligible: isAutoApproveEligible,
+        google_profile: {
+          email: cleanEmail,
+          name: sanitizeExistingName || String(resolvedName || "").trim(),
+          picture: user?.avatar || resolvedPicture || "",
+          department: user?.department || "",
+          job_title: sanitizeExistingTitle,
+          phone: user?.phone || "",
+          work_mode: user?.work_mode || "On-site",
+          bio: user?.bio || ""
+        }
+      });
+    }
+
+    if (needsOnboarding && profile_submitted === true) {
+      const cleanName = String(resolvedName || "").trim();
+      const cleanDept = String(department || "").trim();
+      const cleanTitle = String(job_title || "").trim();
+      const cleanPhone = String(phone || "").trim();
+      const cleanWorkMode = String(work_mode || "On-site").trim() || "On-site";
+      const cleanNote = String(note || "").trim();
+
+      if (!cleanName || !cleanDept || !cleanTitle || !cleanPhone) {
+        return res.status(400).json({
+          detail: "Nama lengkap, divisi, jabatan/posisi, dan nomor telepon wajib diisi terlebih dahulu."
+        });
+      }
+
+      let optionalPasswordHash: string | undefined;
+      if (password && String(password).trim().length > 0) {
+        const pwPolicy = validatePasswordPolicy(String(password));
+        if (!pwPolicy.ok) {
+          return res.status(400).json({ detail: pwPolicy.detail });
+        }
+        optionalPasswordHash = hashPassword(String(password));
+      }
+
+      const nowIso = new Date().toISOString();
+      const avatarUrl = resolvedPicture || `https://api.dicebear.com/7.x/pixel-art/svg?seed=${encodeURIComponent(cleanName)}`;
+
+      if (!user) {
+        const newUserId = isSuperAdminEmail ? "user_superadmin_google" : makeCleanUserSlug(cleanName, cleanEmail);
         user = {
-          user_id: `user_superadmin_google`,
+          user_id: newUserId,
           firebase_uid: verifiedFirebase?.uid || undefined,
           email: cleanEmail,
-          name: resolvedName || "Super Admin",
-          role: "super_admin",
-          job_title: "Workspace Administrator",
-          department: "Management",
-          org_unit_id: "unit_mgmt",
-          online: true,
+          name: cleanName,
+          role: isSuperAdminEmail ? "super_admin" : (invitation?.role || "employee"),
+          job_title: cleanTitle,
+          department: cleanDept,
+          phone: cleanPhone,
+          work_mode: cleanWorkMode,
+          bio: cleanNote,
+          join_date: nowIso.slice(0, 10),
+          org_unit_id: isSuperAdminEmail ? "unit_mgmt" : undefined,
+          ...(optionalPasswordHash ? { password_hash: optionalPasswordHash, password_updated_at: nowIso, token_version: 1 } : {}),
+          onboarding_completed: true,
+          auth_provider: "google",
+          online: isAutoApproveEligible,
           is_demo: false,
-          status: "active",
-          avatar: resolvedPicture || "https://api.dicebear.com/7.x/pixel-art/svg?seed=SuperAdmin",
-          picture: resolvedPicture || "https://api.dicebear.com/7.x/pixel-art/svg?seed=SuperAdmin"
-        };
-        db.users.push(user);
-        syncUserDivisionAndGroupMembership(user);
-        saveDbToFile();
-      } else if (invitation || canAutoJoinDomain || db.workspace?.require_approval === false) {
-        // Invited email, verified company domain (auto_join_domain), or workspace explicitly disables approval
-        if (invitation) invitation.used = true;
-        user = {
-          user_id: makeCleanUserSlug(displayName, cleanEmail),
-          email: cleanEmail,
-          name: displayName,
-          role: invitation?.role || "employee",
-          job_title: title,
-          department: dept,
-          status: "active",
-          online: true,
-          is_demo: false,
+          status: isAutoApproveEligible ? "active" : "pending",
           avatar: avatarUrl,
           picture: avatarUrl
         };
         db.users.push(user);
-        syncUserDivisionAndGroupMembership(user);
-        saveDbToFile();
-        broadcast({ type: "users:changed" });
-        broadcast({ type: "groups:changed" });
-      } else if (!isSignupIntent) {
-        // Attempting to log in with an unregistered external email: block direct login!
-        return res.status(401).json({
-          status: "unregistered",
-          detail:
-            "Email tersebut belum terdaftar di workspace ini. Silakan daftar terlebih dahulu melalui tab Daftar Akun Baru untuk meminta persetujuan Super Admin."
-        });
       } else {
-        // Explicit Sign-Up mode with require_approval enabled: register as pending & send Approval Card
-        const newUserId = makeCleanUserSlug(displayName, cleanEmail);
+        if (verifiedFirebase?.uid) user.firebase_uid = verifiedFirebase.uid;
+        user.name = cleanName;
+        user.department = cleanDept;
+        user.job_title = cleanTitle;
+        user.phone = cleanPhone;
+        user.work_mode = cleanWorkMode;
+        if (cleanNote) user.bio = cleanNote;
+        if (!user.join_date) user.join_date = nowIso.slice(0, 10);
+        if (optionalPasswordHash) {
+          user.password_hash = optionalPasswordHash;
+          user.password_updated_at = nowIso;
+          delete user.password;
+        }
+        if (avatarUrl) {
+          user.avatar = avatarUrl;
+          user.picture = avatarUrl;
+        }
+        if (isSuperAdminEmail) user.role = "super_admin";
+        else if (invitation?.role && !user.role) user.role = invitation.role;
+        user.onboarding_completed = true;
+        user.auth_provider = user.auth_provider || "google";
+        user.status = isAutoApproveEligible ? "active" : "pending";
+      }
+
+      syncUserDivisionAndGroupMembership(user);
+
+      if (!isAutoApproveEligible) {
+        user.online = false;
         const reqId = `req_${Date.now()}`;
-
-        const newUserObj: any = {
-          user_id: newUserId,
-          email: cleanEmail,
-          name: displayName,
-          role: "employee",
-          job_title: title,
-          department: dept,
-          status: "pending",
-          online: false,
-          is_demo: false,
-          avatar: avatarUrl,
-          picture: avatarUrl
-        };
-        db.users.push(newUserObj);
-        syncUserDivisionAndGroupMembership(newUserObj);
-
-        const accessReq = {
-          id: reqId,
-          name: displayName,
-          email: cleanEmail,
-          department: newUserObj.department || dept,
-          job_title: title,
-          note: note || "Pendaftaran akun baru via Google",
-          status: "pending",
-          created_at: new Date().toISOString()
-        };
-        db.access_requests.unshift(accessReq);
-
-        const approvers = db.users.filter((u: any) =>
-          u.role === "super_admin" ||
-          u.role === "workspace_admin" ||
-          (u.role === "department_manager" && (!dept || u.department === dept || u.department === "General"))
+        const existingReq = (db.access_requests || []).find(
+          (r: any) => r.email?.toLowerCase() === cleanEmail && r.status === "pending"
         );
-        const targetApprovers = approvers.length > 0 ? approvers : [db.users[0]];
+        const accessReq = existingReq || {
+          id: reqId,
+          name: cleanName,
+          email: cleanEmail,
+          department: user.department || cleanDept,
+          job_title: cleanTitle,
+          phone: cleanPhone,
+          note: cleanNote || "Pendaftaran akun baru via Google",
+          status: "pending",
+          created_at: nowIso
+        };
+        if (!existingReq) {
+          db.access_requests.unshift(accessReq);
 
-        targetApprovers.forEach((admin: any) => {
-          if (!admin?.user_id) return;
-          const convId = `conv_circle_${admin.user_id}`;
-          let conv = db.conversations.find((c: any) => c.id === convId);
-          if (!conv) {
-            conv = {
-              id: convId,
-              type: "dm",
-              name: db.workspace?.assistant_name || "Circle",
-              admin_ids: [CIRCLE_BOT_ID],
-              members: [CIRCLE_BOT_ID, admin.user_id],
-              member_ids: [CIRCLE_BOT_ID, admin.user_id],
-              unread: 1,
-              last_message_preview: `Pendaftaran akun Google dari ${displayName}`,
-              last_message_at: new Date().toISOString()
+          const approvers = db.users.filter((u: any) =>
+            u.role === "super_admin" ||
+            u.role === "workspace_admin" ||
+            (u.role === "department_manager" && (!cleanDept || u.department === cleanDept || u.department === "General"))
+          );
+          const targetApprovers = approvers.length > 0 ? approvers : [db.users[0]];
+
+          targetApprovers.forEach((admin: any) => {
+            if (!admin?.user_id) return;
+            const convId = `conv_circle_${admin.user_id}`;
+            let conv = db.conversations.find((c: any) => c.id === convId);
+            if (!conv) {
+              conv = {
+                id: convId,
+                type: "dm",
+                name: db.workspace?.assistant_name || "Asli",
+                admin_ids: [CIRCLE_BOT_ID],
+                members: [CIRCLE_BOT_ID, admin.user_id],
+                member_ids: [CIRCLE_BOT_ID, admin.user_id],
+                unread: 1,
+                last_message_preview: `Pendaftaran akun Google dari ${cleanName}`,
+                last_message_at: nowIso
+              };
+              db.conversations.unshift(conv);
+            } else {
+              conv.member_ids = [CIRCLE_BOT_ID, admin.user_id];
+              conv.members = [CIRCLE_BOT_ID, admin.user_id];
+              conv.unread = (conv.unread || 0) + 1;
+              conv.last_message_preview = `Pendaftaran akun Google dari ${cleanName}`;
+              conv.last_message_at = nowIso;
+            }
+
+            const msg = {
+              id: `msg_req_${reqId}_${admin.user_id}`,
+              conversation_id: conv.id,
+              sender_id: CIRCLE_BOT_ID,
+              user_id: CIRCLE_BOT_ID,
+              text: `Halo ${admin.name.split(" ")[0]}! Ada pendaftaran akun Google baru (${cleanEmail}) untuk divisi ${user.department || cleanDept}. Silakan tinjau card approval di bawah ini:`,
+              type: "access_request_card",
+              access_request: accessReq,
+              created_at: nowIso
             };
-            db.conversations.unshift(conv);
-          } else {
-            conv.member_ids = [CIRCLE_BOT_ID, admin.user_id];
-            conv.members = [CIRCLE_BOT_ID, admin.user_id];
-            conv.unread = (conv.unread || 0) + 1;
-            conv.last_message_preview = `Pendaftaran akun Google dari ${displayName}`;
-            conv.last_message_at = new Date().toISOString();
-          }
+            db.messages.push(msg);
+            broadcast({ type: "message:new", data: { ...msg, member_ids: [CIRCLE_BOT_ID, admin.user_id] } });
 
-          const msg = {
-            id: `msg_req_${reqId}_${admin.user_id}`,
-            conversation_id: conv.id,
-            sender_id: CIRCLE_BOT_ID,
-            user_id: CIRCLE_BOT_ID,
-            text: `Halo ${admin.name.split(" ")[0]}! Ada pendaftaran akun Google baru (${cleanEmail}) untuk divisi ${newUserObj.department || dept}. Silakan tinjau card approval di bawah ini:`,
-            type: "access_request_card",
-            access_request: accessReq,
-            created_at: new Date().toISOString()
-          };
-          db.messages.push(msg);
-          broadcast({ type: "message:new", data: { ...msg, member_ids: [CIRCLE_BOT_ID, admin.user_id] } });
-
-          createNotification({
-            user_id: admin.user_id,
-            title: "Pendaftaran Akun Google Baru",
-            body: `${displayName} (${cleanEmail}) mendaftar via Google di divisi ${newUserObj.department || dept} dan menunggu persetujuan Super Admin`,
-            type: "access_request",
-            category: "system",
-            access_request: accessReq
+            createNotification({
+              user_id: admin.user_id,
+              title: "Pendaftaran Akun Google Baru",
+              body: `${cleanName} (${cleanEmail}) mendaftar via Google di divisi ${user.department || cleanDept} dan menunggu persetujuan Super Admin`,
+              type: "access_request",
+              category: "system",
+              access_request: accessReq
+            });
           });
-        });
+        }
 
-        saveDbToFile();
+        saveDbToFile(true);
         broadcast({ type: "access_requests:changed" });
         broadcast({ type: "conversations:changed" });
         broadcast({ type: "groups:changed" });
 
         return res.json({
           status: "registered_pending",
-          detail: "Pendaftaran akun Google berhasil diajukan! Menunggu persetujuan Super Admin.",
-          user: newUserObj,
-          account_vault_entry: buildAccountVaultEntry(newUserObj),
+          detail: "Data diri berhasil disimpan! Permohonan akses akun Google Anda sedang menunggu persetujuan Super Admin.",
+          user: sanitizeUser(user),
+          account_vault_entry: buildAccountVaultEntry(user),
           access_request: accessReq
         });
       }
+
+      if (invitation) invitation.used = true;
+      user.status = "active";
+      if (autoApprovePendingAccessRequestsForEmail(cleanEmail)) {
+        broadcast({ type: "access_requests:changed" });
+      }
+      broadcast({ type: "users:changed" });
+      broadcast({ type: "groups:changed" });
     } else if (user.status === "pending") {
-      if (isSuperAdminEmail || invitation || canAutoJoinDomain || db.workspace?.require_approval === false) {
+      if (isAutoApproveEligible) {
         if (invitation) invitation.used = true;
         user.status = "active";
+        if (autoApprovePendingAccessRequestsForEmail(cleanEmail)) {
+          broadcast({ type: "access_requests:changed" });
+        }
+        broadcast({ type: "users:changed" });
       } else {
         return res.status(403).json({
           status: "pending",
@@ -4623,16 +4853,22 @@ async function startServer() {
           name: user.name
         });
       }
-    } else if (user.status === "inactive" || user.status === "rejected") {
-      return res.status(403).json({
-        status: "inactive",
-        detail: "Akun Anda dinonaktifkan atau ditolak. Silakan hubungi Workspace Administrator."
+    }
+
+    if (check_only === true && !verifiedFirebase) {
+      return res.json({
+        status: "ready_to_login",
+        email: cleanEmail,
+        name: user.name,
+        picture: user.avatar || user.picture || "",
+        department: user.department || "",
+        job_title: user.job_title || ""
       });
     }
 
-    if (picture && !user.avatar) {
-      user.avatar = picture;
-      user.picture = picture;
+    if (resolvedPicture && !user.avatar) {
+      user.avatar = resolvedPicture;
+      user.picture = resolvedPicture;
     }
 
     setUserOnlineStatus(user.user_id, true);
@@ -4748,7 +4984,7 @@ async function startServer() {
         conv = {
           id: `conv_circle_${admin.user_id}`,
           type: "dm",
-          name: db.workspace?.assistant_name || "Circle",
+          name: db.workspace?.assistant_name || "Asli",
           admin_ids: [CIRCLE_BOT_ID],
           members: [CIRCLE_BOT_ID, admin.user_id],
           member_ids: [CIRCLE_BOT_ID, admin.user_id],
@@ -4803,7 +5039,7 @@ async function startServer() {
       success: true,
       request_id: reqId,
       status: "pending",
-      detail: "Permintaan reset password berhasil dikirim! Asisten Circle telah meneruskan ke Super Admin / Manajer."
+      detail: "Permintaan reset password berhasil dikirim! Asisten Asli telah meneruskan ke Super Admin / Manajer."
     });
   });
 
@@ -4928,7 +5164,7 @@ async function startServer() {
 
   // Helper to send 6-digit OTP email via Resend API or Nodemailer SMTP (if configured)
   async function sendPasswordResetOtpEmail(toEmail: string, userName: string, otpCode: string): Promise<{ delivered: boolean; provider: string }> {
-    const brandName = db.workspace?.brand_name || db.workspace?.name || "CIRCLE Workspace";
+    const brandName = db.workspace?.brand_name || db.workspace?.name || "ASLI Workspace";
     const subject = `[${brandName}] Kode Verifikasi Reset Password: ${otpCode}`;
     const htmlBody = `
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 520px; margin: 0 auto; padding: 28px; border: 1px solid #e2e8f0; border-radius: 16px; background: #ffffff; color: #0f172a;">
@@ -4950,7 +5186,7 @@ async function startServer() {
     const resendKey = String(process.env.RESEND_API_KEY || "").trim();
     if (resendKey) {
       try {
-        const fromAddr = String(process.env.SMTP_FROM || "CIRCLE Workspace <onboarding@resend.dev>").trim();
+        const fromAddr = String(process.env.SMTP_FROM || "ASLI Workspace <onboarding@resend.dev>").trim();
         const r = await fetch("https://api.resend.com/emails", {
           method: "POST",
           headers: {
@@ -5409,7 +5645,7 @@ async function startServer() {
         conv = {
           id: `conv_circle_${admin.user_id}`,
           type: "dm",
-          name: "Circle (Workspace Assistant)",
+          name: "Asli (Workspace Assistant)",
           admin_ids: [],
           members: [CIRCLE_BOT_ID, admin.user_id],
           member_ids: [CIRCLE_BOT_ID, admin.user_id],
@@ -5454,7 +5690,7 @@ async function startServer() {
 
     res.json({
       success: true,
-      message: "Permintaan akses berhasil dikirim! Asisten Circle telah meneruskan ke Super Admin / Manager.",
+      message: "Permintaan akses berhasil dikirim! Asisten Asli telah meneruskan ke Super Admin / Manager.",
       request_id: reqId
     });
   });
@@ -5618,7 +5854,7 @@ async function startServer() {
     createNotification({
       user_id: user.user_id,
       title: "Selamat! Akses Kamu Telah Disetujui",
-      body: `Permohonan akses kamu ke CIRCLE Workspace (${user.department}) telah disetujui oleh Super Admin.`,
+      body: `Permohonan akses kamu ke ASLI Workspace (${user.department}) telah disetujui oleh Super Admin.`,
       type: "access_approved",
       category: "system"
     });
@@ -5974,7 +6210,7 @@ async function startServer() {
     createNotification({
       user_id: targetUser.user_id,
       title: "Password Anda Direset oleh Admin",
-      body: `Admin (${reqUser.name}) telah mengatur ulang password akun CIRCLE Anda. Silakan masuk dengan password baru yang diberikan.`,
+      body: `Admin (${reqUser.name}) telah mengatur ulang password akun ASLI Anda. Silakan masuk dengan password baru yang diberikan.`,
       type: "system",
       category: "system"
     });
@@ -6095,7 +6331,7 @@ async function startServer() {
         conv = {
           id: `conv_circle_${manager.user_id}`,
           type: "dm",
-          name: "Circle (Workspace Assistant)",
+          name: "Asli (Workspace Assistant)",
           admin_ids: [],
           members: [CIRCLE_BOT_ID, manager.user_id],
           member_ids: [CIRCLE_BOT_ID, manager.user_id],
@@ -6155,12 +6391,12 @@ async function startServer() {
           conv = {
             id: `conv_circle_${userId}`,
             type: "dm",
-            name: "Circle (Workspace Assistant)",
+            name: "Asli (Workspace Assistant)",
             admin_ids: [],
             members: [botId, userId],
             member_ids: [botId, userId],
             unread: 1,
-            last_message_preview: `Selamat datang di CIRCLE Workspace!`,
+            last_message_preview: `Selamat datang di ASLI Workspace!`,
             last_message_at: new Date().toISOString()
           };
           db.conversations.unshift(conv);
@@ -6172,7 +6408,7 @@ async function startServer() {
           conversation_id: conv.id,
           sender_id: botId,
           user_id: botId,
-          text: `Halo ${firstName}! Selamat datang di CIRCLE Workspace 🎉\n\nProfil dan divisimu (${deptName}) telah berhasil diatur. Kamu sekarang dapat:\n- Melihat tugas dan board di divisimu\n- Berkolaborasi dengan rekan kerja\n- Bertanya atau membuat tugas otomatis padaku kapan saja!\n\nSemoga harimu produktif!`,
+          text: `Halo ${firstName}! Selamat datang di ASLI Workspace 🎉\n\nProfil dan divisimu (${deptName}) telah berhasil diatur. Kamu sekarang dapat:\n- Melihat tugas dan board di divisimu\n- Berkolaborasi dengan rekan kerja\n- Bertanya atau membuat tugas otomatis padaku kapan saja!\n\nSemoga harimu produktif!`,
           type: "text",
           created_at: new Date().toISOString()
         };
@@ -7330,7 +7566,7 @@ async function startServer() {
     res.setHeader("X-Record-Count", list.length);
     if (req.query.format === "json") {
       res.setHeader("Content-Type", "application/json");
-      res.setHeader("Content-Disposition", 'attachment; filename="circle-tasks.json"');
+      res.setHeader("Content-Disposition", 'attachment; filename="asli-tasks.json"');
       return res.send(JSON.stringify(list, null, 2));
     }
     const getUserNames = (uIds: any[]) => (uIds || []).map((uid) => db.users.find((u: any) => u.user_id === uid)?.name || uid).filter(Boolean).join("; ");
@@ -7358,7 +7594,7 @@ async function startServer() {
       ].map(esc).join(",");
     }).join("\n");
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", 'attachment; filename="circle-tasks.csv"');
+    res.setHeader("Content-Disposition", 'attachment; filename="asli-tasks.csv"');
     res.send(headers + rows);
   });
 
@@ -7930,7 +8166,7 @@ async function startServer() {
             conv = {
               id: `conv_circle_${targetUid}`,
               type: "dm",
-              name: db.workspace?.assistant_name || "Circle",
+              name: db.workspace?.assistant_name || "Asli",
               admin_ids: [],
               members: [CIRCLE_BOT_ID, targetUid],
               member_ids: [CIRCLE_BOT_ID, targetUid],
@@ -10620,7 +10856,7 @@ async function startServer() {
           });
         }
         const resp = await fetch(targetUrl, {
-          headers: { "User-Agent": "CIRCLE-Workspace-Calendar-Sync/1.0" }
+          headers: { "User-Agent": "ASLI-Workspace-Calendar-Sync/1.0" }
         });
         if (!resp.ok) {
           const isPublicUrl = targetUrl.includes("/public/basic.ics");
@@ -10872,7 +11108,7 @@ async function startServer() {
       circleConv = {
         id: circleConvId,
         type: "dm",
-        name: db.workspace?.assistant_name || "Circle",
+        name: db.workspace?.assistant_name || "Asli",
         admin_ids: [CIRCLE_BOT_ID],
         member_ids: [CIRCLE_BOT_ID, userId],
         members: [CIRCLE_BOT_ID, userId],
@@ -11315,7 +11551,7 @@ async function startServer() {
     if (!conv) return res.status(404).json({ detail: "Conversation not found" });
 
     if (String(conv.id).startsWith("conv_circle_") && conv.id !== `conv_circle_${sender_id}`) {
-      return res.status(403).json({ detail: "Tidak dapat mengirim pesan ke Circle Assistant milik akun lain" });
+      return res.status(403).json({ detail: "Tidak dapat mengirim pesan ke Asisten ASLI milik akun lain" });
     }
 
     const grpMeta = (db.groups || []).find((g: any) => g.id === id);
@@ -13058,7 +13294,7 @@ async function startServer() {
     const todoTasks = Math.max(0, totalTasks - doneTasks - inProgressTasks);
     const completionPct = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0;
     const boardsCount = (db.boards || []).length;
-    const brandName = db.workspace?.brand_name || db.workspace?.name || "CIRCLE Workspace";
+    const brandName = db.workspace?.brand_name || db.workspace?.name || "ASLI Workspace";
     const dateStr = new Date().toLocaleDateString("id-ID", {
       weekday: "long",
       day: "numeric",
@@ -13077,7 +13313,7 @@ async function startServer() {
         conv = {
           id: convId,
           type: "dm",
-          name: db.workspace?.assistant_name || "Circle",
+          name: db.workspace?.assistant_name || "Asli",
           admin_ids: [CIRCLE_BOT_ID],
           members: [CIRCLE_BOT_ID, targetUser.user_id],
           member_ids: [CIRCLE_BOT_ID, targetUser.user_id],
@@ -13659,19 +13895,44 @@ async function startServer() {
 
   const handleWorkspaceUpdate = (req: any, res: any) => {
     const reqUser = getReqUser(req);
+    if (!reqUser) {
+      return res.status(401).json({ detail: "Autentikasi diperlukan untuk mengubah pengaturan workspace." });
+    }
     const touchesSuperAdminOnly =
       req.body?.marketplace_enabled !== undefined ||
       req.body?.marketplace_config !== undefined ||
       req.body?.custom_copywriting !== undefined;
-    if (touchesSuperAdminOnly && (!reqUser || reqUser.role !== "super_admin")) {
+    if (touchesSuperAdminOnly && reqUser.role !== "super_admin") {
       return res.status(403).json({
         detail: "Hanya Super Admin yang dapat mengubah copywriting dan pengaturan Marketplace.",
+      });
+    }
+    const touchesAccessPolicy =
+      req.body?.allowed_domains !== undefined ||
+      req.body?.auto_join_domain !== undefined ||
+      req.body?.require_approval !== undefined;
+    if (touchesAccessPolicy && !["super_admin", "workspace_admin"].includes(reqUser.role)) {
+      return res.status(403).json({
+        detail: "Hanya Super Admin atau Workspace Admin yang dapat mengubah kebijakan domain & persetujuan masuk.",
       });
     }
 
     const oldMarketplaceEnabled = db.workspace?.marketplace_enabled !== false;
     const oldDivisions = Array.isArray(db.workspace.divisions) ? [...db.workspace.divisions] : [];
     const nextPayload = { ...req.body };
+    if (nextPayload.allowed_domains !== undefined) {
+      const rawDomList = Array.isArray(nextPayload.allowed_domains)
+        ? nextPayload.allowed_domains
+        : String(nextPayload.allowed_domains || "").split(",");
+      nextPayload.allowed_domains = Array.from(
+        new Set(
+          rawDomList
+            .flatMap((d: any) => String(d || "").split(","))
+            .map((d: string) => d.trim().toLowerCase().replace(/^@+/, ""))
+            .filter(Boolean)
+        )
+      );
+    }
     if (nextPayload.marketplace_config && typeof nextPayload.marketplace_config === "object") {
       nextPayload.marketplace_config = {
         ...(db.workspace?.marketplace_config || {}),
@@ -13687,15 +13948,23 @@ async function startServer() {
     if (req.body.brand_name && !req.body.name) db.workspace.name = req.body.brand_name;
 
     // Auto-approve any pending accounts whose domain matches allowed_domains when auto_join_domain is enabled
+    let autoApprovedAnyRequest = false;
     if (db.workspace?.auto_join_domain !== false) {
       (db.users || []).forEach((u: any) => {
         if (u && u.status === "pending" && u.email) {
-          const dom = String(u.email).split("@")[1]?.toLowerCase() || "";
+          const cleanMail = String(u.email).toLowerCase().trim();
+          const dom = cleanMail.split("@")[1] || "";
           if (dom && isAllowedCompanyDomain(dom)) {
             u.status = "active";
+            if (autoApprovePendingAccessRequestsForEmail(cleanMail)) {
+              autoApprovedAnyRequest = true;
+            }
           }
         }
       });
+    }
+    if (autoApprovedAnyRequest) {
+      broadcast({ type: "access_requests:changed" });
     }
 
     if (nextPayload.marketplace_enabled !== undefined && nextPayload.marketplace_enabled !== oldMarketplaceEnabled && reqUser) {
@@ -13753,7 +14022,7 @@ async function startServer() {
     if (circleBot) {
       if (db.workspace.assistant_name) circleBot.name = db.workspace.assistant_name;
       if (req.body.assistant_avatar !== undefined) {
-        const botAvatar = db.workspace.assistant_avatar || "https://api.dicebear.com/7.x/bottts/svg?seed=CircleWorkspace&backgroundColor=FF5364";
+        const botAvatar = db.workspace.assistant_avatar || "https://api.dicebear.com/7.x/bottts/svg?seed=AsliWorkspace&backgroundColor=FF5364";
         circleBot.avatar = botAvatar;
         circleBot.picture = botAvatar;
       }
@@ -14048,7 +14317,10 @@ async function startServer() {
       logo_file_id: db.workspace.logo_file_id,
       login_image_file_id: db.workspace.login_image_file_id,
       divisions: db.workspace.divisions || DEFAULT_ALIGNED_DIVISIONS,
-      custom_copywriting: db.workspace.custom_copywriting || {}
+      custom_copywriting: db.workspace.custom_copywriting || {},
+      allowed_domains: getNormalizedAllowedDomains(),
+      auto_join_domain: db.workspace?.auto_join_domain !== false,
+      require_approval: db.workspace?.require_approval !== false
     });
   });
 
@@ -14338,14 +14610,32 @@ async function startServer() {
 
     const finalShortcode = shortcode || result.latest_shortcode || "";
 
-    // 3. Profile OG metadata via Pinterestbot/Twitterbot (retrieves display_name & profile avatar)
+    // 3. Profile OG metadata via Pinterestbot/Twitterbot + Threads profile fallback (retrieves display_name & profile avatar)
     if (username && (!result.display_name || !result.avatar_url)) {
-      for (const botUa of ["Pinterestbot/1.0", "Twitterbot/1.0"]) {
+      const profileSources: Array<{ url: string; ua: string }> = [
+        {
+          url: `https://www.instagram.com/${encodeURIComponent(username)}/?hl=en`,
+          ua: "Pinterestbot/1.0 (+http://www.pinterest.com/bot.html)",
+        },
+        {
+          url: `https://www.instagram.com/${encodeURIComponent(username)}/`,
+          ua: "Pinterestbot/1.0",
+        },
+        {
+          url: `https://www.threads.net/@${encodeURIComponent(username)}`,
+          ua: "Twitterbot/1.0",
+        },
+        {
+          url: `https://www.instagram.com/${encodeURIComponent(username)}/`,
+          ua: "Twitterbot/1.0",
+        },
+      ];
+      for (const src of profileSources) {
         if (result.display_name && result.avatar_url) break;
         try {
-          const profResp = await fetch(`https://www.instagram.com/${encodeURIComponent(username)}/`, {
+          const profResp = await fetch(src.url, {
             headers: {
-              "User-Agent": botUa,
+              "User-Agent": src.ua,
               Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             },
             signal: AbortSignal.timeout(4500),
@@ -14363,14 +14653,24 @@ async function startServer() {
           const ogImage = extractMeta("og:image");
           if (ogTitle && !result.display_name) {
             const cleanName = ogTitle.split("(@")[0]?.replace(/•.*$/, "")?.trim();
-            if (cleanName && !cleanName.toLowerCase().includes("instagram")) {
+            if (
+              cleanName &&
+              cleanName.replace(/^@/, "").toLowerCase() !== username.toLowerCase() &&
+              !cleanName.toLowerCase().includes("instagram") &&
+              !cleanName.toLowerCase().includes("threads")
+            ) {
               result.display_name = cleanName;
             }
           }
-          if (ogImage && !result.avatar_url && !ogImage.includes("static.cdninstagram.com/rsrc.php")) {
+          if (
+            ogImage &&
+            !result.avatar_url &&
+            !ogImage.includes("static.cdninstagram.com/rsrc.php") &&
+            !ogImage.includes("threads")
+          ) {
             result.avatar_url = ogImage;
           }
-          if (ogDesc && !result.followers_text) {
+          if (ogDesc && !result.followers_text && !src.url.includes("threads.net")) {
             const fMatch = ogDesc.match(/^([^-]+Followers[^-]*)/i);
             if (fMatch) result.followers_text = fMatch[1].trim();
           }
@@ -14603,13 +14903,14 @@ async function startServer() {
       .filter((acc: any) => {
         if (!acc?.username) return false;
         const lastTry = igHydrationAttempts.get(acc.id) || 0;
-        if (now - lastTry < 60_000) return false;
+        const missingAvatar = !acc.avatar_url;
+        if (now - lastTry < (missingAvatar ? 10_000 : 60_000)) return false;
         const lastCheckedMs = acc.last_checked_at ? new Date(acc.last_checked_at).getTime() : 0;
         const missingNameOrAvatar =
           !acc.display_name ||
           acc.display_name.startsWith("@") ||
           acc.display_name.toLowerCase() === String(acc.username).toLowerCase() ||
-          !acc.avatar_url;
+          missingAvatar;
         return !acc.latest_shortcode || missingNameOrAvatar || now - lastCheckedMs > 15 * 60_000;
       })
       .slice(0, 6);
@@ -15065,7 +15366,7 @@ async function startServer() {
   server.keepAliveTimeout = 65000;
   server.headersTimeout = 66000;
   server.listen(PORT, '0.0.0.0', () => {
-    console.log(`CIRCLE Workspace server running on port ${PORT}`);
+    console.log(`ASLI Workspace server running on port ${PORT}`);
   });
 
   const handleShutdown = async (signal: string) => {
