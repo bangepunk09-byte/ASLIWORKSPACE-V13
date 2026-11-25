@@ -665,11 +665,32 @@ export const MentionText = memo(function MentionText({
   const { userMap } = useApp() || {};
   const str = String(text || "");
   if (!str) return null;
-  const { regex, resolve } = buildMentionMatcher(userMap, mentionIds);
-  if (!regex) return str;
+  const { pattern: mentionPattern, resolve } = buildMentionMatcher(userMap, mentionIds);
+  const urlPattern = "(?:https?:\\/\\/|www\\.)[^\\s<>]+";
+  const rx = new RegExp(mentionPattern ? `(${mentionPattern}|${urlPattern})` : `(${urlPattern})`, "giu");
 
-  return str.split(regex).map((part, i) => {
+  return str.split(rx).map((part, i) => {
     if (!part) return null;
+    if (/^(?:https?:\/\/|www\.)/i.test(part)) {
+      const mUrl = part.match(/^(.*?)([.,;:!?)\]]*)$/);
+      const rawUrl = mUrl?.[1] || part;
+      const trailing = mUrl?.[2] || "";
+      const href = /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`;
+      return (
+        <span key={i}>
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="font-medium text-[#E11D48] dark:text-[#FF5364] underline hover:opacity-80 break-all"
+          >
+            {rawUrl}
+          </a>
+          {trailing}
+        </span>
+      );
+    }
     if (part.startsWith("@")) {
       const u = resolve(part);
       if (u?.user_id) {

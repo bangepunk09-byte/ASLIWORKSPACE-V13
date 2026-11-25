@@ -118,7 +118,7 @@ function LinkCell({ t, patch }) {
   return (
     <div className="flex h-7 items-center gap-1 px-1.5">
       <Link2 size={12} className="shrink-0 text-sub print:hidden" />
-      <a href={href} target="_blank" rel="noreferrer" className="min-w-0 flex-1 truncate text-xs text-blue-600 underline dark:text-blue-400" data-testid={`sheet-link-${t.id}`}>
+      <a href={href} target="_blank" rel="noreferrer" className="min-w-0 flex-1 truncate text-xs font-medium text-[#E11D48] underline dark:text-[#FF5364] hover:opacity-80" data-testid={`sheet-link-${t.id}`}>
         {v.replace(/^https?:\/\//i, "")}
       </a>
       <button onClick={() => setEdit(true)} className="shrink-0 text-sub opacity-0 group-hover:opacity-100 print:hidden" aria-label={tr("table_edit_link", "Edit link")} data-testid={`sheet-link-edit-${t.id}`}>

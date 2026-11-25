@@ -188,7 +188,7 @@ function StickyNoteMessageCard({ m }) {
                         : "text-slate-800 dark:text-slate-100 font-medium"
                     }`}
                   >
-                    {it.text}
+                    {renderInline(it.text, {}, false, [])}
                   </span>
                   {it.done && it.checked_by_name && (
                     <span className="block text-[10px] font-medium text-emerald-700/80 dark:text-emerald-300/80">
@@ -202,7 +202,7 @@ function StickyNoteMessageCard({ m }) {
         </ul>
       ) : noteState.content ? (
         <p className="mt-2 text-xs text-slate-700 dark:text-slate-200 whitespace-pre-line break-words">
-          {noteState.content}
+          {renderInline(noteState.content, {}, false, [])}
         </p>
       ) : (
         <p className="mt-2 text-[11px] italic text-sub">
@@ -212,7 +212,7 @@ function StickyNoteMessageCard({ m }) {
 
       {noteState.extra_note && (
         <div className="mt-2.5 rounded-xl border border-black/10 dark:border-white/10 bg-white/60 dark:bg-slate-900/40 px-2.5 py-1.5 text-xs text-ink break-words">
-          💬 {noteState.extra_note}
+          💬 {renderInline(noteState.extra_note, {}, false, [])}
         </div>
       )}
 
@@ -610,8 +610,8 @@ function renderInline(text, userMap, isMine = false, mentionIds = []) {
   const { pattern: mentionPattern, resolve } = buildMentionMatcher(userMap, mentionIds);
   const rx = new RegExp(
     mentionPattern
-      ? `(\\*\\*[^*\\n]+\\*\\*|\`[^\`\\n]+\`|_[^_\\n]+_|https?:\\/\\/[^\\s]+|${mentionPattern})`
-      : `(\\*\\*[^*\\n]+\\*\\*|\`[^\`\\n]+\`|_[^_\\n]+_|https?:\\/\\/[^\\s]+)`,
+      ? `(\\*\\*[^*\\n]+\\*\\*|\`[^\`\\n]+\`|_[^_\\n]+_|(?:https?:\\/\\/|www\\.)[^\\s<>]+|${mentionPattern})`
+      : `(\\*\\*[^*\\n]+\\*\\*|\`[^\`\\n]+\`|_[^_\\n]+_|(?:https?:\\/\\/|www\\.)[^\\s<>]+)`,
     "giu"
   );
   const parts = normalized.split(rx);
@@ -629,7 +629,30 @@ function renderInline(text, userMap, isMine = false, mentionIds = []) {
     if (p.startsWith("_") && p.endsWith("_") && p.length > 3) {
       return <em key={i} className="italic opacity-90">{p.slice(1, -1)}</em>;
     }
-    if (/^https?:\/\//.test(p)) return <a key={i} href={p} target="_blank" rel="noreferrer" className="underline break-all">{p}</a>;
+    if (/^(?:https?:\/\/|www\.)/i.test(p)) {
+      const mUrl = p.match(/^(.*?)([.,;:!?)\]]*)$/);
+      const rawUrl = mUrl?.[1] || p;
+      const trailing = mUrl?.[2] || "";
+      const href = /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`;
+      return (
+        <span key={i}>
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className={
+              isMine
+                ? "inline rounded bg-white/95 px-1 py-0.5 font-medium text-[#E11D48] underline hover:bg-white break-all"
+                : "font-medium text-[#E11D48] dark:text-[#FF5364] underline hover:opacity-80 break-all"
+            }
+          >
+            {rawUrl}
+          </a>
+          {trailing}
+        </span>
+      );
+    }
     if (p.startsWith("@")) {
       const mentionedUser = resolve(p);
       if (mentionedUser?.user_id) {

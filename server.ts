@@ -2315,6 +2315,9 @@ async function startServer() {
     "verified_at",
     "profile_completion",
     "onboarded",
+    "onboarding_completed",
+    "auth_provider",
+    "firebase_uid",
     "custom",
     "custom_fields",
     "nickname",
@@ -2335,6 +2338,7 @@ async function startServer() {
       availability_status: user.availability_status || "online",
       avatar: user.avatar || user.picture || "",
       picture: user.picture || user.avatar || "",
+      onboarding_completed: user.onboarding_completed === true || user.status === "active",
       password_hash: user.password_hash || undefined,
       password_updated_at: user.password_updated_at || undefined,
       token_version: Number(user.token_version || 1),
@@ -2400,6 +2404,15 @@ async function startServer() {
         if (raw.password_hash && typeof raw.password_hash === "string") {
           restoredUser.password_hash = raw.password_hash;
           restoredUser.password_updated_at = raw.password_updated_at || new Date().toISOString();
+        }
+        if (
+          restoredUser.onboarding_completed === undefined &&
+          (raw.onboarding_completed === true ||
+            raw.onboarded === true ||
+            restoredUser.status === "active" ||
+            Boolean(restoredUser.password_hash))
+        ) {
+          restoredUser.onboarding_completed = true;
         }
         db.users.push(restoredUser);
         syncUserDivisionAndGroupMembership(restoredUser);
@@ -4620,10 +4633,22 @@ async function startServer() {
       });
     }
 
+    const hasExistingProfileData = Boolean(
+      user &&
+        String(user.name || "").trim() &&
+        String(user.department || "").trim() &&
+        (user.status === "active" ||
+          user.status === "pending" ||
+          user.auth_provider === "google" ||
+          Boolean(user.password_hash))
+    );
     const hasCompletedOnboarding = Boolean(
       user &&
+        user.onboarding_completed !== false &&
         (user.onboarding_completed === true ||
-          (user.password_hash && String(user.name || "").trim() && String(user.department || "").trim()))
+          user.onboarded === true ||
+          user.status === "active" ||
+          hasExistingProfileData)
     );
 
     if (user && user.status === "pending" && hasCompletedOnboarding && !isAutoApproveEligible) {
@@ -4869,6 +4894,9 @@ async function startServer() {
     if (resolvedPicture && !user.avatar) {
       user.avatar = resolvedPicture;
       user.picture = resolvedPicture;
+    }
+    if (user.status === "active" && user.onboarding_completed !== true) {
+      user.onboarding_completed = true;
     }
 
     setUserOnlineStatus(user.user_id, true);

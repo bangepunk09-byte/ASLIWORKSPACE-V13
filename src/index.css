@@ -354,7 +354,8 @@ html, body, *, *::before, *::after {
 .rich h3 { font-size: 1.05rem; font-weight: 700; margin: .4rem 0; }
 .rich ul { list-style: disc; padding-left: 1.4rem; }
 .rich ol { list-style: decimal; padding-left: 1.4rem; }
-.rich a { color: var(--c-accent); text-decoration: underline; }
+.rich a { color: #E11D48; font-weight: 500; text-decoration: underline; }
+.dark .rich a { color: #FF5364; }
 .rich img { max-width: 100%; border-radius: 12px; margin: .4rem 0; }
 .rich p { margin: .2rem 0; }
 .rich ul.checklist { list-style: none; padding-left: .2rem; }

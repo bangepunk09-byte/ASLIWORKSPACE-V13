@@ -84,12 +84,25 @@ function RichText({ text, mentionIds }) {
   const { userMap } = useApp();
   const { pattern: mentionPattern, resolve } = buildMentionMatcher(userMap, mentionIds);
   const tag = "(?<![\\p{L}\\p{N}_#])#[\\p{L}\\p{N}_]{1,40}";
-  const urlPattern = "https?://[^\\s]+";
+  const urlPattern = "(?:https?://|www\\.)[^\\s<>]+";
   const rx = new RegExp(mentionPattern ? `(${mentionPattern}|${tag}|${urlPattern})` : `(${tag}|${urlPattern})`, "giu");
   return String(text || "").split(rx).map((part, i) => {
     if (!part) return null;
     if (part.startsWith("#")) return <Link key={i} to={`/beranda?tag=${encodeURIComponent(part.slice(1).toLowerCase())}`} onClick={(e) => e.stopPropagation()} className="font-semibold text-sky-600 hover:underline dark:text-sky-400" data-testid={`hashtag-${part.slice(1).toLowerCase()}`}>{part}</Link>;
-    if (/^https?:\/\//.test(part)) return <a key={i} href={part} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="text-brand underline hover:opacity-80 break-all">{part}</a>;
+    if (/^(?:https?:\/\/|www\.)/i.test(part)) {
+      const mUrl = part.match(/^(.*?)([.,;:!?)\]]*)$/);
+      const rawUrl = mUrl?.[1] || part;
+      const trailing = mUrl?.[2] || "";
+      const href = /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`;
+      return (
+        <span key={i}>
+          <a href={href} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="font-medium text-[#E11D48] dark:text-[#FF5364] underline hover:opacity-80 break-all">
+            {rawUrl}
+          </a>
+          {trailing}
+        </span>
+      );
+    }
     if (part.startsWith("@")) {
       const mentionedUser = resolve(part);
       if (mentionedUser?.user_id) {

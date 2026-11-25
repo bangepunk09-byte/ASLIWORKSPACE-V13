@@ -64,6 +64,9 @@ export interface VaultAccountRecord {
   verified_at?: string | null;
   profile_completion?: number;
   onboarded?: boolean;
+  onboarding_completed?: boolean;
+  auth_provider?: string;
+  firebase_uid?: string;
   custom?: Record<string, any>;
   custom_fields?: Record<string, any>;
   nickname?: string;
@@ -98,6 +101,9 @@ const VAULT_PROFILE_KEYS = [
   'verified_at',
   'profile_completion',
   'onboarded',
+  'onboarding_completed',
+  'auth_provider',
+  'firebase_uid',
   'custom',
   'custom_fields',
   'nickname',

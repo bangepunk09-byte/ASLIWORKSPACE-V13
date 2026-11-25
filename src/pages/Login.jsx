@@ -641,7 +641,7 @@ export default function Login() {
     setGoogleModalOpen(true);
   };
 
-  const submitGoogleAccount = async (payload) => {
+  const submitGoogleAccount = async (payload, allowHydrateRetry = true) => {
     setBusyGoogle(true);
     const fallbackDept = availableDivisions.find((d) => d.toLowerCase() !== "management") || availableDivisions[0] || "Marketing";
     try {
@@ -664,6 +664,13 @@ export default function Login() {
       });
 
       if (data?.status === "needs_onboarding") {
+        if (allowHydrateRetry && !payload.profile_submitted && !data?.existing_user) {
+          const restored = await attemptAutoHydrateServer(api).catch(() => false);
+          if (restored) {
+            await submitGoogleAccount(payload, false);
+            return;
+          }
+        }
         openGoogleOnboardingModal({
           profile: {
             email: data.google_profile?.email || payload.email,
@@ -690,7 +697,7 @@ export default function Login() {
           idToken: payload.idToken || undefined,
           check_only: false,
           profile_submitted: false
-        });
+        }, false);
         return;
       }
 

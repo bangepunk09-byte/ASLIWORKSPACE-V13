@@ -571,7 +571,7 @@ export default function TaskDetail({ id, onClose, onChanged }) {
                 {t.estimate && <Row label={tr("task_field_estimate_short", "Estimasi")}><span className="text-sm">{t.estimate}</span></Row>}
               </div>
               <Checkpoints t={t} ro={ro} patch={patch} reload={load} members={members} emptyMessage={assigneeScope.emptyMessage} />
-              {t.links?.length > 0 && <section><h4 className="mb-2 text-sm font-bold">{tr("task_field_ref_links", "Link Referensi")}</h4>{t.links.map((l, i) => <a key={`${l}-${i}`} href={l} target="_blank" rel="noreferrer" className="flex items-center gap-2 py-0.5 text-sm text-brand"><Link2 size={13} /><span className="truncate">{l}</span></a>)}</section>}
+              {t.links?.length > 0 && <section><h4 className="mb-2 text-sm font-bold">{tr("task_field_ref_links", "Link Referensi")}</h4>{t.links.map((l, i) => <a key={`${l}-${i}`} href={l} target="_blank" rel="noreferrer" className="flex items-center gap-2 py-0.5 text-sm font-medium text-[#E11D48] dark:text-[#FF5364] underline hover:opacity-80"><Link2 size={13} /><span className="truncate">{l}</span></a>)}</section>}
               <section><div className="mb-2 flex items-center justify-between"><h4 className="text-sm font-bold">{tr("task_field_attachments", "Lampiran")} · {(t.attachments || []).length}</h4>{!ro && <button onClick={pick} className="flex items-center gap-1 text-xs font-semibold text-brand" data-testid="task-detail-add-attachment"><Paperclip size={12} />{tr("task_add_att_short", "Tambah")}</button>}{input}</div><AttachmentList items={t.attachments || []} onRemove={ro ? null : (a) => setAtt((x) => x.filter((y) => y.id !== a.id))} /></section>
 
               <div className="flex flex-wrap gap-2">
