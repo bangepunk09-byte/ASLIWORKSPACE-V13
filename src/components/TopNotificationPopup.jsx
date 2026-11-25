@@ -91,13 +91,13 @@ export default function TopNotificationPopup({ notif, onClose }) {
       onClose();
       toast.success(
         isPasswordReset
-          ? `Reset password untuk ${access_request.name || "karyawan"} disetujui!`
+          ? `Reset password untuk ${access_request.name || "karyawan"} di-approve!`
           : isDeleteUser
-          ? `Permohonan hapus akun ${access_request.name || "karyawan"} disetujui!`
-          : `Akses untuk ${access_request.name || "karyawan"} berhasil disetujui!`
+          ? `Permohonan hapus akun ${access_request.name || "karyawan"} di-approve!`
+          : `Akses untuk ${access_request.name || "karyawan"} berhasil di-approve!`
       );
     } catch (e) {
-      toast.error(errMsg(e, "Gagal menyetujui permintaan"));
+      toast.error(errMsg(e, "Gagal meng-approve permintaan"));
     } finally {
       setBusy(false);
     }
@@ -151,7 +151,7 @@ export default function TopNotificationPopup({ notif, onClose }) {
       playSound("click");
       setTopQuickActionNotifActive(false);
       onClose();
-      toast.success(approve ? "Permintaan masuk grup disetujui!" : "Permintaan masuk grup ditolak.");
+      toast.success(approve ? "Permintaan masuk grup di-approve!" : "Permintaan masuk grup ditolak.");
     } catch (e) {
       toast.error(errMsg(e, "Gagal memproses permintaan grup"));
     } finally {
@@ -191,13 +191,13 @@ export default function TopNotificationPopup({ notif, onClose }) {
       if (decision === "reject") {
         toast.info("Permintaan hapus arsip bulan ditolak.");
       } else if (data?.executed) {
-        toast.success(`Persetujuan 2/2 lengkap! ${data.deleted_count || 0} tugas arsip bulan tersebut dihapus.`);
+        toast.success(`Approval 2/2 lengkap! ${data.deleted_count || 0} tugas arsip bulan tersebut dihapus.`);
       } else {
-        toast.success(`Persetujuan ${data?.approved_count || 1}/${data?.needed || 2} tercatat!`);
+        toast.success(`Approval ${data?.approved_count || 1}/${data?.needed || 2} tercatat!`);
       }
       navigate("/tasks?view=archive");
     } catch (e) {
-      toast.error(errMsg(e, "Gagal memproses persetujuan hapus arsip"));
+      toast.error(errMsg(e, "Gagal memproses approval hapus arsip"));
     } finally {
       setBusy(false);
     }
@@ -266,7 +266,7 @@ export default function TopNotificationPopup({ notif, onClose }) {
                 className="h-8 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3 text-xs font-bold text-white shadow-xs transition-colors disabled:opacity-50 cursor-pointer"
                 data-testid="notif-quick-approve-btn"
               >
-                {isPasswordReset ? tr("notif_popup_approve_reset", "Setujui Reset") : isDeleteUser ? tr("notif_popup_approve_delete", "Setujui Hapus") : tr("notif_popup_approve_access", "Setujui Akses")}
+                {isPasswordReset ? tr("notif_popup_approve_reset", "Approve Reset") : isDeleteUser ? tr("notif_popup_approve_delete", "Approve Hapus") : tr("notif_popup_approve_access", "Approve Akses")}
               </button>
             </div>
           </div>
@@ -293,7 +293,7 @@ export default function TopNotificationPopup({ notif, onClose }) {
                 className="h-8 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3 text-xs font-bold text-white shadow-xs transition-colors disabled:opacity-50 cursor-pointer"
                 data-testid="notif-group-approve-btn"
               >
-                {tr("notif_popup_approve", "Setujui")}
+                {tr("notif_popup_approve", "Approve")}
               </button>
             </div>
           </div>
@@ -330,7 +330,7 @@ export default function TopNotificationPopup({ notif, onClose }) {
         {isArchiveDeleteReq && !isAccessReq && !isGroupJoinReq && !isGroupInvite && (
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-[11px] text-sub font-medium flex items-center gap-1">
-              <Clock size={12} /> {tr("notif_popup_archive_del", "Persetujuan Hapus Arsip 1 Bulan (Min. 2 Orang)")}
+              <Clock size={12} /> {tr("notif_popup_archive_del", "Approval Hapus Arsip 1 Bulan (Min. 2 Orang)")}
             </span>
             <div className="flex items-center gap-2 ml-auto">
               <button
@@ -347,7 +347,7 @@ export default function TopNotificationPopup({ notif, onClose }) {
                 className="h-8 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3 text-xs font-bold text-white shadow-xs transition-colors disabled:opacity-50 cursor-pointer"
                 data-testid="notif-archive-approve-btn"
               >
-                {tr("notif_popup_approve_delete", "Setujui Hapus")}
+                {tr("notif_popup_approve_delete", "Approve Hapus")}
               </button>
             </div>
           </div>

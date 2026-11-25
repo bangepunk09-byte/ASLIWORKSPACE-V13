@@ -6,6 +6,7 @@ import { api, errMsg, downloadFrom } from "../lib/api";
 import { playSound } from "../lib/sound";
 import { useApp } from "../context/AppContext";
 import { hasCompletedInitialHydrate, recordDeletedTaskIds } from "../lib/persistentMirror";
+import { enforceTaskApprovalInvariant, mergeTasksArrayNonDestructive } from "../lib/snapshotMerge";
 import { PageHeader, AccentButton, GhostButton, PRIORITY, fmtDate } from "../components/common";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 import { AppSelect } from "../components/ui/select";
@@ -457,12 +458,13 @@ export function TaskWorkspace({ projectId, compactHeader }) {
       if (seq !== loadSeqRef.current) return;
       if (Array.isArray(r.data)) {
         if (r.data.length > 0 || hasCompletedInitialHydrate()) {
-          setTasks(r.data);
+          const normalized = r.data.map((t) => enforceTaskApprovalInvariant(t));
+          setTasks(normalized);
           if (!Object.values(f).some(Boolean) && saved === "all" && !boardId && !projectId) {
-            GLOBAL_TASKS_CACHE = r.data;
+            GLOBAL_TASKS_CACHE = normalized;
             try {
-              localStorage.setItem("circle_tasks_cache", JSON.stringify(r.data));
-              localStorage.setItem("circle_cache_tasks", JSON.stringify(r.data));
+              localStorage.setItem("circle_tasks_cache", JSON.stringify(normalized));
+              localStorage.setItem("circle_cache_tasks", JSON.stringify(normalized));
             } catch {}
           }
         }
@@ -472,7 +474,9 @@ export function TaskWorkspace({ projectId, compactHeader }) {
 
   const updateTaskLocally = useCallback((taskId, patch) => {
     setTasks((prev) => {
-      const next = prev.map((t) => t.id === taskId ? { ...t, ...patch } : t);
+      const next = prev.map((t) =>
+        t.id === taskId ? enforceTaskApprovalInvariant({ ...t, ...patch }) : t
+      );
       if (!Object.values(f).some(Boolean) && saved === "all" && !boardId && !projectId) {
         GLOBAL_TASKS_CACHE = next;
         try {
@@ -488,12 +492,16 @@ export function TaskWorkspace({ projectId, compactHeader }) {
     if (!taskObj?.id) return;
     setTasks((prev) => {
       const list = Array.isArray(prev) ? prev : [];
-      const matches = shouldShowTask(taskObj);
+      const existing = list.find((x) => x.id === taskObj.id);
+      const mergedTask = existing
+        ? (mergeTasksArrayNonDestructive([existing], [taskObj])[0] || enforceTaskApprovalInvariant(taskObj))
+        : enforceTaskApprovalInvariant(taskObj);
+      const matches = shouldShowTask(mergedTask);
       const next = matches
-        ? (list.some((x) => x.id === taskObj.id)
-            ? list.map((x) => (x.id === taskObj.id ? { ...x, ...taskObj } : x))
-            : [taskObj, ...list])
-        : list.filter((x) => x.id !== taskObj.id);
+        ? (existing
+            ? list.map((x) => (x.id === mergedTask.id ? mergedTask : x))
+            : [mergedTask, ...list])
+        : list.filter((x) => x.id !== mergedTask.id);
       if (!Object.values(f).some(Boolean) && saved === "all" && !boardId && !projectId) {
         GLOBAL_TASKS_CACHE = next;
         try {

@@ -238,9 +238,15 @@ function TaskPreview({ m }) {
   useEffect(() => {
     return subscribe((e) => {
       if (e.type === "tasks:changed" && e.task?.id === task.id) {
-        setTask(e.task);
+        setTask((prev) => ({ ...(prev || {}), ...e.task }));
       } else if (e.type === "message:update" && e.data?.id === m.id) {
-        if (e.data.task) setTask(e.data.task);
+        if (e.data.task || e.data.approvals) {
+          setTask((prev) => ({
+            ...(prev || {}),
+            ...(e.data.task || {}),
+            ...(e.data.approvals ? { approvals: e.data.approvals, approval: e.data.approvals } : {})
+          }));
+        }
       }
     });
   }, [subscribe, task.id, m.id]);
@@ -263,6 +269,7 @@ function TaskPreview({ m }) {
   const can = true; // In group chat, team members can participate in approval
 
   const decide = async (decision) => {
+    if (busy || !t?.id) return;
     setBusy(true);
     try {
       const res = await api.post(`/tasks/${t.id}/approval`, {
@@ -270,13 +277,21 @@ function TaskPreview({ m }) {
         note: "",
         message_id: m.id
       });
+      const updatedTask = res.data?.task || (res.data?.id ? res.data : null);
+      if (updatedTask) {
+        setTask((prev) => ({ ...(prev || {}), ...updatedTask }));
+      }
       if (decision === "approve") {
-        playSound("task_done");
-        const nextApproved = res.data?.approvals?.approved_by || [];
-        if (nextApproved.length >= 2) {
-          toast.success("Persetujuan tercapai 100%! Status Selesai.");
+        const nextApproved =
+          res.data?.approvals?.approved_by ||
+          updatedTask?.approvals?.approved_by ||
+          [];
+        if (updatedTask?.status === "done" || nextApproved.length >= 2) {
+          playSound("task_done");
+          toast.success("Approval tercapai 2/2 (100%)! Tugas otomatis pindah ke Done.");
         } else {
-          toast.success("Persetujuan 1/2 tercatat. Menunggu 1 orang lagi.");
+          playSound("click");
+          toast.success("Approval 1/2 tercatat. Menunggu 1 orang lagi.");
         }
       } else {
         playSound("click");
@@ -317,10 +332,10 @@ function TaskPreview({ m }) {
           <span className="text-slate-500 truncate">{tr("chat_task_approval_progress", "Progres Approval")}</span>
           <span className={`font-bold shrink-0 whitespace-nowrap ${isApprovedFull ? "text-emerald-600" : approvedCount === 1 ? "text-amber-600" : "text-slate-500"}`}>
             {isApprovedFull
-              ? `${approvedCount >= 2 ? `${approvedCount}/2` : "2/2"} ${tr("chat_task_approved_suffix", "Disetujui")}`
+              ? `${approvedCount >= 2 ? `${approvedCount}/2` : "2/2"} ${tr("chat_task_approved_suffix", "Approved")}`
               : approvedCount === 1
-              ? `1/2 ${tr("chat_task_approved_suffix", "Disetujui")}`
-              : `0/2 ${tr("chat_task_approved_suffix", "Disetujui")}`}
+              ? `1/2 ${tr("chat_task_approved_suffix", "Approved")}`
+              : `0/2 ${tr("chat_task_approved_suffix", "Approved")}`}
           </span>
         </div>
         <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
@@ -332,7 +347,7 @@ function TaskPreview({ m }) {
 
         {approvedList.length > 0 && (
           <p className="mt-2 text-[11px] text-slate-500">
-            {tr("chat_task_approved_suffix", "Disetujui")}: <b className="text-ink">{approvedList.map((uid) => userMap[uid]?.name?.split(" ")[0] || uid).join(", ")}</b>
+            {tr("chat_task_approved_suffix", "Approved")}: <b className="text-ink">{approvedList.map((uid) => userMap[uid]?.name?.split(" ")[0] || uid).join(", ")}</b>
           </p>
         )}
       </div>
@@ -347,7 +362,7 @@ function TaskPreview({ m }) {
               className="h-9 rounded-xl bg-emerald-500 text-xs font-bold text-white shadow-sm hover:bg-emerald-600 disabled:opacity-50 transition-colors"
               data-testid={`task-preview-approve-${m.id}`}
             >
-              {alreadyApproved ? tr("chat_task_already_approved_btn", "Sudah Setuju ✓") : tr("chat_task_approve_btn", "Setuju")}
+              {alreadyApproved ? tr("chat_task_already_approved_btn", "Sudah Approve ✓") : tr("chat_task_approve_btn", "Approve")}
             </button>
             <button
               disabled={busy}
@@ -359,12 +374,12 @@ function TaskPreview({ m }) {
             </button>
           </div>
         ) : (
-          <p className="mt-3 text-center text-xs text-sub">{tr("chat_task_waiting_approval", "Menunggu persetujuan.")}</p>
+          <p className="mt-3 text-center text-xs text-sub">{tr("chat_task_waiting_approval", "Menunggu approval.")}</p>
         )
       ) : (
         <div className="mt-3 space-y-2">
           <div className="rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 p-2 text-center text-xs font-bold text-emerald-700 dark:text-emerald-300">
-            {tr("chat_task_approved_done_banner", "✓ Disetujui 100% · Status: Done")}
+            {tr("chat_task_approved_done_banner", "✓ Approved 100% · Status: Done")}
           </div>
           {/* Allow additional approvals beyond 2 people */}
           {!alreadyApproved ? (
@@ -374,11 +389,11 @@ function TaskPreview({ m }) {
               className="w-full h-8 rounded-xl border border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30 text-xs font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 disabled:opacity-50 transition-colors"
               data-testid={`task-preview-approve-more-${m.id}`}
             >
-              {tr("chat_task_approve_more_prefix", "+ Setuju Juga")} ({approvedCount} {tr("chat_task_approve_more_suffix", "telah setuju")})
+              {tr("chat_task_approve_more_prefix", "+ Approve Juga")} ({approvedCount} {tr("chat_task_approve_more_suffix", "sudah approve")})
             </button>
           ) : (
             <p className="text-center text-[11px] text-emerald-600 font-medium">
-              {tr("chat_task_you_approved", "Anda telah menyetujui tugas ini ✓")}
+              {tr("chat_task_you_approved", "Anda telah meng-approve tugas ini ✓")}
             </p>
           )}
         </div>
@@ -435,9 +450,9 @@ function AccessRequestCard({ m }) {
       if (isDeleteReq) {
         toast.success(`Karyawan ${req.name} berhasil dihapus.`);
       } else if (isPasswordReset) {
-        toast.success(`Reset password untuk ${req.name} telah disetujui!`);
+        toast.success(`Reset password untuk ${req.name} telah di-approve!`);
       } else {
-        toast.success(`Akses untuk ${req.name} berhasil disetujui!`);
+        toast.success(`Akses untuk ${req.name} berhasil di-approve!`);
       }
     } catch (e) {
       setReq(prevReq);
@@ -486,7 +501,7 @@ function AccessRequestCard({ m }) {
           </div>
           <div className="min-w-0 flex-1">
             <h4 className="text-xs font-bold text-ink leading-tight truncate">
-              {isDeleteReq ? tr("chat_access_del_title", "Persetujuan Hapus Karyawan") : isPasswordReset ? tr("chat_access_pw_title", "Permintaan Reset Password") : tr("chat_access_login_title", "Permintaan Akses Masuk")}
+              {isDeleteReq ? tr("chat_access_del_title", "Approval Hapus Karyawan") : isPasswordReset ? tr("chat_access_pw_title", "Permintaan Reset Password") : tr("chat_access_login_title", "Permintaan Akses Masuk")}
             </h4>
             <p className="text-[10px] text-sub font-medium truncate">{tr("chat_access_subtitle", "Asisten Workspace: Asli")}</p>
           </div>
@@ -498,7 +513,7 @@ function AccessRequestCard({ m }) {
             ? "bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300"
             : "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
         }`}>
-          {isApproved ? (isDeleteReq ? tr("chat_access_status_deleted", "✓ Dihapus") : isPasswordReset ? tr("chat_access_status_reset", "✓ Direset") : tr("chat_access_status_approved", "✓ Disetujui")) : isRejected ? tr("chat_access_status_rejected", "✕ Ditolak") : tr("chat_access_status_waiting", "⏳ Menunggu")}
+          {isApproved ? (isDeleteReq ? tr("chat_access_status_deleted", "✓ Dihapus") : isPasswordReset ? tr("chat_access_status_reset", "✓ Direset") : tr("chat_access_status_approved", "✓ Approved")) : isRejected ? tr("chat_access_status_rejected", "✕ Ditolak") : tr("chat_access_status_waiting", "⏳ Menunggu")}
         </span>
       </div>
 
@@ -572,7 +587,7 @@ function AccessRequestCard({ m }) {
                   className={`flex h-9 items-center justify-center gap-1.5 rounded-xl font-bold text-xs text-white shadow-xs disabled:opacity-50 transition-colors ${isDeleteReq ? "bg-rose-600 hover:bg-rose-700" : isPasswordReset ? "bg-indigo-600 hover:bg-indigo-700" : "bg-emerald-600 hover:bg-emerald-700"}`}
                   data-testid={`approve-access-btn-${req.id}`}
                 >
-                  {isDeleteReq ? tr("chat_access_approve_del", "Setujui Hapus") : isPasswordReset ? tr("chat_access_approve_pw", "Setujui Reset") : tr("chat_access_approve_login", "Setujui Akses")}
+                  {isDeleteReq ? tr("chat_access_approve_del", "Approve Hapus") : isPasswordReset ? tr("chat_access_approve_pw", "Approve Reset") : tr("chat_access_approve_login", "Approve Akses")}
                 </button>
                 <button
                   disabled={busy}
@@ -586,12 +601,12 @@ function AccessRequestCard({ m }) {
             </div>
           ) : (
             <p className="text-center text-xs text-sub italic">
-              {tr("chat_access_waiting_mgr", "Menunggu persetujuan dari Manajer Divisi / Super Admin.")}
+              {tr("chat_access_waiting_mgr", "Menunggu approval dari Manajer Divisi / Super Admin.")}
             </p>
           )
         ) : isApproved ? (
           <div className="rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 p-2 text-center text-xs font-bold text-emerald-700 dark:text-emerald-300">
-            {isDeleteReq ? `✓ Dihapus · Disetujui oleh ${req.approved_by || "Manajer"}` : isPasswordReset ? `✓ Reset Password Disetujui oleh ${req.approved_by || "Admin"}` : `✓ Akses Disetujui oleh ${req.approved_by || "Admin"}`}
+            {isDeleteReq ? `✓ Dihapus · Approved oleh ${req.approved_by || "Manajer"}` : isPasswordReset ? `✓ Reset Password Approved oleh ${req.approved_by || "Admin"}` : `✓ Akses Approved oleh ${req.approved_by || "Admin"}`}
           </div>
         ) : (
           <div className="rounded-xl border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 p-2 text-center text-xs font-bold text-rose-700 dark:text-rose-300">

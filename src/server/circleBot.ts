@@ -863,7 +863,7 @@ export function answerWorkspaceQuestionDeterministically(
       `👥 **Data Karyawan ${intel.workspace_name}**`,
       `• Total Karyawan: **${intel.employees.total} orang** (${intel.employees.active} aktif, ${intel.employees.online} sedang online)`,
       ...(intel.employees.inactive > 0 ? [`• Nonaktif/Suspended: ${intel.employees.inactive} orang`] : []),
-      ...(intel.access_requests.pending_count > 0 ? [`• Menunggu Persetujuan Akses: ${intel.access_requests.pending_count} orang`] : []),
+      ...(intel.access_requests.pending_count > 0 ? [`• Menunggu Approval Akses: ${intel.access_requests.pending_count} orang`] : []),
       ``,
       `🏢 **Sebaran per Divisi:**`,
       ...(byDeptLines.length ? byDeptLines : ["• Belum ada karyawan terdaftar."]),
@@ -1007,7 +1007,7 @@ export function answerWorkspaceQuestionDeterministically(
       `🔐 **Permintaan Akses & Undangan**`,
       `• Permintaan Akses Pending: **${intel.access_requests.pending_count}**`,
       `• Undangan Terkirim Pending: **${intel.access_requests.pending_invitations_count}**`,
-      ...(reqLines.length ? [`\nDaftar Pending:\n${reqLines.join("\n")}`] : [`\nTidak ada permintaan akses yang menunggu persetujuan.`])
+      ...(reqLines.length ? [`\nDaftar Pending:\n${reqLines.join("\n")}`] : [`\nTidak ada permintaan akses yang menunggu approval.`])
     ].join("\n"));
   }
 

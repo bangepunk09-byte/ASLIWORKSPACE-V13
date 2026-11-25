@@ -88,7 +88,14 @@ function buildProxyMediaUrl(rawUrl, shortcode) {
 function IgAccountAvatar({ account }) {
   const [imgFailed, setImgFailed] = useState(false);
   const rawAvatar = account?.avatar_url;
-  const src = rawAvatar ? buildProxyMediaUrl(rawAvatar, "") : "";
+  const hasDiskCache = Boolean(account?.has_cached_avatar);
+  const cacheVer = account?.avatar_cached_at || account?.last_checked_at || "";
+  const src =
+    rawAvatar || hasDiskCache
+      ? `/api/instagram-tracker/media?username=${encodeURIComponent(account?.username || "")}${
+          rawAvatar ? `&url=${encodeURIComponent(rawAvatar)}` : ""
+        }${cacheVer ? `&v=${encodeURIComponent(String(cacheVer))}` : ""}`
+      : "";
   const initials = String(account?.display_name || account?.username || "IG")
     .replace(/^@/, "")
     .slice(0, 2)
@@ -96,7 +103,7 @@ function IgAccountAvatar({ account }) {
 
   useEffect(() => {
     setImgFailed(false);
-  }, [rawAvatar]);
+  }, [src]);
 
   if (src && !imgFailed) {
     return (
@@ -278,10 +285,12 @@ export default function InstagramTrackerWidget() {
       const { data } = await api.post(`/instagram-tracker/${acc.id}/refresh`, {
         username: acc.username,
         profile_url: acc.profile_url,
+        forceAvatar: !acc.avatar_url,
       });
       if (Array.isArray(data?.accounts)) {
         commitAccounts(data.accounts);
       }
+      void syncWorkspaceMirror(api, true);
       toast.success(`Postingan terakhir @${acc.username} diperbarui`);
     } catch (err) {
       toast.error(errMsg(err, "Gagal mengecek akun Instagram"));
@@ -294,16 +303,16 @@ export default function InstagramTrackerWidget() {
     if (accounts.length === 0) return;
     setRefreshingAll(true);
     try {
-      for (const acc of accounts) {
-        await api
-          .post(`/instagram-tracker/${acc.id}/refresh`, {
-            username: acc.username,
-            profile_url: acc.profile_url,
-          })
-          .catch(() => {});
+      const { data } = await api.post("/instagram-tracker/refresh-all");
+      if (Array.isArray(data?.accounts)) {
+        commitAccounts(data.accounts);
+      } else {
+        await loadAccounts();
       }
-      await loadAccounts();
+      void syncWorkspaceMirror(api, true);
       toast.success("Semua akun Instagram berhasil diperbarui");
+    } catch (err) {
+      toast.error(errMsg(err, "Gagal memperbarui akun Instagram"));
     } finally {
       setRefreshingAll(false);
     }

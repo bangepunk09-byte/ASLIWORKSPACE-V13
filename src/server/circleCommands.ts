@@ -262,7 +262,7 @@ function getGuideResponse(topicRaw: string): string {
       body: [
         `• **4 Tampilan Database**: Ganti tampilan melalui switcher **Board | List | Timeline | Calendar** di kanan toolbar Tugas.`,
         `• **Checkpoints & Subtugas**: Buka kartu tugas untuk menambahkan tahap Checkpoint (dengan PIC & tenggat per tahap) yang otomatis menghitung progres %.`,
-        `• **2-Person Approval**: Gunakan tombol *Kirim Approval* ke grup chat—ketika minimal 2 reviewer menyetujui (50% → 100%), status otomatis berpindah ke **Done**.`,
+        `• **2-Person Approval**: Gunakan tombol *Kirim Approval* ke grup chat—ketika minimal 2 reviewer meng-approve (50% → 100%), status otomatis berpindah ke **Done**.`,
         `• **Kendala (Blocker)**: Tandai komentar sebagai *Kendala* agar langsung terdeteksi oleh manajer & Asisten ASLI.`
       ].join("\n")
     },
@@ -280,7 +280,7 @@ function getGuideResponse(topicRaw: string): string {
       title: "Panduan Role, Approval Akses & Organisasi",
       body: [
         `• **Role Workspace**: Tersedia *Super Admin*, *Workspace Admin*, *Department Manager*, *Project Manager*, dan *Employee*.`,
-        `• **Approval Masuk & Reset PW**: Permintaan akun baru & reset password dikirim otomatis ke kartu persetujuan di chat Manager/Super Admin.`,
+        `• **Approval Masuk & Reset PW**: Permintaan akun baru & reset password dikirim otomatis ke kartu approval di chat Manager/Super Admin.`,
         `• **Board Divisi Otomatis**: Setiap divisi baru otomatis memiliki board terintegrasi dan kontrol anggota terundang.`
       ].join("\n")
     }
@@ -530,7 +530,17 @@ export async function tryExecuteCircleCommand(params: {
       done: false
     });
     const doneCount = task.checkpoints.filter((c: any) => c.done).length;
-    task.progress = Math.round((doneCount / task.checkpoints.length) * 100);
+    const approvedCount = Array.isArray(task.approvals?.approved_by)
+      ? task.approvals.approved_by.length
+      : Array.isArray(task.approval?.approved_by)
+      ? task.approval.approved_by.length
+      : 0;
+    if (approvedCount >= 2) {
+      task.status = "done";
+      task.progress = 100;
+    } else {
+      task.progress = Math.round((doneCount / task.checkpoints.length) * 100);
+    }
     task.updated_at = now.toISOString();
     addTaskActivity(db, task, actorId, `menambahkan checkpoint "${cpTitle}" via Asli`);
     return {
@@ -550,7 +560,7 @@ export async function tryExecuteCircleCommand(params: {
     }
     task.status = "done";
     task.progress = 100;
-    task.completed_at = now.toISOString();
+    task.completed_at = task.completed_at || now.toISOString();
     task.updated_at = now.toISOString();
     addTaskActivity(db, task, actorId, `menandai tugas selesai (Done) via Asli`);
     return {
@@ -570,10 +580,21 @@ export async function tryExecuteCircleCommand(params: {
     if (!task || !valid.includes(stRaw)) {
       return { handled: true, text: `⚠️ Format: \`/status TSK-001 | todo|in_progress|in_review|done\`` };
     }
+    const approvedCount = Array.isArray(task.approvals?.approved_by)
+      ? task.approvals.approved_by.length
+      : Array.isArray(task.approval?.approved_by)
+      ? task.approval.approved_by.length
+      : 0;
+    if (approvedCount >= 2 && stRaw !== "done") {
+      return {
+        handled: true,
+        text: `🔒 **${task.number_str} (${task.title})** sudah mendapat **2/2 Approval (100%)** dan terkunci saklek di **Done**.`
+      };
+    }
     task.status = stRaw;
     if (stRaw === "done") {
       task.progress = 100;
-      task.completed_at = now.toISOString();
+      task.completed_at = task.completed_at || now.toISOString();
     }
     task.updated_at = now.toISOString();
     addTaskActivity(db, task, actorId, `mengubah status tugas menjadi ${stRaw} via Asli`);

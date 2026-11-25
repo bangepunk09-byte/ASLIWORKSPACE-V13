@@ -47,7 +47,7 @@ const INITIAL_ADMIN_STATS = {
 const INITIAL_AUDIT_LOGS = [
   { id: "log_1", actor_name: "Admin ASLI RI", action: "memperbarui konfigurasi workspace identity & logo portal", created_at: new Date(Date.now() - 7200000).toISOString() },
   { id: "log_2", actor_name: "Admin ASLI RI", action: "menghubungkan integrasi Google Workspace (Calendar & Meet)", created_at: new Date(Date.now() - 28800000).toISOString() },
-  { id: "log_3", actor_name: "Siti Rahma", action: "menyetujui approval final (2/2) pada tugas TSK-002", created_at: new Date(Date.now() - 64800000).toISOString() },
+  { id: "log_3", actor_name: "Siti Rahma", action: "meng-approve final (2/2) pada tugas TSK-002", created_at: new Date(Date.now() - 64800000).toISOString() },
   { id: "log_4", actor_name: "Budi Santoso", action: "menyelesaikan checkpoint 'Audit stats endpoint' pada tugas TSK-002", created_at: new Date(Date.now() - 86400000).toISOString() },
   { id: "log_5", actor_name: "Admin ASLI RI", action: "menerima permohonan bergabung karyawan baru Dian Pratama", created_at: new Date(Date.now() - 172800000).toISOString() }
 ];
@@ -105,7 +105,7 @@ export function AdminOverview() {
   const stats = s ? [
     ["Total Karyawan", s.total_employees],
     ["Aktif", s.active_employees],
-    ["Menunggu Persetujuan", s.pending_employees],
+    ["Menunggu Approval", s.pending_employees],
     ["Divisi", s.departments],
     ["Grup", s.groups],
     ["Proyek Aktif", s.active_projects],
@@ -267,10 +267,10 @@ export function PeopleAccess() {
       );
       toast.success(
         reqType === "password_reset"
-          ? "Permintaan reset password disetujui! Password baru sekarang aktif."
+          ? "Permintaan reset password di-approve! Password baru sekarang aktif."
           : reqType === "delete_user"
-          ? "Permohonan hapus karyawan disetujui."
-          : "Permintaan akses berhasil disetujui! Akun sekarang aktif."
+          ? "Permohonan hapus karyawan di-approve."
+          : "Permintaan akses berhasil di-approve! Akun sekarang aktif."
       );
       load();
       reloadUsers();
@@ -398,7 +398,7 @@ export function PeopleAccess() {
                   reqFilter === "approved" ? "bg-emerald-600 text-white shadow-xs" : "bg-surface2 text-ink hover:bg-surface2/70"
                 }`}
               >
-                Disetujui
+                Approved
               </button>
               <button
                 type="button"
@@ -415,7 +415,7 @@ export function PeopleAccess() {
           {filteredRequests.length === 0 ? (
             <div className="py-6 text-center text-xs text-sub">
               {reqFilter === "pending"
-                ? "Tidak ada permintaan akses yang sedang menunggu persetujuan."
+                ? "Tidak ada permintaan akses yang sedang menunggu approval."
                 : "Belum ada riwayat permohonan akses masuk."}
             </div>
           ) : (
@@ -446,7 +446,7 @@ export function PeopleAccess() {
                             ? "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300"
                             : "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
                         }`}>
-                          {isApproved ? "Disetujui" : isRejected ? "Ditolak" : "Menunggu"}
+                          {isApproved ? "Approved" : isRejected ? "Ditolak" : "Menunggu"}
                         </span>
                       </div>
                       <p className="text-sub truncate">{r.email}</p>
@@ -474,7 +474,7 @@ export function PeopleAccess() {
                             }`}
                             data-testid={`admin-approve-req-${r.id}`}
                           >
-                            {r.type === "password_reset" ? "Setujui Reset" : "Setujui"}
+                            {r.type === "password_reset" ? "Approve Reset" : "Approve"}
                           </button>
                           <button
                             disabled={busyAction === r.id}
@@ -487,7 +487,7 @@ export function PeopleAccess() {
                         </>
                       ) : (
                         <div className="text-[11px] text-sub text-right">
-                          {isApproved ? `Disetujui oleh ${r.approved_by || "Admin"}` : `Ditolak oleh ${r.rejected_by || "Admin"}`}
+                          {isApproved ? `Approved oleh ${r.approved_by || "Admin"}` : `Ditolak oleh ${r.rejected_by || "Admin"}`}
                         </div>
                       )}
                     </div>
@@ -501,7 +501,7 @@ export function PeopleAccess() {
 
       <Card title="Akses Masuk Workspace" testid="access-settings">
         <label className="block text-xs font-semibold text-sub">
-          Domain email perusahaan (otomatis masuk tanpa persetujuan, pisahkan dengan koma)
+          Domain email perusahaan (otomatis masuk tanpa approval, pisahkan dengan koma)
           <input
             value={domains}
             onChange={(e) => setDomains(e.target.value)}
@@ -511,7 +511,7 @@ export function PeopleAccess() {
           />
         </label>
         <label className="mt-3 flex items-center justify-between text-sm">Akun dengan domain perusahaan otomatis bergabung<Switch checked={ws.auto_join_domain !== false} onCheckedChange={(v) => run(() => api.patch("/workspace", { auto_join_domain: v })).then(reloadWs)} data-testid="auto-join-switch" /></label>
-        <label className="mt-3 flex items-center justify-between text-sm">Akun di luar domain masuk antrean persetujuan<Switch checked={ws.require_approval !== false} onCheckedChange={(v) => run(() => api.patch("/workspace", { require_approval: v })).then(reloadWs)} data-testid="require-approval-switch" /></label>
+        <label className="mt-3 flex items-center justify-between text-sm">Akun di luar domain masuk antrean approval<Switch checked={ws.require_approval !== false} onCheckedChange={(v) => run(() => api.patch("/workspace", { require_approval: v })).then(reloadWs)} data-testid="require-approval-switch" /></label>
         <button type="button" onClick={() => run(() => api.patch("/workspace", { allowed_domains: String(domains || "").split(",").map((x) => x.trim().replace(/^@/, "")).filter(Boolean) }), "Domain berhasil disimpan!").then(reloadWs)} className="btn-accent mt-3 h-10 px-4 text-sm font-semibold" data-testid="save-domains-btn">Simpan Domain</button>
       </Card>
 
@@ -616,7 +616,7 @@ export function PeopleAccess() {
                           ? "text-slate-300 dark:text-slate-600 hover:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
                           : "text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-transparent hover:border-rose-200 dark:hover:border-rose-900/50"
                       }`}
-                      title={u.user_id === me?.user_id ? "Tidak dapat menghapus akun sendiri" : `Hapus ${u.name} (perlu persetujuan Manajer Divisi)`}
+                      title={u.user_id === me?.user_id ? "Tidak dapat menghapus akun sendiri" : `Hapus ${u.name} (perlu approval Manajer Divisi)`}
                       data-testid={`delete-user-${u.user_id}`}
                     >
                       <Trash2 size={15} />
@@ -638,7 +638,7 @@ export function PeopleAccess() {
               </div>
               <div className="text-left">
                 <DialogTitle className="text-base font-bold text-ink">Hapus Karyawan</DialogTitle>
-                <DialogDescription className="text-xs text-sub">Memerlukan persetujuan Manajer Divisi</DialogDescription>
+                <DialogDescription className="text-xs text-sub">Memerlukan approval Manajer Divisi</DialogDescription>
               </div>
             </div>
           </DialogHeader>
@@ -663,10 +663,10 @@ export function PeopleAccess() {
 
               <div className="rounded-2xl border border-amber-200/80 bg-amber-50/70 dark:border-amber-900/40 dark:bg-amber-950/30 p-3.5 text-xs text-amber-900 dark:text-amber-200 leading-relaxed text-left">
                 <p className="font-bold mb-1 flex items-center gap-1.5 text-amber-800 dark:text-amber-300">
-                  <span>⚠️</span> Persetujuan Manajer Divisi
+                  <span>⚠️</span> Approval Manajer Divisi
                 </p>
                 <p className="text-[11.5px] opacity-90">
-                  Penghapusan akun <b>{deleteTargetUser.name}</b> akan diajukan ke <b>Manajer Divisi {deleteTargetUser.department || "General"}</b> melalui Asisten <b>"Asli"</b> berupa kartu persetujuan (approval card). Akun akan dihapus permanen setelah disetujui.
+                  Penghapusan akun <b>{deleteTargetUser.name}</b> akan diajukan ke <b>Manajer Divisi {deleteTargetUser.department || "General"}</b> melalui Asisten <b>"Asli"</b> berupa kartu approval (approval card). Akun akan dihapus permanen setelah di-approve.
                 </p>
               </div>
             </div>

@@ -174,7 +174,25 @@ export default function TaskDetail({ id, onClose, onChanged }) {
   };
   const setAtt = (fn) => patch({ attachments: fn(t.attachments) });
   const { pick, input } = useUploader(setAtt);
-  const share = async (cid) => { try { await api.patch(`/tasks/${id}`, { status: "in_review" }); await api.post(`/tasks/${id}/share`, { conversation_id: cid }); toast.success(tr("task_share_sent_toast", "Preview dikirim ke grup dan status diubah ke In Review")); setGroups(null); load(); } catch (e) { toast.error(errMsg(e)); } };
+  const share = async (cid) => {
+    try {
+      const { data } = await api.post(`/tasks/${id}/share`, { conversation_id: cid });
+      const updatedTask = data?.task;
+      if (updatedTask?.id) {
+        setT((prev) => ({ ...(prev || {}), ...updatedTask }));
+        onChanged?.(updatedTask);
+      }
+      toast.success(
+        updatedTask?.status === "done"
+          ? tr("task_share_sent_done_toast", "Preview tugas (Done) dikirim ke grup")
+          : tr("task_share_sent_toast", "Preview dikirim ke grup dan status diubah ke In Review")
+      );
+      setGroups(null);
+      load();
+    } catch (e) {
+      toast.error(errMsg(e));
+    }
+  };
   const done = statuses.find((s) => s.key === t?.status)?.is_done;
   const ro = t ? t.can_edit === false : false;
   const d = t && dueInfo(t.deadline, done);
@@ -254,10 +272,10 @@ export default function TaskDetail({ id, onClose, onChanged }) {
       }
       if (updatedTask?.status === "done" || nextApproved.length >= 2) {
         playSound("task_done");
-        toast.success(tr("task_approved_full_toast", "Tugas disetujui 2/2 (100%) dan otomatis dipindah ke Done!"));
+        toast.success(tr("task_approved_full_toast", "Tugas di-approve 2/2 (100%) dan otomatis dipindah ke Done!"));
       } else {
         playSound("click");
-        toast.success(tr("task_approved_half_toast", "Disetujui 1/2 (50%). Menunggu 1 persetujuan lagi."));
+        toast.success(tr("task_approved_half_toast", "Approved 1/2 (50%). Menunggu 1 approval lagi."));
       }
       load();
       onChanged?.(updatedTask);
@@ -341,7 +359,7 @@ export default function TaskDetail({ id, onClose, onChanged }) {
                           : "text-amber-800 dark:text-amber-200"
                       }`}
                     >
-                      {isApprovedFull ? tr("task_approval_done_banner", "✓ Disetujui 100% · Status: Done") : tr("task_approval_waiting_banner", "Menunggu Approval")}
+                      {isApprovedFull ? tr("task_approval_done_banner", "✓ Approved 100% · Status: Done") : tr("task_approval_waiting_banner", "Menunggu Approval")}
                     </span>
                     <span
                       className={`rounded-full px-2.5 py-0.5 text-[11px] sm:text-xs font-bold whitespace-nowrap shrink-0 ${
@@ -351,8 +369,8 @@ export default function TaskDetail({ id, onClose, onChanged }) {
                       }`}
                     >
                       {isApprovedFull
-                        ? `${approvedCount >= 2 ? `${approvedCount}/2` : "2/2"} ${tr("task_approval_approved_suffix", "Disetujui")}`
-                        : `${approvedCount}/2 ${tr("task_approval_approved_suffix", "Disetujui")}`}
+                        ? `${approvedCount >= 2 ? `${approvedCount}/2` : "2/2"} ${tr("task_approval_approved_suffix", "Approved")}`
+                        : `${approvedCount}/2 ${tr("task_approval_approved_suffix", "Approved")}`}
                     </span>
                   </div>
                   <div
@@ -376,7 +394,7 @@ export default function TaskDetail({ id, onClose, onChanged }) {
                           : "text-amber-800 dark:text-amber-300"
                       }`}
                     >
-                      <span>{tr("task_approval_approved_by", "Telah disetujui oleh:")}</span>
+                      <span>{tr("task_approval_approved_by", "Telah di-approve oleh:")}</span>
                       <b>{approvedList.map((uid) => userMap[uid]?.name?.split(" ")[0] || uid).join(", ")}</b>
                     </div>
                   )}
@@ -398,7 +416,7 @@ export default function TaskDetail({ id, onClose, onChanged }) {
                         data-testid="approve-task-btn"
                       >
                         <CheckCircle2 size={14} />
-                        {approving ? tr("task_approval_processing", "Memproses…") : alreadyApprovedByMe ? tr("task_approval_already_btn", "Sudah Setuju ✓") : tr("task_approval_approve_btn", "Setuju")}
+                        {approving ? tr("task_approval_processing", "Memproses…") : alreadyApprovedByMe ? tr("task_approval_already_btn", "Sudah Approve ✓") : tr("task_approval_approve_btn", "Approve")}
                       </button>
                     </div>
                   ) : (
@@ -411,7 +429,7 @@ export default function TaskDetail({ id, onClose, onChanged }) {
                           className="w-full h-9 rounded-xl border border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30 text-xs font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 disabled:opacity-50 transition-colors cursor-pointer"
                           data-testid="approve-task-more-btn"
                         >
-                          {tr("task_approval_more_prefix", "+ Setuju Juga")} ({approvedCount} {tr("task_approval_more_suffix", "telah setuju")})
+                          {tr("task_approval_more_prefix", "+ Approve Juga")} ({approvedCount} {tr("task_approval_more_suffix", "sudah approve")})
                         </button>
                       </div>
                     )
@@ -423,7 +441,17 @@ export default function TaskDetail({ id, onClose, onChanged }) {
               <div className="space-y-3">
                 <Row label={tr("task_field_status", "Status")}>
                   <div className="space-y-1.5 w-full">
-                    <Select value={t.status} disabled={ro} onValueChange={(val) => patch({ status: val })}>
+                    <Select
+                      value={t.status}
+                      disabled={ro || approvedCount >= 2}
+                      onValueChange={(val) => {
+                        if (approvedCount >= 2 && val !== "done") {
+                          toast.error("Tugas sudah 2/2 Approved (100%) dan terkunci saklek di Done.");
+                          return;
+                        }
+                        patch({ status: val });
+                      }}
+                    >
                       <SelectTrigger className="w-full" data-testid="task-detail-status">
                         <SelectValue placeholder={tr("task_status_ph", "Pilih status...")} />
                       </SelectTrigger>
@@ -435,6 +463,11 @@ export default function TaskDetail({ id, onClose, onChanged }) {
                         ))}
                       </SelectContent>
                     </Select>
+                    {approvedCount >= 2 && (
+                      <p className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400" data-testid="task-detail-status-locked">
+                        ✓ Terkunci saklek di Done (2/2 Approved · 100%)
+                      </p>
+                    )}
                     {(() => {
                       const comp = getTaskCompliance(t);
                       const detail = getTaskComplianceDetail(t);

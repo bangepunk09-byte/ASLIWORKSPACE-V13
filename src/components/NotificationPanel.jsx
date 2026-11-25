@@ -75,7 +75,7 @@ export function NotificationList({ onNavigate }) {
     tasks: t("notif_cat_tasks", "Tugas"),
     chat: t("notif_cat_chat", "Pesan"),
     beranda: t("notif_cat_beranda", "Beranda"),
-    approval: t("notif_cat_approval", "Persetujuan"),
+    approval: t("notif_cat_approval", "Approval"),
     system: t("notif_cat_system", "Sistem"),
     calendar: t("notif_cat_calendar", "Jadwal"),
     meetings: t("notif_cat_meetings", "Rapat"),

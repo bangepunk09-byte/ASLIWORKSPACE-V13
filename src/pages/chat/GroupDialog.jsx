@@ -31,7 +31,7 @@ export function MemberPicker({ open, onOpenChange, exclude = [], onPick, title, 
 const GROUP_TYPE_LABELS = { public: "Publik", private: "Privat", department: "Divisi", project: "Proyek" };
 const GROUP_TYPE_HINTS = {
   public: "Publik: Semua anggota workspace bisa melihat dan langsung bergabung ke grup tanpa perlu izin.",
-  private: "Privat: Anggota lain wajib meminta izin dan disetujui Pembuat / Co-Admin Grup sebelum masuk.",
+  private: "Privat: Anggota lain wajib meminta izin dan di-approve Pembuat / Co-Admin Grup sebelum masuk.",
   department: "Divisi: Khusus anggota divisi terkait. Rekan tim dari divisi lain hanya bisa masuk melalui undangan resmi.",
   project: "Proyek: Ruang kolaborasi khusus untuk tim yang menangani proyek tertentu."
 };

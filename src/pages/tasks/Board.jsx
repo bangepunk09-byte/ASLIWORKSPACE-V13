@@ -46,11 +46,13 @@ export function TaskCard({ t, onOpen, done, draggable, onDragStart, onDragEnd, i
 
   const approvalCount = (t.approvals?.approved_by || t.approval?.approved_by || []).length;
   const approvalPct = t.status === "done" || done || approvalCount >= 2 ? 100 : approvalCount === 1 ? 50 : 0;
-  const progressVal = Math.round(
-    (t.checkpoints?.length || 0) > 0
-      ? (t.progress ?? approvalPct)
-      : Math.max(t.progress ?? 0, approvalPct)
-  );
+  const progressVal = approvalCount >= 2
+    ? 100
+    : Math.round(
+        (t.checkpoints?.length || 0) > 0
+          ? (t.progress ?? approvalPct)
+          : Math.max(t.progress ?? 0, approvalPct)
+      );
   const checkpointTotal = (t.checkpoints?.length || 0) + (t.checklist?.length || 0);
   const userIds = Array.from(new Set([
     ...(t.assignee_ids && t.assignee_ids.length ? t.assignee_ids : (t.assignee_id ? [t.assignee_id] : [])),
@@ -113,14 +115,17 @@ export function TaskCard({ t, onOpen, done, draggable, onDragStart, onDragEnd, i
     toast.success(`ID ${textToCopy} berhasil disalin`);
   };
 
+  const isLockedDone = approvalCount >= 2;
+  const canDrag = Boolean(draggable && !isLockedDone);
+
   return (
     <div
-      draggable={draggable}
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
+      draggable={canDrag}
+      onDragStart={canDrag ? onDragStart : undefined}
+      onDragEnd={canDrag ? onDragEnd : undefined}
       onClick={() => onOpen(t.id)}
       data-testid={`task-card-${t.id}`}
-      className={`group relative w-full min-w-0 overflow-hidden cursor-grab active:cursor-grabbing rounded-2xl sm:rounded-[26px] border border-slate-100/90 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5 text-left shadow-[0_4px_20px_rgba(0,0,0,0.03)] transition-all duration-200 ease-out hover:-translate-y-0.5 hover:shadow-[0_8px_30px_rgba(0,0,0,0.08)] animate-card-fade ${
+      className={`group relative w-full min-w-0 overflow-hidden ${canDrag ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"} rounded-2xl sm:rounded-[26px] border border-slate-100/90 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5 text-left shadow-[0_4px_20px_rgba(0,0,0,0.03)] transition-all duration-200 ease-out hover:-translate-y-0.5 hover:shadow-[0_8px_30px_rgba(0,0,0,0.08)] animate-card-fade ${
         isDragging ? "opacity-30 scale-95 shadow-none border-dashed border-brand" : "opacity-100 scale-100"
       }`}
       style={t.card_color ? { borderTop: `4px solid ${t.card_color}` } : undefined}
@@ -320,9 +325,14 @@ export default function Board({ tasks, onOpen, onNew, reload, onMoveTask, board,
     const t = tasks.find((x) => x.id === id);
     if (!t || t.status === key) return;
 
+    const approvalCount = (t.approvals?.approved_by || t.approval?.approved_by || []).length;
     const prevStatus = t.status;
     const targetStatus = statuses.find((s) => s.key === key);
     const isDone = key === "done" || targetStatus?.is_done;
+    if (approvalCount >= 2 && !isDone) {
+      toast.error("Tugas sudah 2/2 Approved (100%) dan terkunci saklek di Done.");
+      return;
+    }
     const nowIso = new Date().toISOString();
 
     let nextCompliance = t.deadline_compliance;

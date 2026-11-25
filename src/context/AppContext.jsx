@@ -26,6 +26,7 @@ import { prefetchMarketplaceState, reconcileMarketplaceEnabledCache } from "../p
 import { setTopQuickActionNotifActive } from "../lib/sonnerCompat";
 import { hasTopNotifQuickAction } from "../components/TopNotificationPopup";
 import { hydrateTeamStatsCache } from "../pages/dashboard/MonthlyStats";
+import { enforceTaskApprovalInvariant, mergeTasksArrayNonDestructive } from "../lib/snapshotMerge";
 
 const AppCtx = createContext(null);
 export const useApp = () => useContext(AppCtx);
@@ -130,7 +131,8 @@ export function AppProvider({ children }) {
   const [tasks, setTasks] = useState(() => {
     try {
       const cached = localStorage.getItem("circle_tasks_cache") || localStorage.getItem("circle_cache_tasks");
-      return cached ? JSON.parse(cached) : [];
+      const parsed = cached ? JSON.parse(cached) : [];
+      return Array.isArray(parsed) ? parsed.map((t) => enforceTaskApprovalInvariant(t)) : [];
     } catch {
       return [];
     }
@@ -162,10 +164,11 @@ export function AppProvider({ children }) {
         if (restored) {
           api.get("/tasks").then((r) => {
             if (Array.isArray(r.data) && r.data.length > 0) {
-              setTasks(r.data);
+              const normalized = r.data.map((t) => enforceTaskApprovalInvariant(t));
+              setTasks(normalized);
               try {
-                localStorage.setItem("circle_tasks_cache", JSON.stringify(r.data));
-                localStorage.setItem("circle_cache_tasks", JSON.stringify(r.data));
+                localStorage.setItem("circle_tasks_cache", JSON.stringify(normalized));
+                localStorage.setItem("circle_cache_tasks", JSON.stringify(normalized));
               } catch {}
               subs.current.forEach((fn) => fn({ type: "tasks:changed", silentSync: true }));
             }
@@ -174,10 +177,11 @@ export function AppProvider({ children }) {
       }).catch(() => {});
       return false;
     }
-    setTasks(incomingList);
+    const normalized = incomingList.map((t) => enforceTaskApprovalInvariant(t));
+    setTasks(normalized);
     try {
-      localStorage.setItem("circle_tasks_cache", JSON.stringify(incomingList));
-      localStorage.setItem("circle_cache_tasks", JSON.stringify(incomingList));
+      localStorage.setItem("circle_tasks_cache", JSON.stringify(normalized));
+      localStorage.setItem("circle_cache_tasks", JSON.stringify(normalized));
     } catch {}
     if (silentSync) {
       subs.current.forEach((fn) => fn({ type: "tasks:changed", silentSync: true }));
@@ -1083,8 +1087,13 @@ export function AppProvider({ children }) {
             if (isSuper || isInvolved || matchesDept) {
               setTasks((prev) => {
                 const list = Array.isArray(prev) ? prev : [];
-                const exists = list.some((x) => x.id === incoming.id);
-                const next = exists ? list.map((x) => (x.id === incoming.id ? { ...x, ...incoming } : x)) : [incoming, ...list];
+                const existing = list.find((x) => x.id === incoming.id);
+                const mergedIncoming = existing
+                  ? (mergeTasksArrayNonDestructive([existing], [incoming])[0] || enforceTaskApprovalInvariant(incoming))
+                  : enforceTaskApprovalInvariant(incoming);
+                const next = existing
+                  ? list.map((x) => (x.id === incoming.id ? mergedIncoming : x))
+                  : [mergedIncoming, ...list];
                 try {
                   localStorage.setItem("circle_tasks_cache", JSON.stringify(next));
                   localStorage.setItem("circle_cache_tasks", JSON.stringify(next));

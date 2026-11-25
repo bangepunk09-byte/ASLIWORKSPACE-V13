@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { TrendingUp, LineChart as LineIcon, BarChart3, Users, Filter, MessageSquare, ArrowRight, CheckCircle2, AlertTriangle, Target, GitBranch, ChevronDown, Check } from "lucide-react";
 import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
@@ -47,6 +47,13 @@ const INITIAL_DATA = {
 
 const statsMemoryCache = {};
 
+function clearStatsMemoryCacheForUser(userId) {
+  const prefix = `${userId || "anon"}::`;
+  Object.keys(statsMemoryCache).forEach((k) => {
+    if (k.startsWith(prefix)) delete statsMemoryCache[k];
+  });
+}
+
 function isValidStats(d) {
   return Boolean(d && typeof d === "object" && d.summary && typeof d.summary === "object" && Array.isArray(d.series) && Array.isArray(d.people));
 }
@@ -71,43 +78,211 @@ export function hydrateTeamStatsCache(userId, statsData, boardScopeKey = "defaul
   }
 }
 
-function computeInstantClientStats(tasks = [], users = [], me = null, rRange = "7d") {
+function readCachedBoardsList() {
+  try {
+    const raw = localStorage.getItem("circle_boards_cache");
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {}
+  return [];
+}
+
+function isCollabBoardClient(b) {
+  if (!b) return false;
+  const bd = String(b.department || "").trim().toLowerCase();
+  return Boolean(
+    b.is_collaborative ||
+    b.board_type === "collaborative" ||
+    b.board_type === "project" ||
+    b.project_id ||
+    !bd ||
+    bd === "semua divisi" ||
+    bd === "all" ||
+    bd === "kolaborasi"
+  );
+}
+
+function taskMatchesBoardClient(t, b) {
+  if (!t || !b) return false;
+  const bid = b.id || b.board_id;
+  if (t.board_id && bid && t.board_id === bid) return true;
+  const bDept = String(b.department || "").trim().toLowerCase();
+  const tDept = String(t.department || "").trim().toLowerCase();
+  if (!t.board_id && bDept && tDept && tDept === bDept && !isCollabBoardClient(b)) return true;
+  return false;
+}
+
+function computeInstantClientStats(
+  tasks = [],
+  users = [],
+  me = null,
+  rRange = "7d",
+  boardScopeKey = "default",
+  boardsList = [],
+  existingScopes = []
+) {
   const safeTasks = Array.isArray(tasks) ? tasks : [];
   const safeUsers = Array.isArray(users) ? users.filter((u) => u && !u.is_bot && u.role !== "assistant" && u.user_id !== "user_circle_assistant") : [];
   const isSuper = me?.role === "super_admin" || me?.role === "workspace_admin";
   const myDept = String(me?.department || "Marketing").trim();
   const myDeptLower = myDept.toLowerCase();
 
-  let targetDept = myDept;
-  let scopedTasks = safeTasks.filter((t) => String(t?.department || "").trim().toLowerCase() === myDeptLower);
-  if (scopedTasks.length === 0 && isSuper && safeTasks.length > 0) {
-    const firstWithDept = safeTasks.find((t) => t?.department && String(t.department).trim().toLowerCase() !== "semua divisi");
-    if (firstWithDept?.department) {
-      targetDept = String(firstWithDept.department).trim();
-      const tdLower = targetDept.toLowerCase();
-      scopedTasks = safeTasks.filter((t) => String(t?.department || "").trim().toLowerCase() === tdLower);
-    } else {
-      scopedTasks = safeTasks;
+  // Merge board metadata from circle_boards_cache + existing available_scopes
+  const boardById = new Map();
+  (Array.isArray(boardsList) ? boardsList : []).forEach((b) => {
+    if (b?.id) boardById.set(b.id, { ...b, id: b.id, board_id: b.id });
+  });
+  (Array.isArray(existingScopes) ? existingScopes : []).forEach((sc) => {
+    const id = sc?.board_id || sc?.id;
+    if (!id) return;
+    const prev = boardById.get(id) || {};
+    boardById.set(id, {
+      ...prev,
+      id,
+      board_id: id,
+      name: sc.name || prev.name || sc.department || "Board",
+      department: sc.department ?? prev.department ?? "",
+      color: sc.color || prev.color || "#3B82F6",
+      is_collaborative: sc.is_collaborative ?? prev.is_collaborative ?? false,
+    });
+  });
+
+  const allBoards = Array.from(boardById.values());
+  const accessibleBoards = allBoards.filter((b) => {
+    if (isSuper) return true;
+    const bDept = String(b.department || "").trim().toLowerCase();
+    const isCollab = isCollabBoardClient(b);
+    const isDeptMember = Boolean(myDeptLower && bDept && bDept === myDeptLower);
+    const isInvited = Boolean(me?.user_id && Array.isArray(b.invited_member_ids) && b.invited_member_ids.includes(me.user_id));
+    const isCollabMember = Boolean(
+      isCollab &&
+      (b.all_workspace_members !== false ||
+        bDept === "semua divisi" ||
+        (me?.user_id && Array.isArray(b.member_ids) && b.member_ids.includes(me.user_id)))
+    );
+    const isCreator = Boolean(me?.user_id && b.created_by === me.user_id);
+    return isDeptMember || isInvited || isCollabMember || isCreator;
+  });
+
+  const orderedBoards = [...accessibleBoards].sort((a, b) => {
+    const aOwn = myDeptLower && String(a.department || "").trim().toLowerCase() === myDeptLower && !isCollabBoardClient(a) ? 1 : 0;
+    const bOwn = myDeptLower && String(b.department || "").trim().toLowerCase() === myDeptLower && !isCollabBoardClient(b) ? 1 : 0;
+    if (bOwn !== aOwn) return bOwn - aOwn;
+    const aCol = isCollabBoardClient(a) ? 1 : 0;
+    const bCol = isCollabBoardClient(b) ? 1 : 0;
+    return aCol - bCol;
+  });
+
+  const requestedBoardId = boardScopeKey === "default" ? "" : String(boardScopeKey || "").trim();
+  let scopeMode = "board";
+  let targetBoard = null;
+
+  if (requestedBoardId === "all" && isSuper) {
+    scopeMode = "all";
+  } else if (requestedBoardId) {
+    targetBoard = orderedBoards.find((b) => b.id === requestedBoardId) || null;
+    if (!targetBoard && requestedBoardId.startsWith("brd_div_")) {
+      const inferredSlug = requestedBoardId.replace(/^brd_div_/, "").replace(/_/g, " ").toLowerCase();
+      targetBoard = orderedBoards.find((b) => String(b.department || b.name || "").trim().toLowerCase() === inferredSlug) || {
+        id: requestedBoardId,
+        name: inferredSlug.replace(/\b\w/g, (c) => c.toUpperCase()),
+        department: inferredSlug,
+        color: "#3B82F6",
+        is_collaborative: false
+      };
     }
   }
 
-  const targetDeptLower = targetDept.toLowerCase();
-  const assignedIds = new Set();
-  scopedTasks.forEach((t) => {
-    if (t?.assignee_id) assignedIds.add(t.assignee_id);
-    if (Array.isArray(t?.assignee_ids)) t.assignee_ids.forEach((id) => id && assignedIds.add(id));
-  });
+  if (scopeMode === "board" && !targetBoard) {
+    const ownBoard = orderedBoards.find(
+      (b) => myDeptLower && String(b.department || "").trim().toLowerCase() === myDeptLower && !isCollabBoardClient(b)
+    );
+    if (ownBoard) {
+      const ownHasTasks = safeTasks.some((t) => !t?.archived && taskMatchesBoardClient(t, ownBoard));
+      if (isSuper && !ownHasTasks) {
+        targetBoard =
+          orderedBoards.find((b) => !isCollabBoardClient(b) && safeTasks.some((t) => !t?.archived && taskMatchesBoardClient(t, b))) ||
+          ownBoard;
+      } else {
+        targetBoard = ownBoard;
+      }
+    } else if (orderedBoards.length > 0) {
+      targetBoard =
+        orderedBoards.find((b) => safeTasks.some((t) => !t?.archived && taskMatchesBoardClient(t, b))) ||
+        orderedBoards[0];
+    }
+  }
 
-  const scopedUsers = safeUsers.filter((u) => {
-    const ud = String(u.department || "").trim().toLowerCase();
-    return ud === targetDeptLower || assignedIds.has(u.user_id);
-  });
-  const finalUsers = scopedUsers.length > 0 ? scopedUsers : safeUsers;
+  let scopedTasks = [];
+  let scopedUsers = [];
+  let targetDept = myDept;
+
+  if (scopeMode === "board" && targetBoard) {
+    targetDept = targetBoard.name || targetBoard.department || myDept;
+    scopedTasks = safeTasks.filter((t) => taskMatchesBoardClient(t, targetBoard));
+    const bDept = String(targetBoard.department || "").trim().toLowerCase();
+    const isCollab = isCollabBoardClient(targetBoard);
+    const invitedSet = new Set(Array.isArray(targetBoard.invited_member_ids) ? targetBoard.invited_member_ids : []);
+    const explicitMemberSet = new Set(Array.isArray(targetBoard.member_ids) ? targetBoard.member_ids : []);
+    const assignedOnBoardSet = new Set();
+    scopedTasks.forEach((t) => {
+      if (t?.assignee_id) assignedOnBoardSet.add(t.assignee_id);
+      if (Array.isArray(t?.assignee_ids)) t.assignee_ids.forEach((id) => id && assignedOnBoardSet.add(id));
+    });
+
+    if (isCollab) {
+      scopedUsers = safeUsers.filter((u) => {
+        if (targetBoard.all_workspace_members !== false) {
+          return assignedOnBoardSet.size > 0
+            ? assignedOnBoardSet.has(u.user_id) || invitedSet.has(u.user_id) || explicitMemberSet.has(u.user_id)
+            : true;
+        }
+        return explicitMemberSet.has(u.user_id) || invitedSet.has(u.user_id) || assignedOnBoardSet.has(u.user_id);
+      });
+    } else {
+      scopedUsers = safeUsers.filter((u) => {
+        const uDept = String(u.department || "").trim().toLowerCase();
+        return (
+          (bDept && uDept === bDept) ||
+          invitedSet.has(u.user_id) ||
+          assignedOnBoardSet.has(u.user_id)
+        );
+      });
+    }
+  } else if (scopeMode === "all" && isSuper) {
+    scopedTasks = safeTasks;
+    scopedUsers = safeUsers;
+  } else {
+    scopedTasks = safeTasks.filter((t) => String(t?.department || "").trim().toLowerCase() === myDeptLower);
+    if (scopedTasks.length === 0 && isSuper && safeTasks.length > 0 && !requestedBoardId) {
+      const firstWithDept = safeTasks.find((t) => t?.department && String(t.department).trim().toLowerCase() !== "semua divisi");
+      if (firstWithDept?.department) {
+        targetDept = String(firstWithDept.department).trim();
+        const tdLower = targetDept.toLowerCase();
+        scopedTasks = safeTasks.filter((t) => String(t?.department || "").trim().toLowerCase() === tdLower);
+      } else {
+        scopedTasks = safeTasks;
+      }
+    }
+    const targetDeptLower = targetDept.toLowerCase();
+    const assignedIds = new Set();
+    scopedTasks.forEach((t) => {
+      if (t?.assignee_id) assignedIds.add(t.assignee_id);
+      if (Array.isArray(t?.assignee_ids)) t.assignee_ids.forEach((id) => id && assignedIds.add(id));
+    });
+    scopedUsers = safeUsers.filter((u) => {
+      const ud = String(u.department || "").trim().toLowerCase();
+      return ud === targetDeptLower || assignedIds.has(u.user_id);
+    });
+  }
 
   const nowMs = Date.now();
   const WIB_OFFSET_MS = 7 * 3600000;
   const wibNow = new Date(nowMs + WIB_OFFSET_MS);
   const wibTodayStr = wibNow.toISOString().slice(0, 10);
+  const todayWibIdx = Math.floor((nowMs + WIB_OFFSET_MS) / 86400000);
 
   let week = [];
   if (rRange === "4w") {
@@ -117,6 +292,15 @@ function computeInstantClientStats(tasks = [], users = [], me = null, rRange = "
     const mondayMs = wibNow.getTime() - dayOfWeek * 86400000;
     week = Array.from({ length: 7 }, (_, i) => new Date(mondayMs + i * 86400000).toISOString().slice(0, 10));
   }
+
+  const toWibDateStr = (val) => {
+    if (!val) return "";
+    const s = String(val).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    const d = new Date(s);
+    if (isNaN(d.getTime())) return s.slice(0, 10);
+    return new Date(d.getTime() + WIB_OFFSET_MS).toISOString().slice(0, 10);
+  };
 
   const parseDlMs = (val) => {
     if (!val) return null;
@@ -130,6 +314,18 @@ function computeInstantClientStats(tasks = [], users = [], me = null, rRange = "
     return isNaN(d.getTime()) ? null : d.getTime();
   };
 
+  const parseCompMs = (t, fallbackMs) => {
+    const raw = t?.completed_at || t?.submit_date || t?.archived_at || t?.updated_at || t?.created_at;
+    if (!raw) return fallbackMs;
+    const s = String(raw).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+      const d = new Date(`${s}T12:00:00.000+07:00`);
+      return isNaN(d.getTime()) ? fallbackMs : d.getTime();
+    }
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? fallbackMs : d.getTime();
+  };
+
   let doneOnTime = 0;
   let doneLate = 0;
   let activeOverdue = 0;
@@ -140,9 +336,8 @@ function computeInstantClientStats(tasks = [], users = [], me = null, rRange = "
     const isDone = t.status === "done" || Boolean(t.archived);
     const dlMs = parseDlMs(t.deadline);
     if (isDone) {
-      const compRaw = t.completed_at || t.submit_date || t.updated_at || t.created_at;
-      const compMs = compRaw ? new Date(compRaw).getTime() : nowMs;
-      if (dlMs !== null && !isNaN(compMs) && compMs > dlMs) doneLate += 1;
+      const compMs = parseCompMs(t, nowMs);
+      if (dlMs !== null && compMs > dlMs) doneLate += 1;
       else doneOnTime += 1;
     } else {
       if (dlMs !== null && nowMs > dlMs) activeOverdue += 1;
@@ -155,50 +350,143 @@ function computeInstantClientStats(tasks = [], users = [], me = null, rRange = "
   const dueCount = doneCount + activeOverdue;
   const onTimeRate = dueCount > 0 ? Math.round((doneOnTime / dueCount) * 100) : 0;
 
-  const series = week.map((d, idx) => ({
-    start: d,
-    name: rRange === "4w" ? d.slice(5) : (WD_FULL[idx] || d.slice(5)),
-    done: 0,
-    Selesai: 0,
-    overdue: 0,
-    Overdue: 0,
-  }));
+  const series = week.map((d, idx) => {
+    const matchedDone = scopedTasks.filter((t) => {
+      const isDone = t.status === "done" || Boolean(t.archived);
+      if (!isDone) return false;
+      const compDate = toWibDateStr(t.completed_at || t.submit_date || t.archived_at || t.updated_at);
+      return compDate === d;
+    }).length;
+
+    const matchedOverdue = scopedTasks.filter((t) => {
+      const dlMs = parseDlMs(t.deadline);
+      if (dlMs === null) return false;
+      const deadDate = toWibDateStr(t.deadline);
+      if (deadDate !== d) return false;
+      const isDone = t.status === "done" || Boolean(t.archived);
+      if (!isDone) return nowMs > dlMs;
+      const compMs = parseCompMs(t, nowMs);
+      return compMs > dlMs;
+    }).length;
+
+    return {
+      start: d,
+      name: rRange === "4w" ? d.slice(5) : (WD_FULL[idx] || d.slice(5)),
+      done: matchedDone,
+      Selesai: matchedDone,
+      overdue: matchedOverdue,
+      Overdue: matchedOverdue,
+    };
+  });
 
   const activeScopedTasks = scopedTasks.filter((t) => t && !t.archived && t.status !== "done");
   const totalActiveLoad = activeScopedTasks.length || 1;
 
-  const people = finalUsers.map((u) => {
+  const people = scopedUsers.map((u) => {
     const myActive = activeScopedTasks.filter(
       (t) => t.assignee_id === u.user_id || (Array.isArray(t.assignee_ids) && t.assignee_ids.includes(u.user_id))
     );
-    const myOverdue = myActive.filter((t) => {
-      const dl = parseDlMs(t.deadline);
-      return dl !== null && nowMs > dl;
+    let overdueCount = 0;
+    let under6hCount = 0;
+    let todayRestCount = 0;
+    let dueByTomorrowCount = 0;
+    let minHoursLeft = null;
+
+    myActive.forEach((t) => {
+      if (!t.deadline) return;
+      const dl = new Date(t.deadline);
+      if (isNaN(dl.getTime())) return;
+      const hoursLeft = (dl.getTime() - nowMs) / 3600000;
+      if (minHoursLeft === null || hoursLeft < minHoursLeft) minHoursLeft = hoursLeft;
+      const dayDiff = Math.floor((dl.getTime() + WIB_OFFSET_MS) / 86400000) - todayWibIdx;
+      if (hoursLeft <= 0) {
+        overdueCount += 1;
+        dueByTomorrowCount += 1;
+      } else if (hoursLeft < 6) {
+        under6hCount += 1;
+        dueByTomorrowCount += 1;
+      } else {
+        if (dayDiff <= 0) todayRestCount += 1;
+        if (dayDiff <= 1) dueByTomorrowCount += 1;
+      }
     });
-    const status = myOverdue.length > 0 || myActive.length >= 6 ? "pressure" : myActive.length >= 3 ? "stabil" : "optimal";
+
+    const uActiveCount = myActive.length;
+    let status = "optimal";
+    let status_reason = "Tidak ada tugas aktif";
+    if (uActiveCount === 0) {
+      status = "optimal";
+      status_reason = "Kapasitas tersedia penuh (0 tugas aktif)";
+    } else if (overdueCount > 0) {
+      status = "pressure";
+      status_reason = `${overdueCount} tugas melewati tenggat waktu`;
+    } else if (under6hCount > 0) {
+      status = "pressure";
+      const nearestH = minHoursLeft !== null ? Math.max(1, Math.ceil(minHoursLeft)) : 6;
+      status_reason = `${under6hCount} tugas deadline < 6 jam (~${nearestH} jam lagi)`;
+    } else if (dueByTomorrowCount >= 5) {
+      status = "pressure";
+      status_reason = `${dueByTomorrowCount} tugas harus disubmit ≤ besok`;
+    } else if (uActiveCount >= 8) {
+      status = "pressure";
+      status_reason = `Beban sangat tinggi (${uActiveCount} tugas aktif)`;
+    } else if (dueByTomorrowCount >= 3) {
+      status = "stabil";
+      status_reason = `${dueByTomorrowCount} tugas deadline ≤ besok (perlu fokus)`;
+    } else if (todayRestCount > 0 || (minHoursLeft !== null && minHoursLeft < 18)) {
+      status = "stabil";
+      status_reason = `Ada deadline hari ini / < 18 jam (≥ 6 jam)`;
+    } else if (uActiveCount >= 5) {
+      status = "stabil";
+      status_reason = `${uActiveCount} tugas aktif dengan deadline ≥ 2 hari`;
+    } else if (dueByTomorrowCount > 0) {
+      status = "optimal";
+      status_reason = `${dueByTomorrowCount} tugas deadline 1 hari lagi (beban ringan)`;
+    } else if (minHoursLeft !== null) {
+      const daysLeft = Math.max(2, Math.floor(minHoursLeft / 24));
+      status = "optimal";
+      status_reason = `Deadline masih ${daysLeft}+ hari ke depan (${uActiveCount} tugas)`;
+    } else {
+      status = "optimal";
+      status_reason = `${uActiveCount} tugas aktif tanpa tenggat mendesak`;
+    }
+
+    const dayDeadlines = myActive.filter((t) => t.deadline && String(t.deadline).slice(0, 10) === wibTodayStr).length;
+
     return {
       user_id: u.user_id,
       status,
-      status_reason: myOverdue.length > 0 ? `${myOverdue.length} tugas lewat deadline` : "",
-      active: myActive.length,
-      share: activeScopedTasks.length > 0 ? Math.round((myActive.length / totalActiveLoad) * 100) : 0,
-      day_deadlines: 0,
+      status_reason,
+      active: uActiveCount,
+      share: activeScopedTasks.length > 0 ? Math.round((uActiveCount / totalActiveLoad) * 100) : 0,
+      day_deadlines: dayDeadlines,
       tasks: myActive.slice(0, 3).map((t) => ({ id: t.id, title: t.title })),
-      more: Math.max(0, myActive.length - 3),
+      more: Math.max(0, uActiveCount - 3),
     };
   });
 
+  const computedAvailableScopes = orderedBoards.length > 0
+    ? orderedBoards.map((b) => ({
+        board_id: b.id,
+        name: b.name || b.department || "Board",
+        department: b.department || "",
+        color: b.color || "#3B82F6",
+        is_collaborative: isCollabBoardClient(b),
+        task_count: safeTasks.filter((t) => !t?.archived && taskMatchesBoardClient(t, b)).length,
+      }))
+    : (Array.isArray(existingScopes) ? existingScopes : []);
+
   return {
     scope: {
-      mode: "board",
-      board_id: `brd_div_${targetDeptLower}`,
-      board_name: targetDept,
-      department: targetDept,
-      color: "#FF5364",
+      mode: scopeMode,
+      board_id: scopeMode === "all" ? "all" : (targetBoard?.id || requestedBoardId || `brd_div_${targetDept.toLowerCase()}`),
+      board_name: scopeMode === "all" ? "Semua Divisi" : (targetBoard?.name || targetBoard?.department || targetDept),
+      department: scopeMode === "all" ? null : (targetBoard?.department || targetDept || null),
+      color: scopeMode === "all" ? null : (targetBoard?.color || "#FF5364"),
       is_admin: isSuper,
       total_tasks: scopedTasks.length,
     },
-    available_scopes: [],
+    available_scopes: computedAvailableScopes,
     today: wibTodayStr,
     anchor: wibTodayStr,
     range: rRange,
@@ -216,27 +504,87 @@ function computeInstantClientStats(tasks = [], users = [], me = null, rRange = "
     },
     week,
     series,
-    people: people.length > 0 ? people : FALLBACK_PEOPLE,
+    people: scopedUsers.length > 0 || safeTasks.length > 0 || safeUsers.length > 0 ? people : FALLBACK_PEOPLE,
   };
 }
 
-function getCachedStats(userId, boardScopeKey, rRange, fallbackTasks = [], fallbackUsers = [], me = null) {
+function getCachedStats(
+  userId,
+  boardScopeKey,
+  rRange,
+  fallbackTasks = [],
+  fallbackUsers = [],
+  me = null,
+  fallbackBoards = [],
+  fallbackScopes = []
+) {
+  const preserveScopes = (stats) => {
+    if (!stats) return stats;
+    if ((!Array.isArray(stats.available_scopes) || stats.available_scopes.length === 0) && Array.isArray(fallbackScopes) && fallbackScopes.length > 0) {
+      return { ...stats, available_scopes: fallbackScopes };
+    }
+    return stats;
+  };
+
   const key = makeStatsCacheKey(userId, boardScopeKey, rRange);
-  if (isValidStats(statsMemoryCache[key])) return statsMemoryCache[key];
+  if (isValidStats(statsMemoryCache[key])) return preserveScopes(statsMemoryCache[key]);
+
+  if (Array.isArray(fallbackTasks) && fallbackTasks.length > 0) {
+    return computeInstantClientStats(fallbackTasks, fallbackUsers, me, rRange, boardScopeKey, fallbackBoards, fallbackScopes);
+  }
+
   try {
     const cached = localStorage.getItem(`circle_stats_team_v2_cache_${key}`);
     if (cached) {
       const parsed = JSON.parse(cached);
       if (isValidStats(parsed)) {
         statsMemoryCache[key] = parsed;
-        return parsed;
+        return preserveScopes(parsed);
       }
     }
   } catch {}
-  if (Array.isArray(fallbackTasks) && fallbackTasks.length > 0) {
-    return computeInstantClientStats(fallbackTasks, fallbackUsers, me, rRange);
+
+  if (Array.isArray(fallbackScopes) && fallbackScopes.length > 0) {
+    return computeInstantClientStats(fallbackTasks, fallbackUsers, me, rRange, boardScopeKey, fallbackBoards, fallbackScopes);
   }
+
   return INITIAL_DATA;
+}
+
+function statsSignature(d) {
+  if (!d) return "";
+  try {
+    return JSON.stringify({
+      s: d.summary,
+      sc: d.scope,
+      r: d.range,
+      sr: d.series,
+      p: (d.people || []).map((x) => [x.user_id, x.status, x.active, x.share, x.day_deadlines, x.more, (x.tasks || []).map((t) => t.id)]),
+      av: (d.available_scopes || []).map((a) => [a.board_id, a.name, a.task_count, a.color]),
+    });
+  } catch {
+    return "";
+  }
+}
+
+function useScopeSmoothReveal(scopeKey) {
+  const ref = useRef(null);
+  const prevKeyRef = useRef(scopeKey);
+  useLayoutEffect(() => {
+    if (prevKeyRef.current === scopeKey) return;
+    prevKeyRef.current = scopeKey;
+    const el = ref.current;
+    if (!el || typeof el.animate !== "function") return;
+    if (typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) return;
+    el.animate(
+      [
+        { opacity: 0.72, transform: "translateY(4px)" },
+        { opacity: 1, transform: "translateY(0)" }
+      ],
+      { duration: 200, easing: "cubic-bezier(0.22, 1, 0.36, 1)", fill: "none" }
+    );
+  }, [scopeKey]);
+  return ref;
 }
 
 function StatCard({ label, value, note, tone, icon: Icon, testid, className = "" }) {
@@ -300,24 +648,30 @@ function BoardScopeDropdown({ scopeLabel, boardColor, activeMode, availableScope
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className="group inline-flex h-9 items-center gap-2 rounded-xl border border-border bg-surface2/75 px-3 text-xs sm:text-sm font-semibold text-ink hover:bg-surface2 focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand transition-colors whitespace-nowrap cursor-pointer shadow-xs"
+          className="group inline-flex h-9 items-center gap-2 rounded-xl border border-border bg-surface2/75 px-3 text-xs sm:text-sm font-semibold text-ink hover:bg-surface2 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/20 focus-visible:border-brand transition-[background-color,border-color,color] duration-150 whitespace-nowrap cursor-pointer shadow-xs"
           data-testid={testId}
         >
           <span
-            className="h-2 w-2 rounded-full shrink-0"
+            className="h-2 w-2 rounded-full shrink-0 transition-colors duration-150"
             style={{ background: activeMode === "all" ? "var(--c-sub, #64748B)" : (boardColor || "var(--c-brand, #3B82F6)") }}
           />
           <span>{scopeLabel}</span>
           <ChevronDown size={14} className="text-sub opacity-75 shrink-0 transition-transform duration-150 ease-out group-data-[state=open]:rotate-180" />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-56">
+      <DropdownMenuContent
+        align="start"
+        className="w-56"
+        onCloseAutoFocus={(e) => e.preventDefault()}
+      >
         {availableScopes.map((sc) => {
           const isActive = activeMode === "board" && activeBoardId === sc.board_id;
           return (
             <DropdownMenuItem
               key={sc.board_id}
-              onClick={() => onSelectBoard(sc.board_id)}
+              onSelect={() => {
+                if (!isActive) onSelectBoard(sc.board_id);
+              }}
               className={isActive ? "bg-brand/10 text-brand font-semibold hover:bg-brand/15 data-[highlighted]:bg-brand/15 data-[highlighted]:text-brand" : ""}
               data-testid={`${testId}-option-${sc.board_id}`}
             >
@@ -335,7 +689,9 @@ function BoardScopeDropdown({ scopeLabel, boardColor, activeMode, availableScope
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem
-              onClick={() => onSelectBoard("all")}
+              onSelect={() => {
+                if (activeMode !== "all") onSelectBoard("all");
+              }}
               className={activeMode === "all" ? "bg-brand/10 text-brand font-semibold hover:bg-brand/15 data-[highlighted]:bg-brand/15 data-[highlighted]:text-brand" : ""}
               data-testid={`${testId}-option-all`}
             >
@@ -356,6 +712,8 @@ function TeamPerformance({ data, anchor, setAnchor, range, setRange, scopeLabel,
   const s = data?.summary || INITIAL_DATA.summary;
   const boardColor = data?.scope?.color;
   const activeMode = data?.scope?.mode || "board";
+  const revealKey = `${activeMode === "all" ? "all" : (activeBoardId || "default")}::${range}`;
+  const contentRef = useScopeSmoothReveal(revealKey);
 
   const showDropdown = Boolean(canSwitchBoards && scopeLabel);
   const baseTitle = tr("dash_perf_title", "Performa & Beban Kerja Tim");
@@ -392,65 +750,67 @@ function TeamPerformance({ data, anchor, setAnchor, range, setRange, scopeLabel,
           </div>
         </div>
       </div>
-      <div className="mt-4 sm:mt-6 grid grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-4 min-w-0">
-        <StatCard
-          tone="green"
-          label={tr("dash_perf_done", "Tugas Selesai")}
-          value={s.done ?? 0}
-          note={
-            s.done
-              ? `${s.done} ${tr("stats_done_unit", "tugas selesai")}${
-                  s.done_late > 0
-                    ? ` (${s.done_on_time ?? 0} tepat waktu, ${s.done_late} telat)`
-                    : s.total
-                    ? ` dari ${s.total} tugas`
-                    : ""
-                }`
-              : s.active > 0
-              ? `${tr("stats_no_done", "Belum ada selesai")} · ${s.active} tugas aktif`
-              : tr("stats_no_done", "Belum ada selesai")
-          }
-          icon={CheckCircle2}
-          testid="team-stat-done"
-        />
-        <StatCard
-          tone="red"
-          label={tr("dash_perf_overdue", "Overdue")}
-          value={s.overdue ?? 0}
-          note={
-            s.overdue
-              ? `${s.overdue} ${tr("stats_late_unit", "lewat deadline")}${
-                  s.done_late > 0 ? ` (+${s.done_late} selesai telat)` : ""
-                }`
-              : s.done_late > 0
-              ? `${s.done_late} selesai lewat deadline`
-              : tr("stats_no_late", "Tidak ada telat")
-          }
-          icon={AlertTriangle}
-          testid="team-stat-overdue"
-        />
-        <StatCard
-          tone="gray"
-          label={tr("dash_perf_ontime", "Ketepatan Waktu")}
-          value={`${s.on_time_rate ?? 0}%`}
-          note={
-            s.due > 0
-              ? `${s.on_time ?? 0} ${tr("stats_ontime_of", "dari")} ${s.due} ${tr("stats_ontime_suffix", "tugas tepat waktu")}${
-                  s.active_on_track > 0 ? ` · ${s.active_on_track} berjalan` : ""
-                }`
-              : s.active_on_track > 0
-              ? `Belum ada selesai · ${s.active_on_track} sedang berjalan`
-              : tr("stats_no_task_data", "Belum ada data tugas")
-          }
-          icon={Target}
-          testid="team-stat-ontime"
-          className="col-span-2 sm:col-span-1"
-        />
+      <div ref={contentRef}>
+        <div className="mt-4 sm:mt-6 grid grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-4 min-w-0">
+          <StatCard
+            tone="green"
+            label={tr("dash_perf_done", "Tugas Selesai")}
+            value={s.done ?? 0}
+            note={
+              s.done
+                ? `${s.done} ${tr("stats_done_unit", "tugas selesai")}${
+                    s.done_late > 0
+                      ? ` (${s.done_on_time ?? 0} tepat waktu, ${s.done_late} telat)`
+                      : s.total
+                      ? ` dari ${s.total} tugas`
+                      : ""
+                  }`
+                : s.active > 0
+                ? `${tr("stats_no_done", "Belum ada selesai")} · ${s.active} tugas aktif`
+                : tr("stats_no_done", "Belum ada selesai")
+            }
+            icon={CheckCircle2}
+            testid="team-stat-done"
+          />
+          <StatCard
+            tone="red"
+            label={tr("dash_perf_overdue", "Overdue")}
+            value={s.overdue ?? 0}
+            note={
+              s.overdue
+                ? `${s.overdue} ${tr("stats_late_unit", "lewat deadline")}${
+                    s.done_late > 0 ? ` (+${s.done_late} selesai telat)` : ""
+                  }`
+                : s.done_late > 0
+                ? `${s.done_late} selesai lewat deadline`
+                : tr("stats_no_late", "Tidak ada telat")
+            }
+            icon={AlertTriangle}
+            testid="team-stat-overdue"
+          />
+          <StatCard
+            tone="gray"
+            label={tr("dash_perf_ontime", "Ketepatan Waktu")}
+            value={`${s.on_time_rate ?? 0}%`}
+            note={
+              s.due > 0
+                ? `${s.on_time ?? 0} ${tr("stats_ontime_of", "dari")} ${s.due} ${tr("stats_ontime_suffix", "tugas tepat waktu")}${
+                    s.active_on_track > 0 ? ` · ${s.active_on_track} berjalan` : ""
+                  }`
+                : s.active_on_track > 0
+                ? `Belum ada selesai · ${s.active_on_track} sedang berjalan`
+                : tr("stats_no_task_data", "Belum ada data tugas")
+            }
+            icon={Target}
+            testid="team-stat-ontime"
+            className="col-span-2 sm:col-span-1"
+          />
+        </div>
+        <div className="mt-4 sm:mt-5 w-full min-w-0">
+          <TeamChart data={data} type={type} />
+        </div>
+        <div className="mt-3 sm:mt-4 flex flex-wrap items-center justify-between gap-2 border-t pt-3 sm:pt-4"><div className="flex flex-wrap gap-4 sm:gap-5"><Dot c={GREEN} label={tr("dash_perf_done", "Tugas Selesai")} /><Dot c={RED} label={tr("dash_perf_overdue", "Overdue")} /></div><span className="text-xs sm:text-sm text-sub">{scopeLabel ? `${tr("stats_updated_from_board", "Diperbarui otomatis dari board")} ${scopeLabel}` : tr("dash_perf_updated_note", "Diperbarui otomatis dari papan tugas")}</span></div>
       </div>
-      <div className="mt-4 sm:mt-5 w-full min-w-0">
-        <TeamChart data={data} type={type} />
-      </div>
-      <div className="mt-3 sm:mt-4 flex flex-wrap items-center justify-between gap-2 border-t pt-3 sm:pt-4"><div className="flex flex-wrap gap-4 sm:gap-5"><Dot c={GREEN} label={tr("dash_perf_done", "Tugas Selesai")} /><Dot c={RED} label={tr("dash_perf_overdue", "Overdue")} /></div><span className="text-xs sm:text-sm text-sub">{scopeLabel ? `${tr("stats_updated_from_board", "Diperbarui otomatis dari board")} ${scopeLabel}` : tr("dash_perf_updated_note", "Diperbarui otomatis dari papan tugas")}</span></div>
     </section>
   );
 }
@@ -514,11 +874,14 @@ function Personnel({ data, scopeLabel, availableScopes = [], activeBoardId, canS
   const scopeMode = data?.scope?.mode || "board";
   const scopeBoardId = data?.scope?.board_id || "";
   const boardColor = data?.scope?.color;
-
-  useEffect(() => {
-    setDiv("");
-    setAll(false);
-  }, [scopeBoardId]);
+  const effectiveScopeKey = scopeMode === "all" ? "all" : (scopeBoardId || activeBoardId || "default");
+  const [prevScopeKey, setPrevScopeKey] = useState(effectiveScopeKey);
+  if (prevScopeKey !== effectiveScopeKey) {
+    setPrevScopeKey(effectiveScopeKey);
+    if (div !== "") setDiv("");
+    if (all !== false) setAll(false);
+  }
+  const contentRef = useScopeSmoothReveal(effectiveScopeKey);
 
   const rawPeople = Array.isArray(data?.people) ? data.people : INITIAL_DATA.people;
   const depts = [...new Set(rawPeople.map((p) => userMap?.[p.user_id]?.department).filter(Boolean))].sort();
@@ -558,25 +921,27 @@ function Personnel({ data, scopeLabel, availableScopes = [], activeBoardId, canS
         </div>
         <div className="flex flex-wrap gap-1.5 sm:gap-2">{Object.entries(STATUS).map(([k, [e, l, c]]) => <span key={k} className={`flex items-center gap-1 rounded-full border px-2.5 sm:px-3.5 py-1 sm:py-1.5 text-xs sm:text-sm font-bold ${c}`} data-testid={`personnel-count-${k}`}>{e} {count(k)} {tr(`personnel_status_${k}`, l)}</span>)}</div>
       </div>
-      {scopeMode === "all" && depts.length > 1 && <div className="mt-3.5 sm:mt-4 flex w-full max-w-full min-w-0 flex-nowrap sm:flex-wrap items-center gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar pb-1 sm:pb-0" data-testid="personnel-division-filter">
-        <span className="flex shrink-0 items-center gap-1 text-xs sm:text-sm text-sub"><Filter size={13} />{tr("personnel_div_filter_label", "Divisi:")}</span>
-        {[["", tr("stats_all_divisions", "Semua Divisi")], ...depts.map((d) => [d, d])].map(([k, l]) => <button key={k || "all"} onClick={() => setDiv(k)} className={`h-9 sm:h-10 shrink-0 whitespace-nowrap rounded-2xl px-3.5 sm:px-4 text-xs sm:text-sm font-semibold transition-colors cursor-pointer ${div === k ? "bg-brand text-white shadow-xs" : "bg-surface2 text-ink hover:bg-surface2/70"}`} data-testid={`personnel-div-${k ? k.replace(/\s/g, "-") : "all"}`}>{l}</button>)}
-      </div>}
-      <div className="mt-4 sm:mt-5 grid grid-cols-1 gap-3.5 sm:gap-4 md:grid-cols-2 xl:grid-cols-3 min-w-0">
-        {(all ? people : people.slice(0, 6)).map((p, idx) => (
-          <PersonCard key={p.user_id} p={p} boardId={scopeBoardId} className={!all && idx >= 3 ? "hidden md:flex" : ""} />
-        ))}
+      <div ref={contentRef}>
+        {scopeMode === "all" && depts.length > 1 && <div className="mt-3.5 sm:mt-4 flex w-full max-w-full min-w-0 flex-nowrap sm:flex-wrap items-center gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar pb-1 sm:pb-0" data-testid="personnel-division-filter">
+          <span className="flex shrink-0 items-center gap-1 text-xs sm:text-sm text-sub"><Filter size={13} />{tr("personnel_div_filter_label", "Divisi:")}</span>
+          {[["", tr("stats_all_divisions", "Semua Divisi")], ...depts.map((d) => [d, d])].map(([k, l]) => <button key={k || "all"} onClick={() => setDiv(k)} className={`h-9 sm:h-10 shrink-0 whitespace-nowrap rounded-2xl px-3.5 sm:px-4 text-xs sm:text-sm font-semibold transition-colors cursor-pointer ${div === k ? "bg-brand text-white shadow-xs" : "bg-surface2 text-ink hover:bg-surface2/70"}`} data-testid={`personnel-div-${k ? k.replace(/\s/g, "-") : "all"}`}>{l}</button>)}
+        </div>}
+        <div className="mt-4 sm:mt-5 grid grid-cols-1 gap-3.5 sm:gap-4 md:grid-cols-2 xl:grid-cols-3 min-w-0">
+          {(all ? people : people.slice(0, 6)).map((p, idx) => (
+            <PersonCard key={p.user_id} p={p} boardId={scopeBoardId} className={!all && idx >= 3 ? "hidden md:flex" : ""} />
+          ))}
+        </div>
+        {people.length > 3 && (
+          <button
+            onClick={() => setAll(!all)}
+            className={`mt-4 sm:mt-5 w-full rounded-2xl border py-2.5 sm:py-3 text-xs sm:text-sm font-semibold text-sub hover:text-ink transition-colors ${people.length > 6 ? "" : "md:hidden"}`}
+            data-testid="personnel-toggle-all"
+          >
+            {all ? tr("personnel_show_less", "Tampilkan lebih sedikit") : `${tr("personnel_show_all_prefix", "Lihat semua personel")} (${people.length})`}
+          </button>
+        )}
+        {!people.length && <p className="mt-6 text-sm text-sub">{tr("personnel_empty_board", "Belum ada personel terdaftar di board divisi ini.")}</p>}
       </div>
-      {people.length > 3 && (
-        <button
-          onClick={() => setAll(!all)}
-          className={`mt-4 sm:mt-5 w-full rounded-2xl border py-2.5 sm:py-3 text-xs sm:text-sm font-semibold text-sub hover:text-ink transition-colors ${people.length > 6 ? "" : "md:hidden"}`}
-          data-testid="personnel-toggle-all"
-        >
-          {all ? tr("personnel_show_less", "Tampilkan lebih sedikit") : `${tr("personnel_show_all_prefix", "Lihat semua personel")} (${people.length})`}
-        </button>
-      )}
-      {!people.length && <p className="mt-6 text-sm text-sub">{tr("personnel_empty_board", "Belum ada personel terdaftar di board divisi ini.")}</p>}
     </section>
   );
 }
@@ -585,6 +950,14 @@ function BottleneckSummary({ tasks = [], projectsMap = {}, scope, scopeLabel, av
   const { userMap, labelMap, tasks: ctxTasks, me, t: tr } = useApp();
   const navigate = useNavigate();
   const [showAll, setShowAll] = useState(false);
+
+  const effectiveScopeKey = scope?.mode === "all" ? "all" : (scope?.board_id || activeBoardId || "default");
+  const [prevScopeKey, setPrevScopeKey] = useState(effectiveScopeKey);
+  if (prevScopeKey !== effectiveScopeKey) {
+    setPrevScopeKey(effectiveScopeKey);
+    if (showAll !== false) setShowAll(false);
+  }
+  const contentRef = useScopeSmoothReveal(effectiveScopeKey);
 
   const sourceTasks = Array.isArray(tasks) && tasks.length > 0 ? tasks : Array.isArray(ctxTasks) ? ctxTasks : [];
   const todayDay = toDayDate(new Date());
@@ -677,6 +1050,7 @@ function BottleneckSummary({ tasks = [], projectsMap = {}, scope, scopeLabel, av
         </Link>
       </div>
 
+      <div ref={contentRef}>
       {rows.length === 0 ? (
         <div className="mt-4 flex items-center gap-3 rounded-2xl border border-emerald-200/80 bg-emerald-50/60 px-4 py-3.5 text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/20 dark:text-emerald-200">
           <CheckCircle2 size={18} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
@@ -835,6 +1209,7 @@ function BottleneckSummary({ tasks = [], projectsMap = {}, scope, scopeLabel, av
           )}
         </>
       )}
+      </div>
     </section>
   );
 }
@@ -844,7 +1219,8 @@ export default function MonthlyStats({ showPerformance = true, showBottleneck = 
   const [anchor, setAnchor] = useState(null);
   const [range, setRange] = useState("7d");
   const [selectedBoardId, setSelectedBoardId] = useState("");
-  const [data, setData] = useState(() => getCachedStats(me?.user_id, "default", "7d", tasks, users, me));
+  const [boards, setBoards] = useState(() => readCachedBoardsList());
+  const [data, setData] = useState(() => getCachedStats(me?.user_id, "default", "7d", tasks, users, me, boards, []));
   const [projectsMap, setProjectsMap] = useState(() => {
     try {
       const saved = localStorage.getItem("circle_cache_projects");
@@ -856,36 +1232,98 @@ export default function MonthlyStats({ showPerformance = true, showBottleneck = 
     return {};
   });
 
+  const tasksRef = useRef(tasks);
+  const usersRef = useRef(users);
+  const meRef = useRef(me);
+  const boardsRef = useRef(boards);
+  const availableScopesRef = useRef(Array.isArray(data?.available_scopes) ? data.available_scopes : []);
+  const requestSeqRef = useRef(0);
+  const abortRef = useRef(null);
+
+  tasksRef.current = tasks;
+  usersRef.current = users;
+  meRef.current = me;
+  boardsRef.current = boards;
+  if (Array.isArray(data?.available_scopes) && data.available_scopes.length > 0) {
+    availableScopesRef.current = data.available_scopes;
+  }
+
   useEffect(() => {
-    setSelectedBoardId("");
-    setData(getCachedStats(me?.user_id, "default", range, tasks, users, me));
+    if (boards.length > 0) return;
+    api.get("/boards")
+      .then((res) => {
+        if (Array.isArray(res.data) && res.data.length > 0) {
+          setBoards(res.data);
+          try { localStorage.setItem("circle_boards_cache", JSON.stringify(res.data)); } catch {}
+        }
+      })
+      .catch(() => {});
   }, [me?.user_id]);
+
+  const prevUserIdRef = useRef(me?.user_id);
+  useEffect(() => {
+    if (prevUserIdRef.current === me?.user_id) return;
+    prevUserIdRef.current = me?.user_id;
+    availableScopesRef.current = [];
+    setSelectedBoardId("");
+    setData(getCachedStats(me?.user_id, "default", range, tasksRef.current, usersRef.current, me, boardsRef.current, []));
+  }, [me?.user_id, range]);
 
   const load = useCallback((targetRange, targetBoardId) => {
     const r = targetRange || range;
     const bId = targetBoardId !== undefined ? targetBoardId : selectedBoardId;
     const scopeKey = bId || "default";
-    const cached = getCachedStats(me?.user_id, scopeKey, r, tasks, users, me);
-    if (cached) setData(cached);
+    const uid = meRef.current?.user_id;
+
+    const cached = getCachedStats(
+      uid,
+      scopeKey,
+      r,
+      tasksRef.current,
+      usersRef.current,
+      meRef.current,
+      boardsRef.current,
+      availableScopesRef.current
+    );
+    if (cached) {
+      setData((prev) => (statsSignature(prev) === statsSignature(cached) ? prev : cached));
+    }
+
+    if (abortRef.current) {
+      try { abortRef.current.abort(); } catch {}
+    }
+    const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+    abortRef.current = controller;
+    const seq = ++requestSeqRef.current;
 
     api.get("/stats/team", {
       params: {
         range: r,
         ...(bId ? { board_id: bId } : {}),
         ...(anchor ? { anchor } : {})
-      }
+      },
+      ...(controller ? { signal: controller.signal } : {})
     })
       .then((res) => {
+        if (seq !== requestSeqRef.current) return;
         if (isValidStats(res.data)) {
-          hydrateTeamStatsCache(me?.user_id, res.data, scopeKey, r);
-          setData(res.data);
+          if (Array.isArray(res.data.available_scopes) && res.data.available_scopes.length > 0) {
+            availableScopesRef.current = res.data.available_scopes;
+          }
+          hydrateTeamStatsCache(uid, res.data, scopeKey, r);
+          setData((prev) => (statsSignature(prev) === statsSignature(res.data) ? prev : res.data));
         }
       })
       .catch(() => {});
-  }, [anchor, range, selectedBoardId, me?.user_id, tasks, users, me]);
+  }, [anchor, range, selectedBoardId, me?.user_id]);
 
   useEffect(() => {
     load(range, selectedBoardId);
+    return () => {
+      if (abortRef.current) {
+        try { abortRef.current.abort(); } catch {}
+      }
+    };
   }, [range, selectedBoardId, load]);
 
   useEffect(() => {
@@ -905,8 +1343,11 @@ export default function MonthlyStats({ showPerformance = true, showBottleneck = 
     return subscribe((evt) => {
       if (evt.type === "bootstrap:dashboard") {
         if (isValidStats(evt.stats_team) && !selectedBoardId && range === "7d") {
-          hydrateTeamStatsCache(me?.user_id, evt.stats_team, "default", "7d");
-          setData(evt.stats_team);
+          if (Array.isArray(evt.stats_team.available_scopes) && evt.stats_team.available_scopes.length > 0) {
+            availableScopesRef.current = evt.stats_team.available_scopes;
+          }
+          hydrateTeamStatsCache(meRef.current?.user_id, evt.stats_team, "default", "7d");
+          setData((prev) => (statsSignature(prev) === statsSignature(evt.stats_team) ? prev : evt.stats_team));
         }
         if (Array.isArray(evt.projects)) {
           setProjectsMap(Object.fromEntries(evt.projects.map((p) => [p.id, p])));
@@ -914,15 +1355,47 @@ export default function MonthlyStats({ showPerformance = true, showBottleneck = 
         return;
       }
       if (evt.type === "tasks:changed" || evt.type === "tasks:deleted" || evt.type === "users:changed" || evt.type === "boards:changed") {
+        clearStatsMemoryCacheForUser(meRef.current?.user_id);
+        if (evt.type === "boards:changed") {
+          api.get("/boards")
+            .then((res) => {
+              if (Array.isArray(res.data)) {
+                setBoards(res.data);
+                try { localStorage.setItem("circle_boards_cache", JSON.stringify(res.data)); } catch {}
+              }
+            })
+            .catch(() => {});
+        }
         load(range, selectedBoardId);
       }
     });
-  }, [subscribe, load, range, selectedBoardId, me?.user_id]);
+  }, [subscribe, load, range, selectedBoardId]);
+
+  const handleSelectBoard = useCallback((nextBoardId) => {
+    const targetId = String(nextBoardId || "");
+    if (!targetId) return;
+    const instantNext = getCachedStats(
+      meRef.current?.user_id,
+      targetId,
+      range,
+      tasksRef.current,
+      usersRef.current,
+      meRef.current,
+      boardsRef.current,
+      availableScopesRef.current
+    );
+    setSelectedBoardId((prev) => (prev === targetId ? prev : targetId));
+    if (instantNext) {
+      setData((prev) => (statsSignature(prev) === statsSignature(instantNext) ? prev : instantNext));
+    }
+  }, [range]);
 
   if (!showPerformance && !showBottleneck && !showPersonnel) return null;
 
   const isSuperAdmin = me?.role === "super_admin";
-  const availableScopes = Array.isArray(data?.available_scopes) ? data.available_scopes : [];
+  const availableScopes = Array.isArray(data?.available_scopes) && data.available_scopes.length > 0
+    ? data.available_scopes
+    : availableScopesRef.current;
   const activeScope = data?.scope || null;
   const activeBoardId = activeScope?.board_id || selectedBoardId;
   const activeScopeLabel = activeScope?.board_name || me?.department || "";
@@ -942,7 +1415,7 @@ export default function MonthlyStats({ showPerformance = true, showBottleneck = 
           activeBoardId={activeBoardId}
           canSwitchBoards={canSwitchBoards}
           isAdmin={isAdmin}
-          onSelectBoard={setSelectedBoardId}
+          onSelectBoard={handleSelectBoard}
         />
       )}
       {showBottleneck && (
@@ -955,7 +1428,7 @@ export default function MonthlyStats({ showPerformance = true, showBottleneck = 
           activeBoardId={activeBoardId}
           canSwitchBoards={canSwitchBoards}
           isAdmin={isAdmin}
-          onSelectBoard={setSelectedBoardId}
+          onSelectBoard={handleSelectBoard}
           onOpenTask={onOpenTask}
         />
       )}
@@ -967,7 +1440,7 @@ export default function MonthlyStats({ showPerformance = true, showBottleneck = 
           activeBoardId={activeBoardId}
           canSwitchBoards={canSwitchBoards}
           isAdmin={isAdmin}
-          onSelectBoard={setSelectedBoardId}
+          onSelectBoard={handleSelectBoard}
         />
       )}
     </div>

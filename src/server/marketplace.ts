@@ -1443,7 +1443,7 @@ export function registerMarketplaceRoutes(app: Express, deps: MarketplaceDeps) {
             order.status = "awaiting_verification";
             order.history.unshift({
               status: "awaiting_verification",
-              label: `Notifikasi pembayaran ${sourceLabel.toUpperCase()} diterima · Menunggu persetujuan manual`,
+              label: `Notifikasi pembayaran ${sourceLabel.toUpperCase()} diterima · Menunggu approval manual`,
               actor_name: `Payment Gateway (${sourceLabel.toUpperCase()})`,
               at: now,
             });

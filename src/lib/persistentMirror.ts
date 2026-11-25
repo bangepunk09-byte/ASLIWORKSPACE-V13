@@ -10,6 +10,7 @@ import {
   getItemId,
   hasMeaningfulWorkspaceData,
   mergeItemsById,
+  mergeTasksArrayNonDestructive,
   mergeTwoSnapshotsNonDestructive,
 } from './snapshotMerge';
 
@@ -622,10 +623,9 @@ function harvestAllLocalStorageCaches(): LocalCacheHarvest {
     return false;
   };
 
-  harvest.tasks = mergeItemsById(
+  harvest.tasks = mergeTasksArrayNonDestructive(
     readJsonArray('circle_tasks_cache'),
-    readJsonArray('circle_cache_tasks'),
-    'task_id'
+    readJsonArray('circle_cache_tasks')
   ).filter((t) => !isEntityDel(t, 'task_id'));
 
   const localDelTplSet = new Set(getLocalDeletedCheckpointTemplateIds());
@@ -694,7 +694,7 @@ function harvestAllLocalStorageCaches(): LocalCacheHarvest {
             }
           }
           if (extractedTasks.length > 0) {
-            harvest.tasks = mergeItemsById(harvest.tasks, extractedTasks, 'task_id').filter(
+            harvest.tasks = mergeTasksArrayNonDestructive(harvest.tasks, extractedTasks).filter(
               (t) => !isEntityDel(t, 'task_id')
             );
           }
@@ -815,7 +815,7 @@ function mergeHarvestIntoSnapshotPayload(basePayload: any, harvest: LocalCacheHa
     root.users = mergeItemsById(root.users || [], harvest.users, 'user_id');
   }
   if (harvest.tasks.length > 0 || Array.isArray(root.tasks)) {
-    root.tasks = mergeItemsById(root.tasks || [], harvest.tasks, 'task_id').filter(
+    root.tasks = mergeTasksArrayNonDestructive(root.tasks || [], harvest.tasks).filter(
       (t: any) => !delTaskSet.has(getItemId(t, 'task_id'))
     );
   }

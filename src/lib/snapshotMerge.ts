@@ -17,6 +17,89 @@ export function getItemId(item: any, altKey?: string): string {
   return raw ? String(raw).trim() : '';
 }
 
+export function getTaskApprovedBy(task: any): string[] {
+  if (!task || typeof task !== 'object') return [];
+  const rawA = Array.isArray(task?.approvals?.approved_by) ? task.approvals.approved_by : [];
+  const rawB = Array.isArray(task?.approval?.approved_by) ? task.approval.approved_by : [];
+  return Array.from(
+    new Set(
+      [...rawA, ...rawB]
+        .map((id: any) => String(id || '').trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+export function hasTwoOrMoreApprovals(task: any): boolean {
+  return getTaskApprovedBy(task).length >= 2;
+}
+
+export function enforceTaskApprovalInvariant(task: any, extraApproved: string[] = []): any {
+  if (!task || typeof task !== 'object') return task;
+  const approvedBy = Array.from(
+    new Set([
+      ...getTaskApprovedBy(task),
+      ...(Array.isArray(extraApproved) ? extraApproved.map((x) => String(x || '').trim()).filter(Boolean) : []),
+    ])
+  );
+  const existingApprovals =
+    (task.approvals && typeof task.approvals === 'object' ? task.approvals : null) ||
+    (task.approval && typeof task.approval === 'object' ? task.approval : null) ||
+    {};
+
+  if (approvedBy.length >= 2) {
+    const completedAt = task.completed_at || task.updated_at || new Date().toISOString();
+    let compliance = 'On time';
+    if (task.deadline) {
+      const dlMs = new Date(task.deadline).getTime();
+      const compMs = new Date(completedAt).getTime();
+      if (!Number.isNaN(dlMs) && !Number.isNaN(compMs) && compMs > dlMs) {
+        compliance = 'Overdue';
+      }
+    }
+    const syncedApprovals = {
+      needed: 2,
+      ...existingApprovals,
+      approved_by: approvedBy,
+      status: 'approved',
+    };
+    return {
+      ...task,
+      status: 'done',
+      progress: 100,
+      completed_at: completedAt,
+      completed_by: task.completed_by || approvedBy[approvedBy.length - 1],
+      deadline_compliance: compliance,
+      approvals: syncedApprovals,
+      approval: syncedApprovals,
+    };
+  }
+
+  const nextStatus =
+    task.status === 'done'
+      ? 'approved'
+      : approvedBy.length === 1
+        ? 'partial'
+        : existingApprovals.status || 'pending';
+  const syncedApprovals = {
+    needed: 2,
+    ...existingApprovals,
+    approved_by: approvedBy,
+    status: nextStatus,
+  };
+  const nextProgress =
+    approvedBy.length === 1 && (!Array.isArray(task.checkpoints) || task.checkpoints.length === 0)
+      ? Math.max(Number(task.progress) || 0, 50)
+      : task.progress;
+
+  return {
+    ...task,
+    ...(nextProgress !== undefined ? { progress: nextProgress } : {}),
+    approvals: syncedApprovals,
+    approval: syncedApprovals,
+  };
+}
+
 export function mergeItemsById(existingList: any[], incomingList: any[], altKey?: string): any[] {
   const out = Array.isArray(existingList) ? [...existingList] : [];
   const idxMap = new Map<string, number>();
@@ -54,6 +137,94 @@ export function mergeItemsById(existingList: any[], incomingList: any[], altKey?
       }
     }
   }
+  return out;
+}
+
+export function mergeTasksArrayNonDestructive(existingList: any[], incomingList: any[]): any[] {
+  const out = (Array.isArray(existingList) ? existingList : [])
+    .filter((t) => t && typeof t === 'object')
+    .map((t) => enforceTaskApprovalInvariant(t));
+  const idxMap = new Map<string, number>();
+  out.forEach((it, idx) => {
+    const id = getItemId(it, 'task_id');
+    if (id) idxMap.set(id, idx);
+  });
+
+  for (const rawInc of Array.isArray(incomingList) ? incomingList : []) {
+    const id = getItemId(rawInc, 'task_id');
+    if (!id) continue;
+    const normalized = enforceTaskApprovalInvariant(!rawInc.id ? { ...rawInc, id } : rawInc);
+    const existingIdx = idxMap.get(id);
+    if (existingIdx === undefined) {
+      idxMap.set(id, out.length);
+      out.push(normalized);
+      continue;
+    }
+
+    const cur = out[existingIdx];
+    const curTime = new Date(cur?.updated_at || cur?.created_at || 0).getTime();
+    const incTime = new Date(normalized?.updated_at || normalized?.created_at || 0).getTime();
+
+    const curApproved = getTaskApprovedBy(cur);
+    const incApproved = getTaskApprovedBy(normalized);
+    const incWasExplicitlyRevised =
+      normalized?.approvals?.status === 'revised' &&
+      incApproved.length === 0 &&
+      curApproved.length < 2 &&
+      incTime > curTime;
+
+    // 2+ approvals is strictly monotonic ("saklek"): always union approvals unless <2 and explicitly revised
+    const mergedApproved = incWasExplicitlyRevised
+      ? []
+      : Array.from(new Set([...curApproved, ...incApproved].filter(Boolean)));
+
+    const isSaklekApprovedDone = mergedApproved.length >= 2;
+    const curCompleted100Done =
+      cur?.status === 'done' && Number(cur?.progress ?? 0) >= 100 && normalized?.approvals?.status !== 'revised';
+    const incCompleted100Done =
+      normalized?.status === 'done' && Number(normalized?.progress ?? 0) >= 100 && cur?.approvals?.status !== 'revised';
+
+    const curComments = Array.isArray(cur?.comments) ? cur.comments : [];
+    const incComments = Array.isArray(normalized?.comments) ? normalized.comments : [];
+    const mergedComments =
+      incComments.length > 0 ? mergeItemsById(curComments, incComments) : curComments;
+
+    const curCps = Array.isArray(cur?.checkpoints) ? cur.checkpoints : [];
+    const incCps = Array.isArray(normalized?.checkpoints) ? normalized.checkpoints : [];
+    const mergedCps = incCps.length > curCps.length || incTime > curTime ? incCps : curCps;
+
+    const base = incTime > curTime ? { ...cur, ...normalized } : { ...normalized, ...cur };
+
+    // Prevent stale/older non-done status from reverting a 2/2-approved or 100%-done task
+    let merged: any = {
+      ...base,
+      comments: mergedComments,
+      checkpoints: mergedCps,
+    };
+
+    if (isSaklekApprovedDone) {
+      merged = {
+        ...merged,
+        status: 'done',
+        progress: 100,
+        completed_at: cur?.completed_at || normalized?.completed_at || base.updated_at || new Date().toISOString(),
+        completed_by: cur?.completed_by || normalized?.completed_by || mergedApproved[mergedApproved.length - 1],
+      };
+    } else if ((curCompleted100Done && incTime > curTime && normalized.status !== 'done') || incCompleted100Done) {
+      const doneSource = curCompleted100Done ? cur : normalized;
+      merged = {
+        ...merged,
+        status: 'done',
+        progress: 100,
+        completed_at: doneSource.completed_at || doneSource.updated_at || merged.completed_at,
+        completed_by: doneSource.completed_by || merged.completed_by,
+        deadline_compliance: doneSource.deadline_compliance || merged.deadline_compliance,
+      };
+    }
+
+    out[existingIdx] = enforceTaskApprovalInvariant(merged, mergedApproved);
+  }
+
   return out;
 }
 
@@ -171,13 +342,35 @@ export function mergeTwoSnapshotsNonDestructive(primarySnap: any, secondarySnap:
   };
 
   pRoot.users = mergeItemsById(pRoot.users || [], sRoot.users || [], 'user_id');
-  pRoot.tasks = mergeItemsById(pRoot.tasks || [], sRoot.tasks || [], 'task_id').filter(
-    notDeleted('task_id')
-  );
+  pRoot.messages = mergeItemsById(pRoot.messages || [], sRoot.messages || []).filter(notDeleted());
+
+  const msgApprovalsByTaskId = new Map<string, string[]>();
+  for (const m of pRoot.messages || []) {
+    if (m && m.type === 'approval_card' && m.task_id) {
+      const cardApproved = [
+        ...(Array.isArray(m.approvals?.approved_by) ? m.approvals.approved_by : []),
+        ...(Array.isArray(m.task?.approvals?.approved_by) ? m.task.approvals.approved_by : []),
+      ]
+        .map((uid: any) => String(uid || '').trim())
+        .filter(Boolean);
+      if (cardApproved.length > 0) {
+        const prev = msgApprovalsByTaskId.get(String(m.task_id)) || [];
+        msgApprovalsByTaskId.set(String(m.task_id), Array.from(new Set([...prev, ...cardApproved])));
+      }
+    }
+  }
+
+  pRoot.tasks = mergeTasksArrayNonDestructive(pRoot.tasks || [], sRoot.tasks || [])
+    .filter(notDeleted('task_id'))
+    .map((t: any) => {
+      const tid = getItemId(t, 'task_id');
+      const cardApproved = tid ? msgApprovalsByTaskId.get(tid) || [] : [];
+      return enforceTaskApprovalInvariant(t, cardApproved);
+    });
+
   pRoot.boards = mergeItemsById(pRoot.boards || [], sRoot.boards || [], 'board_id').filter(
     notDeleted('board_id')
   );
-  pRoot.messages = mergeItemsById(pRoot.messages || [], sRoot.messages || []).filter(notDeleted());
   pRoot.conversations = mergeItemsById(pRoot.conversations || [], sRoot.conversations || []).filter(
     notDeleted()
   );

@@ -395,6 +395,11 @@ export default function Dashboard() {
   const toggleTaskDone = (t, e) => {
     e.stopPropagation();
     const isDone = t.status === "done";
+    const approvalCount = (t.approvals?.approved_by || t.approval?.approved_by || []).length;
+    if (isDone && approvalCount >= 2) {
+      toast.error("Tugas sudah 2/2 Approved (100%) dan terkunci saklek di Done.");
+      return;
+    }
     const nextStatus = isDone ? "in_progress" : "done";
     if (!isDone) {
       playSound("task_done");

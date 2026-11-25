@@ -624,46 +624,59 @@ function Cell({ k, row, projects, boards = [], patch, onOpen }) {
                 <span className="font-semibold text-ink">{statuses.find((s) => s.key === taskItem.status)?.name || taskItem.status}</span>
               </div>
             </div>
-            <div className="mt-3 pt-2 border-t">
-              <button
-                type="button"
-                onClick={() => {
-                  if (cp) {
-                    const nextDone = !cp.done;
-                    const updatedCps = (taskItem.checkpoints || []).map((c, idx) =>
-                      (c.id && cp.id ? c.id === cp.id : idx === row.cpIndex)
-                        ? { ...c, done: nextDone, done_at: nextDone ? new Date().toISOString() : null }
-                        : c
-                    );
-                    patch(taskItem, { checkpoints: updatedCps });
-                    return;
-                  }
-                  const nextDone = !isDone;
-                  const nextCompletedAt = nextDone ? new Date().toISOString() : null;
-                  let nextCompliance = "In Progress";
-                  if (nextDone) {
-                    nextCompliance = taskItem.deadline ? (new Date(nextCompletedAt) > new Date(taskItem.deadline) ? "Overdue" : "On time") : "On time";
-                  } else {
-                    nextCompliance = (taskItem.deadline && new Date() > new Date(taskItem.deadline)) ? "Overdue" : "In Progress";
-                  }
-                  patch(taskItem, {
-                    status: nextDone ? "done" : "in_progress",
-                    completed_at: nextCompletedAt,
-                    deadline_compliance: nextCompliance,
-                    progress: nextDone ? 100 : taskItem.progress
-                  });
-                }}
-                className={`w-full rounded-xl py-1.5 text-center font-bold text-xs transition-colors cursor-pointer ${
-                  isDone
-                    ? "bg-surface2 hover:bg-surface2/80 text-ink"
-                    : "bg-emerald-500 hover:bg-emerald-600 text-white shadow-xs"
-                }`}
-              >
-                {cp
-                  ? (isDone ? t("table_reopen_stage", "Buka Kembali Tahap Ini") : t("table_mark_stage_done", "Tandai Tahap Selesai"))
-                  : (isDone ? t("table_reopen_task", "Buka Kembali") : t("table_mark_task_done", "Tandai Selesai"))}
-              </button>
-            </div>
+            {(() => {
+              const approvalCount = (taskItem.approvals?.approved_by || taskItem.approval?.approved_by || []).length;
+              const isLockedDone = approvalCount >= 2;
+              if (!cp && isDone && isLockedDone) {
+                return (
+                  <div className="mt-3 pt-2 border-t text-center text-[11px] font-bold text-emerald-700 dark:text-emerald-400">
+                    ✓ Terkunci saklek di Done (2/2 Approved)
+                  </div>
+                );
+              }
+              return (
+                <div className="mt-3 pt-2 border-t">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (cp) {
+                        const nextDone = !cp.done;
+                        const updatedCps = (taskItem.checkpoints || []).map((c, idx) =>
+                          (c.id && cp.id ? c.id === cp.id : idx === row.cpIndex)
+                            ? { ...c, done: nextDone, done_at: nextDone ? new Date().toISOString() : null }
+                            : c
+                        );
+                        patch(taskItem, { checkpoints: updatedCps });
+                        return;
+                      }
+                      const nextDone = !isDone;
+                      const nextCompletedAt = nextDone ? new Date().toISOString() : null;
+                      let nextCompliance = "In Progress";
+                      if (nextDone) {
+                        nextCompliance = taskItem.deadline ? (new Date(nextCompletedAt) > new Date(taskItem.deadline) ? "Overdue" : "On time") : "On time";
+                      } else {
+                        nextCompliance = (taskItem.deadline && new Date() > new Date(taskItem.deadline)) ? "Overdue" : "In Progress";
+                      }
+                      patch(taskItem, {
+                        status: nextDone ? "done" : "in_progress",
+                        completed_at: nextCompletedAt,
+                        deadline_compliance: nextCompliance,
+                        progress: nextDone ? 100 : taskItem.progress
+                      });
+                    }}
+                    className={`w-full rounded-xl py-1.5 text-center font-bold text-xs transition-colors cursor-pointer ${
+                      isDone
+                        ? "bg-surface2 hover:bg-surface2/80 text-ink"
+                        : "bg-emerald-500 hover:bg-emerald-600 text-white shadow-xs"
+                    }`}
+                  >
+                    {cp
+                      ? (isDone ? t("table_reopen_stage", "Buka Kembali Tahap Ini") : t("table_mark_stage_done", "Tandai Tahap Selesai"))
+                      : (isDone ? t("table_reopen_task", "Buka Kembali") : t("table_mark_task_done", "Tandai Selesai"))}
+                  </button>
+                </div>
+              );
+            })()}
           </PopoverContent>
         </Popover>
       );

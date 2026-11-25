@@ -198,9 +198,9 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
       const { data } = await api.post("/tasks/archive/delete-month", { month: confirmMonthDelete.monthKey });
       playSound("click");
       if (data?.existing) {
-        toast.info(`Permintaan hapus arsip ${confirmMonthDelete.folderName} sudah diajukan · ${data.request?.approved_count || 0}/2 persetujuan.`);
+        toast.info(`Permintaan hapus arsip ${confirmMonthDelete.folderName} sudah diajukan · ${data.request?.approved_count || 0}/2 approval.`);
       } else {
-        toast.success(`Permintaan hapus arsip ${confirmMonthDelete.folderName} dikirim! Menunggu persetujuan minimal 2 orang.`);
+        toast.success(`Permintaan hapus arsip ${confirmMonthDelete.folderName} dikirim! Menunggu approval minimal 2 orang.`);
       }
       setConfirmMonthDelete(null);
       setEmptyModalOpen(false);
@@ -223,14 +223,14 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
         if (Array.isArray(data.deleted_ids) && data.deleted_ids.length > 0) {
           recordDeletedTaskIds(data.deleted_ids);
         }
-        toast.success(`Persetujuan 2/2 lengkap! ${data.deleted_count || 0} tugas arsip bulan tersebut berhasil dihapus.`);
+        toast.success(`Approval 2/2 lengkap! ${data.deleted_count || 0} tugas arsip bulan tersebut berhasil dihapus.`);
         reload?.();
       } else {
-        toast.success(`Persetujuan ${data?.approved_count || 1}/${data?.needed || 2} tercatat. Menunggu 1 persetujuan lagi untuk menghapus.`);
+        toast.success(`Approval ${data?.approved_count || 1}/${data?.needed || 2} tercatat. Menunggu 1 approval lagi untuk menghapus.`);
       }
       loadDeleteRequests();
     } catch (err) {
-      toast.error(errMsg(err, "Gagal memproses persetujuan"));
+      toast.error(errMsg(err, "Gagal memproses approval"));
     } finally {
       setBusyDelete(false);
     }
@@ -488,7 +488,7 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
                         </span>
                         {monthReq && (
                           <span className="rounded-full bg-amber-100 dark:bg-amber-900/40 px-2.5 py-0.5 text-[11px] font-bold text-amber-700 dark:text-amber-300 whitespace-nowrap shrink-0">
-                            {tr("archive_approval_badge", "Persetujuan Hapus")} {monthReq.approved_count || 0}/{monthReq.needed || 2}
+                            {tr("archive_approval_badge", "Approval Hapus")} {monthReq.approved_count || 0}/{monthReq.needed || 2}
                           </span>
                         )}
                       </h3>
@@ -531,12 +531,12 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
                       <ShieldAlert size={18} className="mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
                       <div className="min-w-0">
                         <p className="text-xs sm:text-sm font-bold text-ink">
-                          {tr("archive_awaiting_month_delete", "Menunggu Persetujuan Hapus 1 Bulan")} · {monthReq.approved_count || 0}/{monthReq.needed || 2}
+                          {tr("archive_awaiting_month_delete", "Menunggu Approval Hapus 1 Bulan")} · {monthReq.approved_count || 0}/{monthReq.needed || 2}
                         </p>
                         <p className="text-[11px] text-sub">
-                          {tr("archive_requested_by_prefix", "Diajukan oleh")} <b>{monthReq.requested_by_name}</b> · Minimal <b>2 orang</b> menyetujui sebelum {monthReq.task_count} {tr("tasks_tasks_unit", "tugas")} di {folderName} dihapus permanen.
+                          {tr("archive_requested_by_prefix", "Diajukan oleh")} <b>{monthReq.requested_by_name}</b> · Minimal <b>2 orang</b> meng-approve sebelum {monthReq.task_count} {tr("tasks_tasks_unit", "tugas")} di {folderName} dihapus permanen.
                           {Array.isArray(monthReq.approvers) && monthReq.approvers.length > 0 && (
-                            <> Sudah setuju: <b>{monthReq.approvers.map((a) => a.name).join(", ")}</b>.</>
+                            <> Sudah approve: <b>{monthReq.approvers.map((a) => a.name).join(", ")}</b>.</>
                           )}
                         </p>
                       </div>
@@ -560,8 +560,8 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
                       >
                         <Check size={13} />
                         {alreadyApprovedByMe
-                          ? `${tr("archive_already_approved", "Sudah Setuju")} ${monthReq.approved_count}/${monthReq.needed}`
-                          : `${tr("archive_approve_delete_btn", "Setujui Hapus")} ${monthReq.approved_count}/${monthReq.needed}`}
+                          ? `${tr("archive_already_approved", "Sudah Approve")} ${monthReq.approved_count}/${monthReq.needed}`
+                          : `${tr("archive_approve_delete_btn", "Approve Hapus")} ${monthReq.approved_count}/${monthReq.needed}`}
                       </button>
                     </div>
                   </div>
@@ -715,11 +715,11 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
               <div className="flex items-center justify-between gap-2">
                 <p className="text-xs font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300">{tr("archive_modal_opt2_title", "2. Hapus 1 Bulan Penuh")}</p>
                 <span className="rounded-full bg-amber-100 dark:bg-amber-900/50 px-2 py-0.5 text-[10px] font-bold text-amber-800 dark:text-amber-200">
-                  {tr("archive_modal_min_approvals", "Min. 2 Persetujuan")}
+                  {tr("archive_modal_min_approvals", "Min. 2 Approval")}
                 </span>
               </div>
               <p className="text-xs text-sub">
-                {tr("archive_modal_opt2_desc", "Seluruh tugas pada bulan yang dipilih baru akan terhapus permanen setelah mendapat minimal 2 persetujuan.")}
+                {tr("archive_modal_opt2_desc", "Seluruh tugas pada bulan yang dipilih baru akan terhapus permanen setelah mendapat minimal 2 approval.")}
               </p>
               <AppSelect
                 value={emptyMonthTarget}
@@ -750,7 +750,7 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
               >
                 <ShieldAlert size={13} />
                 {reqByMonth[emptyMonthTarget]
-                  ? `${tr("archive_modal_waiting_btn", "Menunggu Persetujuan")} ${reqByMonth[emptyMonthTarget].approved_count || 0}/2`
+                  ? `${tr("archive_modal_waiting_btn", "Menunggu Approval")} ${reqByMonth[emptyMonthTarget].approved_count || 0}/2`
                   : `${tr("archive_modal_request_btn", "Ajukan Hapus")} ${formatMonthFolder(emptyMonthTarget, tr)}`}
               </button>
             </div>
@@ -821,7 +821,7 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
               {tr("archive_confirm_month_title", "Ajukan Hapus Arsip")} {confirmMonthDelete?.folderName}?
             </DialogTitle>
             <DialogDescription>
-              Folder bulan <b>{confirmMonthDelete?.folderName}</b> berisi <b>{confirmMonthDelete?.count || 0} {tr("tasks_tasks_unit", "tugas")}</b>. Penghapusan 1 bulan penuh memerlukan <b>minimal persetujuan 2 orang</b> sebelum seluruh tugas benar-benar terhapus.
+              Folder bulan <b>{confirmMonthDelete?.folderName}</b> berisi <b>{confirmMonthDelete?.count || 0} {tr("tasks_tasks_unit", "tugas")}</b>. Penghapusan 1 bulan penuh memerlukan <b>minimal approval 2 orang</b> sebelum seluruh tugas benar-benar terhapus.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2 sm:gap-2">

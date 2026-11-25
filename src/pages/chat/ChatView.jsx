@@ -224,11 +224,11 @@ function Panel({ conv, reload, onClose, onLeft }) {
                     <div className="flex items-center gap-1 shrink-0">
                       <button
                         type="button"
-                        onClick={run(() => api.post(`/groups/${conv.id}/join-requests/${req.user_id}/approve`), `${ru.name} disetujui masuk grup`)}
+                        onClick={run(() => api.post(`/groups/${conv.id}/join-requests/${req.user_id}/approve`), `${ru.name} di-approve masuk grup`)}
                         className="rounded-lg bg-emerald-600 hover:bg-emerald-700 px-2 py-1 text-[10px] font-bold text-white cursor-pointer"
                         data-testid={`approve-join-${req.user_id}`}
                       >
-                        {tr("chat_approve_btn", "Setujui")}
+                        {tr("chat_approve_btn", "Approve")}
                       </button>
                       <button
                         type="button"
@@ -980,7 +980,7 @@ export default function ChatView({ cid, initialConv = null, onChange, onRead, on
                   </p>
                 ) : activeConv.group_type === "private" && activeConv.is_member === false ? (
                   <p className="mt-1.5 text-xs text-sub leading-relaxed">
-                    {tr("groups_private_lock_desc", "Grup ini bersifat privat. Anda memerlukan persetujuan dari Pembuat atau Co-Admin Grup untuk melihat dan mengirim pesan di sini.")}
+                    {tr("groups_private_lock_desc", "Grup ini bersifat privat. Anda memerlukan approval dari Pembuat atau Co-Admin Grup untuk melihat dan mengirim pesan di sini.")}
                   </p>
                 ) : isCircleAssistantConv && (
                   <p className="mt-1.5 text-xs text-sub leading-relaxed">
@@ -1033,7 +1033,7 @@ export default function ChatView({ cid, initialConv = null, onChange, onRead, on
               </span>
             ) : activeConv.has_pending_request ? (
               <button type="button" disabled className="inline-flex h-11 items-center rounded-full border bg-surface2 px-6 text-sm font-semibold text-sub opacity-85 cursor-not-allowed" data-testid="pending-group-join-btn">
-                {tr("chat_pending_approval_btn", "Menunggu Persetujuan Pembuat / Admin Grup…")}
+                {tr("chat_pending_approval_btn", "Menunggu Approval Pembuat / Admin Grup…")}
               </button>
             ) : (
               <button onClick={join} className="btn-accent h-11 px-6 font-semibold" data-testid="join-group-btn">

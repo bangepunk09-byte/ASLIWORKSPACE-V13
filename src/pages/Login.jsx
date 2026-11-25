@@ -13,7 +13,7 @@ import { PasswordStrengthMeter } from "../components/PasswordStrengthMeter";
 import { attemptAutoHydrateServer, syncWorkspaceMirror, upsertAccountInVault, getKnownAccountsFromVault } from "../lib/persistentMirror";
 
 const STATUS_MSG = {
-  pending: "Akun Anda sedang dalam proses peninjauan & approval oleh Super Admin. Anda akan bisa masuk setelah akun disetujui.",
+  pending: "Akun Anda sedang dalam proses peninjauan & approval oleh Super Admin. Anda akan bisa masuk setelah akun di-approve.",
   inactive: "Akun Anda telah dinonaktifkan. Silakan hubungi Workspace Administrator.",
   not_allowed: "Akun ini tidak memiliki izin untuk bergabung dengan workspace.",
   error: "Proses masuk gagal. Silakan coba beberapa saat lagi.",
@@ -226,7 +226,7 @@ export default function Login() {
         if (data?.status && data.status !== forgotTicket.status) {
           setForgotTicket((prev) => (prev ? { ...prev, ...data } : prev));
           if (data.status === "approved") {
-            toast.success("Reset password Anda sudah disetujui! Silakan login.");
+            toast.success("Reset password Anda sudah di-approve! Silakan login.");
           } else if (data.status === "rejected") {
             toast.error("Permintaan reset password Anda ditolak oleh Admin.");
           }
@@ -308,7 +308,7 @@ export default function Login() {
       const respData = err?.response?.data;
       if (respData?.status === "pending") {
         setLoginAlert(respData.detail || "Akun Anda sedang dalam proses peninjauan & approval oleh Super Admin.");
-        toast.warning("Akun Anda sedang menunggu persetujuan Super Admin.");
+        toast.warning("Akun Anda sedang menunggu approval Super Admin.");
       } else {
         const message = respData?.detail || errMsg(err, "Gagal masuk");
         setLoginAlert(message);
@@ -486,11 +486,11 @@ export default function Login() {
       });
       setForgotTicket((prev) => ({ ...(prev || {}), email: prev?.email || forgotForm.email.trim(), ...data }));
       if (data.status === "approved") {
-        toast.success("Reset password sudah disetujui! Silakan login.");
+        toast.success("Reset password sudah di-approve! Silakan login.");
       } else if (data.status === "rejected") {
         toast.error("Permintaan reset password ditolak.");
       } else {
-        toast.info("Masih menunggu persetujuan Super Admin / Manajer.");
+        toast.info("Masih menunggu approval Super Admin / Manajer.");
       }
     } catch (err) {
       toast.error(errMsg(err, "Status belum ditemukan"));
@@ -724,7 +724,7 @@ export default function Login() {
       const statusResp = errPost?.response?.data?.status;
       if (statusResp === "pending") {
         setGoogleModalOpen(false);
-        const msg = errPost?.response?.data?.detail || "Akun Google Anda sedang menunggu persetujuan Super Admin.";
+        const msg = errPost?.response?.data?.detail || "Akun Google Anda sedang menunggu approval Super Admin.";
         setLoginAlert(msg);
         toast.warning(msg);
       } else if (statusResp === "inactive") {
@@ -1093,13 +1093,13 @@ export default function Login() {
                   <CheckCircle2 size={14} className="shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" />
                   <span>
                     {requireApprovalEnabled && signupDomain
-                      ? <>Domain <b>@{signupDomain}</b> terdaftar sebagai domain perusahaan — akun Anda akan langsung aktif tanpa perlu persetujuan Admin.</>
+                      ? <>Domain <b>@{signupDomain}</b> terdaftar sebagai domain perusahaan — akun Anda akan langsung aktif tanpa perlu approval Admin.</>
                       : "Akun Anda akan langsung aktif dan masuk ke workspace setelah pendaftaran."}
                   </span>
                 </div>
               ) : (
                 <div className="rounded-xl border border-amber-200 dark:border-amber-800/50 bg-amber-50/70 dark:bg-amber-950/30 p-2.5 text-[11px] text-amber-900 dark:text-amber-200 leading-relaxed" data-testid="signup-approval-notice">
-                  {t("auth_approval_notice", "⚠️ Catatan Approval: Akun di luar domain perusahaan akan berstatus pending dan memerlukan persetujuan Super Admin.")}
+                  {t("auth_approval_notice", "⚠️ Catatan Approval: Akun di luar domain perusahaan akan berstatus pending dan memerlukan approval Super Admin.")}
                   {autoJoinDomainEnabled && effectiveAllowedDomains.length > 0 && (
                     <span className="block mt-1 text-[10px] opacity-90">
                       Domain otomatis aktif tanpa approval: <b>{effectiveAllowedDomains.map((d) => `@${d}`).join(", ")}</b>
@@ -1479,7 +1479,7 @@ export default function Login() {
                 </div>
               ) : (
                 <div className="rounded-xl border border-amber-200 dark:border-amber-800/50 bg-amber-50/70 dark:bg-amber-950/30 p-2.5 text-[11px] text-amber-900 dark:text-amber-200 leading-relaxed">
-                  Setelah mengisi data, permohonan akun akan dikirim ke Super Admin untuk persetujuan sebelum Anda bisa masuk.
+                  Setelah mengisi data, permohonan akun akan dikirim ke Super Admin untuk approval sebelum Anda bisa masuk.
                 </div>
               )}
 
@@ -1632,11 +1632,11 @@ export default function Login() {
                     ? "Password Berhasil Direset!"
                     : forgotTicket.status === "rejected"
                     ? "Permintaan Reset Ditolak"
-                    : "Menunggu Persetujuan Admin"}
+                    : "Menunggu Approval Admin"}
                 </h4>
                 <p className="text-xs text-sub leading-relaxed">
                   {forgotTicket.status === "approved"
-                    ? `Disetujui oleh ${forgotTicket.approved_by || "Super Admin"}. Anda sekarang bisa masuk dengan password baru Anda.`
+                    ? `Approved oleh ${forgotTicket.approved_by || "Super Admin"}. Anda sekarang bisa masuk dengan password baru Anda.`
                     : forgotTicket.status === "rejected"
                     ? `Ditolak oleh ${forgotTicket.rejected_by || "Super Admin"}. Silakan hubungi Admin workspace atau ajukan ulang.`
                     : `Asisten Asli telah mengirim Approval Card untuk ${forgotTicket.email} ke Super Admin / Manajer Divisi.`}
@@ -1880,7 +1880,7 @@ export default function Login() {
               </div>
 
               <div className="rounded-xl border border-amber-200 dark:border-amber-800/50 bg-amber-50/70 dark:bg-amber-950/30 p-2.5 text-[11px] text-amber-900 dark:text-amber-200 leading-relaxed">
-                Asisten <b>Asli</b> akan mengirim kartu persetujuan ke Super Admin / Manajer Divisi Anda. Setelah disetujui, password baru langsung aktif.
+                Asisten <b>Asli</b> akan mengirim kartu approval ke Super Admin / Manajer Divisi Anda. Setelah di-approve, password baru langsung aktif.
               </div>
 
               <button

@@ -3377,6 +3377,111 @@ async function startServer() {
     }
   }
 
+  function getTaskApprovedList(task: any, extraApproved: string[] = []): string[] {
+    if (!task || typeof task !== "object") return [];
+    const a = Array.isArray(task.approvals?.approved_by) ? task.approvals.approved_by : [];
+    const b = Array.isArray(task.approval?.approved_by) ? task.approval.approved_by : [];
+    return Array.from(
+      new Set(
+        [...a, ...b, ...(Array.isArray(extraApproved) ? extraApproved : [])]
+          .map((x: any) => String(x || "").trim())
+          .filter(Boolean)
+      )
+    );
+  }
+
+  function enforceTaskSaklekDone(task: any, extraApproved: string[] = []): boolean {
+    if (!task || typeof task !== "object") return false;
+    let changed = false;
+    const tid = String(task.id || task.task_id || "").trim();
+    const cardApproved = tid
+      ? (db.messages || [])
+          .filter((m: any) => m && m.task_id === tid && m.type === "approval_card")
+          .flatMap((m: any) => [
+            ...(Array.isArray(m.approvals?.approved_by) ? m.approvals.approved_by : []),
+            ...(Array.isArray(m.task?.approvals?.approved_by) ? m.task.approvals.approved_by : []),
+          ])
+      : [];
+    const mergedApproved = getTaskApprovedList(task, [...extraApproved, ...cardApproved]);
+    const prevApproved = Array.isArray(task.approvals?.approved_by) ? task.approvals.approved_by : [];
+    const hasFullApproval = mergedApproved.length >= 2;
+    const expectedAppStatus =
+      hasFullApproval || task.status === "done"
+        ? "approved"
+        : mergedApproved.length === 1
+        ? "partial"
+        : (task.approvals?.status || task.approval?.status || "pending");
+
+    if (hasFullApproval) {
+      if (task.status !== "done") {
+        task.status = "done";
+        changed = true;
+      }
+      if (Number(task.progress) !== 100) {
+        task.progress = 100;
+        changed = true;
+      }
+      const compAt = task.completed_at || task.updated_at || new Date().toISOString();
+      if (task.completed_at !== compAt) {
+        task.completed_at = compAt;
+        changed = true;
+      }
+      if (!task.completed_by) {
+        task.completed_by = mergedApproved[mergedApproved.length - 1];
+        changed = true;
+      }
+      const nextComp = task.deadline
+        ? (new Date(compAt).getTime() > new Date(task.deadline).getTime() ? "Overdue" : "On time")
+        : "On time";
+      if (task.deadline_compliance !== nextComp) {
+        task.deadline_compliance = nextComp;
+        changed = true;
+      }
+    }
+
+    if (
+      prevApproved.length !== mergedApproved.length ||
+      task.approvals?.status !== expectedAppStatus ||
+      !task.approval
+    ) {
+      const syncedApprovals = {
+        needed: 2,
+        ...(task.approvals || task.approval || {}),
+        approved_by: mergedApproved,
+        status: expectedAppStatus,
+      };
+      task.approvals = syncedApprovals;
+      task.approval = syncedApprovals;
+      changed = true;
+    }
+
+    if (hasFullApproval && tid) {
+      (db.messages || []).forEach((m: any) => {
+        if (m && m.task_id === tid && m.type === "approval_card") {
+          const cardCount = Array.isArray(m.approvals?.approved_by) ? m.approvals.approved_by.length : 0;
+          if (m.task?.status !== "done" || cardCount < mergedApproved.length) {
+            m.task = { ...task };
+            m.approvals = { ...task.approvals };
+            changed = true;
+          }
+        }
+      });
+    }
+
+    return changed;
+  }
+
+  function normalizeDbTasksSaklek(): boolean {
+    let anyChanged = false;
+    if (!Array.isArray(db.tasks)) return false;
+    for (const t of db.tasks) {
+      if (enforceTaskSaklekDone(t)) {
+        anyChanged = true;
+      }
+    }
+    return anyChanged;
+  }
+
   function applySnapshotToDb(body: any) {
     const rawData = body.data && typeof body.data === "object" ? body.data : body;
     if (!rawData || typeof rawData !== "object") return false;
@@ -3512,6 +3617,7 @@ async function startServer() {
     db.org_aligned_v3 = true;
     migrateSecurityAtRest();
     sanitizeConversationsAndMessages();
+    normalizeDbTasksSaklek();
     serverBootedFreshSeed = false;
     saveDbToFile(true);
 
@@ -3577,9 +3683,10 @@ async function startServer() {
       if (!resolvedId) continue;
       const tid = String(resolvedId).trim();
       if (!tid || delTaskSet.has(tid)) continue;
-      const inc = rawInc.id ? rawInc : { ...rawInc, id: tid };
+      const inc = rawInc.id ? { ...rawInc } : { ...rawInc, id: tid };
       const existingIdx = indexMap.get(tid);
       if (existingIdx === undefined) {
+        enforceTaskSaklekDone(inc);
         indexMap.set(tid, out.length);
         out.push(inc);
         changed = true;
@@ -3588,17 +3695,16 @@ async function startServer() {
         const curTime = new Date(cur?.updated_at || cur?.created_at || 0).getTime();
         const incTime = new Date(inc?.updated_at || inc?.created_at || 0).getTime();
 
-        const curApproved = Array.isArray(cur?.approvals?.approved_by)
-          ? cur.approvals.approved_by
-          : Array.isArray(cur?.approval?.approved_by)
-          ? cur.approval.approved_by
-          : [];
-        const incApproved = Array.isArray(inc?.approvals?.approved_by)
-          ? inc.approvals.approved_by
-          : Array.isArray(inc?.approval?.approved_by)
-          ? inc.approval.approved_by
-          : [];
-        const mergedApproved = Array.from(new Set([...curApproved, ...incApproved].filter(Boolean)));
+        const curApproved = getTaskApprovedList(cur);
+        const incApproved = getTaskApprovedList(inc);
+        const incWasExplicitlyRevised =
+          inc?.approvals?.status === "revised" &&
+          incApproved.length === 0 &&
+          curApproved.length < 2 &&
+          incTime > curTime;
+        const mergedApproved = incWasExplicitlyRevised
+          ? []
+          : Array.from(new Set([...curApproved, ...incApproved].filter(Boolean)));
 
         const curComments = Array.isArray(cur?.comments) ? cur.comments : [];
         const incComments = Array.isArray(inc?.comments) ? inc.comments : [];
@@ -3608,31 +3714,65 @@ async function startServer() {
         const incCps = Array.isArray(inc?.checkpoints) ? inc.checkpoints : [];
         const mergedCps = incCps.length > curCps.length || incTime > curTime ? incCps : curCps;
 
+        const hasFullApproval = mergedApproved.length >= 2;
+        const curCompleted100Done =
+          cur?.status === "done" && Number(cur?.progress ?? 0) >= 100 && inc?.approvals?.status !== "revised";
+        const incCompleted100Done =
+          inc?.status === "done" && Number(inc?.progress ?? 0) >= 100 && cur?.approvals?.status !== "revised";
+
         if (
           incTime > curTime ||
           mergedApproved.length > curApproved.length ||
           mergedComments.length > curComments.length ||
-          mergedCps.length > curCps.length
+          mergedCps.length > curCps.length ||
+          (hasFullApproval && cur.status !== "done")
         ) {
-          const base = incTime >= curTime ? { ...cur, ...inc } : { ...inc, ...cur };
+          const base = incTime > curTime ? { ...cur, ...inc } : { ...inc, ...cur };
+          const keepDone =
+            hasFullApproval ||
+            base.status === "done" ||
+            curCompleted100Done ||
+            incCompleted100Done;
+          const doneSrc = curCompleted100Done ? cur : inc;
           const syncedApprovals = {
             needed: 2,
             ...(base.approvals || base.approval || {}),
             approved_by: mergedApproved,
             status:
-              mergedApproved.length >= 2 || base.status === "done"
+              keepDone
                 ? "approved"
                 : mergedApproved.length === 1
                 ? "partial"
                 : (base.approvals?.status || base.approval?.status || "pending"),
           };
-          out[existingIdx] = {
+          const nextTask: any = {
             ...base,
+            ...(keepDone
+              ? {
+                  status: "done",
+                  progress: hasFullApproval || curCompleted100Done || incCompleted100Done ? 100 : (base.progress ?? 100),
+                  completed_at:
+                    cur?.completed_at ||
+                    doneSrc?.completed_at ||
+                    base.completed_at ||
+                    base.updated_at ||
+                    new Date().toISOString(),
+                  completed_by:
+                    cur?.completed_by ||
+                    doneSrc?.completed_by ||
+                    base.completed_by ||
+                    mergedApproved[mergedApproved.length - 1],
+                }
+              : {}),
             comments: mergedComments,
             checkpoints: mergedCps,
             approvals: syncedApprovals,
             approval: syncedApprovals,
           };
+          enforceTaskSaklekDone(nextTask, mergedApproved);
+          out[existingIdx] = nextTask;
+          changed = true;
+        } else if (enforceTaskSaklekDone(cur, mergedApproved)) {
           changed = true;
         }
       }
@@ -3886,6 +4026,10 @@ async function startServer() {
         }
         void syncUploadedFilesMapToPostgres(uploadedBase64 as Record<string, string>, db.files || {});
       } catch {}
+    }
+
+    if (normalizeDbTasksSaklek()) {
+      anyChanged = true;
     }
 
     if (anyChanged) {
@@ -4335,7 +4479,7 @@ async function startServer() {
     if (user.status === "pending") {
       return res.status(403).json({
         status: "pending",
-        detail: "Akun Anda sedang dalam proses peninjauan & approval oleh Super Admin. Mohon tunggu persetujuan."
+        detail: "Akun Anda sedang dalam proses peninjauan & approval oleh Super Admin. Mohon tunggu approval."
       });
     }
 
@@ -4470,7 +4614,7 @@ async function startServer() {
         account_vault_entry: buildAccountVaultEntry(newUserObj),
         workspace: db.workspace,
         prefs: db.prefs[newUserObj.user_id] || { theme_mode: "light" },
-        detail: `Pendaftaran berhasil! Email domain ${emailCheck.domain} otomatis disetujui.`
+        detail: `Pendaftaran berhasil! Email domain ${emailCheck.domain} otomatis di-approve.`
       });
     }
 
@@ -4537,7 +4681,7 @@ async function startServer() {
       createNotification({
         user_id: admin.user_id,
         title: "Pendaftaran Akun Baru",
-        body: `${name} (${cleanEmail}) mendaftar akun baru di divisi ${newUserObj.department || selectedDept} dan menunggu persetujuan Super Admin`,
+        body: `${name} (${cleanEmail}) mendaftar akun baru di divisi ${newUserObj.department || selectedDept} dan menunggu approval Super Admin`,
         type: "access_request",
         category: "system",
         access_request: accessReq
@@ -4654,7 +4798,7 @@ async function startServer() {
     if (user && user.status === "pending" && hasCompletedOnboarding && !isAutoApproveEligible) {
       return res.status(403).json({
         status: "pending",
-        detail: "Permintaan akses untuk akun Anda sedang ditinjau oleh Super Admin / Manajer Divisi. Anda dapat masuk setelah disetujui.",
+        detail: "Permintaan akses untuk akun Anda sedang ditinjau oleh Super Admin / Manajer Divisi. Anda dapat masuk setelah di-approve.",
         email: cleanEmail,
         name: user.name
       });
@@ -4833,7 +4977,7 @@ async function startServer() {
             createNotification({
               user_id: admin.user_id,
               title: "Pendaftaran Akun Google Baru",
-              body: `${cleanName} (${cleanEmail}) mendaftar via Google di divisi ${user.department || cleanDept} dan menunggu persetujuan Super Admin`,
+              body: `${cleanName} (${cleanEmail}) mendaftar via Google di divisi ${user.department || cleanDept} dan menunggu approval Super Admin`,
               type: "access_request",
               category: "system",
               access_request: accessReq
@@ -4848,7 +4992,7 @@ async function startServer() {
 
         return res.json({
           status: "registered_pending",
-          detail: "Data diri berhasil disimpan! Permohonan akses akun Google Anda sedang menunggu persetujuan Super Admin.",
+          detail: "Data diri berhasil disimpan! Permohonan akses akun Google Anda sedang menunggu approval Super Admin.",
           user: sanitizeUser(user),
           account_vault_entry: buildAccountVaultEntry(user),
           access_request: accessReq
@@ -4873,7 +5017,7 @@ async function startServer() {
       } else {
         return res.status(403).json({
           status: "pending",
-          detail: "Permintaan akses untuk akun Anda sedang ditinjau oleh Super Admin / Manajer Divisi. Anda dapat masuk setelah disetujui.",
+          detail: "Permintaan akses untuk akun Anda sedang ditinjau oleh Super Admin / Manajer Divisi. Anda dapat masuk setelah di-approve.",
           email: cleanEmail,
           name: user.name
         });
@@ -4934,7 +5078,7 @@ async function startServer() {
       return res.status(404).json({ detail: "Akun dengan email tersebut tidak ditemukan di workspace." });
     }
     if (user.status === "pending") {
-      return res.status(400).json({ detail: "Akun Anda masih menunggu persetujuan pendaftaran awal oleh Super Admin." });
+      return res.status(400).json({ detail: "Akun Anda masih menunggu approval pendaftaran awal oleh Super Admin." });
     }
     if (user.status === "inactive" || user.status === "rejected") {
       return res.status(403).json({ detail: "Akun Anda sedang nonaktif. Silakan hubungi Super Admin workspace." });
@@ -4962,7 +5106,7 @@ async function startServer() {
         success: true,
         request_id: existingReq.id,
         status: "pending",
-        detail: "Password baru pada pengajuan reset Anda telah diperbarui & dienkripsi. Menunggu persetujuan Super Admin / Manajer."
+        detail: "Password baru pada pengajuan reset Anda telah diperbarui & dienkripsi. Menunggu approval Super Admin / Manajer."
       });
     }
 
@@ -5043,7 +5187,7 @@ async function startServer() {
       createNotification({
         user_id: admin.user_id,
         title: "Permintaan Reset Password",
-        body: `${user.name} (${cleanEmail}) mengajukan reset password dan menunggu persetujuan.`,
+        body: `${user.name} (${cleanEmail}) mengajukan reset password dan menunggu approval.`,
         type: "access_request",
         category: "system",
         access_request: accessReq
@@ -5614,7 +5758,7 @@ async function startServer() {
 
     const existingReq = (db.access_requests || []).find((r: any) => r.email?.toLowerCase() === cleanEmail && r.status === "pending");
     if (existingReq) {
-      return res.status(400).json({ detail: "Permintaan akses untuk email ini sudah diajukan dan sedang menunggu persetujuan." });
+      return res.status(400).json({ detail: "Permintaan akses untuk email ini sudah diajukan dan sedang menunggu approval." });
     }
 
     const reqId = `req_${Date.now()}`;
@@ -5736,7 +5880,7 @@ async function startServer() {
   app.post("/api/admin/access-requests/:id/approve", (req, res) => {
     const reqUser = getReqUser(req);
     if (!reqUser || !["super_admin", "workspace_admin", "department_manager", "project_manager"].includes(reqUser.role)) {
-      return res.status(403).json({ detail: "Hanya Admin / Manajer yang dapat menyetujui permintaan akses." });
+      return res.status(403).json({ detail: "Hanya Admin / Manajer yang dapat meng-approve permintaan akses." });
     }
     const { role, department } = req.body || {};
     const accessReq = (db.access_requests || []).find((r: any) => r.id === req.params.id);
@@ -5814,14 +5958,14 @@ async function startServer() {
         id: `log_pwappr_${Date.now()}`,
         actor_id: reqUser.user_id,
         actor_name: accessReq.approved_by,
-        action: `menyetujui reset password untuk ${targetUser.name} (${targetUser.email})`,
+        action: `meng-approve reset password untuk ${targetUser.name} (${targetUser.email})`,
         created_at: new Date().toISOString()
       });
 
       createNotification({
         user_id: targetUser.user_id,
         title: "Password Anda Telah Direset",
-        body: `Permintaan reset password Anda telah disetujui oleh ${accessReq.approved_by}. Silakan login menggunakan password baru Anda.`,
+        body: `Permintaan reset password Anda telah di-approve oleh ${accessReq.approved_by}. Silakan login menggunakan password baru Anda.`,
         type: "system",
         category: "system"
       });
@@ -5881,8 +6025,8 @@ async function startServer() {
     // Notify user of approval
     createNotification({
       user_id: user.user_id,
-      title: "Selamat! Akses Kamu Telah Disetujui",
-      body: `Permohonan akses kamu ke ASLI Workspace (${user.department}) telah disetujui oleh Super Admin.`,
+      title: "Selamat! Akses Kamu Telah Di-approve",
+      body: `Permohonan akses kamu ke ASLI Workspace (${user.department}) telah di-approve oleh Super Admin.`,
       type: "access_approved",
       category: "system"
     });
@@ -6390,7 +6534,7 @@ async function startServer() {
 
     saveDbToFile();
     broadcast({ type: "access_requests:changed" });
-    res.json({ success: true, pending_approval: true, detail: `Permintaan hapus dikirim ke Manajer Divisi ${targetUser.department || "General"} untuk persetujuan.` });
+    res.json({ success: true, pending_approval: true, detail: `Permintaan hapus dikirim ke Manajer Divisi ${targetUser.department || "General"} untuk approval.` });
   });
 
   app.post("/api/me/onboarding", (req, res) => {
@@ -6650,7 +6794,8 @@ async function startServer() {
 
   app.get("/api/tasks", (req, res) => {
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
-    if (autoArchiveCheck() > 0) saveDbToFile();
+    const healedOnRead = normalizeDbTasksSaklek();
+    if (autoArchiveCheck() > 0 || healedOnRead) saveDbToFile();
     const user = getReqUser(req) || currentSessionUser;
     let list = [...db.tasks];
     const { view, project_id, board_id, assignee_id, priority, label, department, item_type, q, month, archived } = req.query;
@@ -6754,13 +6899,31 @@ async function startServer() {
     // Access control: Division-restricted access + invited board members + assigned users
     list = list.filter((t: any) => isTaskAccessible(t, user));
 
-    // Always compute status compliance automatically (if Done after deadline -> Overdue) and normalize requestor fields
+    // Always compute status compliance automatically (if Done after deadline -> Overdue) and normalize requestor & 2/2 approval fields
     list.forEach((t: any) => {
       const reqIds = Array.isArray(t.requestor_ids) && t.requestor_ids.length
         ? t.requestor_ids
         : (t.requestor_id ? [t.requestor_id] : (t.created_by ? [t.created_by] : []));
       t.requestor_ids = reqIds;
       t.requestor_id = reqIds[0] || t.created_by || null;
+
+      const approvedArr = Array.isArray(t.approvals?.approved_by)
+        ? t.approvals.approved_by.filter(Boolean)
+        : Array.isArray(t.approval?.approved_by)
+        ? t.approval.approved_by.filter(Boolean)
+        : [];
+      if (approvedArr.length >= 2 && t.status !== "done") {
+        t.status = "done";
+        t.progress = 100;
+        t.completed_at = t.completed_at || t.updated_at || new Date().toISOString();
+        t.approvals = {
+          needed: 2,
+          ...(t.approvals || t.approval || {}),
+          approved_by: approvedArr,
+          status: "approved",
+        };
+        t.approval = t.approvals;
+      }
 
       const isDone = t.status === "done";
       if (isDone) {
@@ -7379,8 +7542,8 @@ async function startServer() {
       if (u.user_id === reqUser.user_id) return;
       createNotification({
         user_id: u.user_id,
-        title: `Persetujuan Hapus Arsip ${monthLabel}`,
-        body: `${reqUser.name || "Rekan tim"} mengajukan penghapusan seluruh arsip bulan ${monthLabel} (${monthTasks.length} tugas). Butuh minimal 2 persetujuan.`,
+        title: `Approval Hapus Arsip ${monthLabel}`,
+        body: `${reqUser.name || "Rekan tim"} mengajukan penghapusan seluruh arsip bulan ${monthLabel} (${monthTasks.length} tugas). Butuh minimal 2 approval.`,
         type: "archive_month_delete",
         category: "tasks",
         actor_id: reqUser.user_id,
@@ -7396,7 +7559,7 @@ async function startServer() {
       id: `log_${Date.now()}`,
       actor_id: reqUser.user_id,
       actor_name: reqUser.name || "User",
-      action: `mengajukan hapus arsip 1 bulan penuh (${monthLabel}, ${monthTasks.length} tugas) — menunggu 2 persetujuan`,
+      action: `mengajukan hapus arsip 1 bulan penuh (${monthLabel}, ${monthTasks.length} tugas) — menunggu 2 approval`,
       created_at: nowIso,
     });
 
@@ -7427,7 +7590,7 @@ async function startServer() {
     const isAuthorized =
       ["super_admin", "workspace_admin", "manager", "department_manager", "project_manager"].includes(reqUser.role) || adminApproversCount < 2;
     if (!isAuthorized) {
-      return res.status(403).json({ detail: "Hanya Super Admin, Workspace Admin, atau Manajer yang dapat menyetujui penghapusan 1 bulan arsip." });
+      return res.status(403).json({ detail: "Hanya Super Admin, Workspace Admin, atau Manajer yang dapat meng-approve penghapusan 1 bulan arsip." });
     }
 
     const nowIso = new Date().toISOString();
@@ -7489,7 +7652,7 @@ async function startServer() {
         id: `log_${Date.now()}`,
         actor_id: reqUser.user_id,
         actor_name: reqUser.name || "Admin",
-        action: `menyetujui (${approvedCount}/${needed}) dan menghapus arsip bulan ${reqObj.month_label} (${deletedCount} tugas)`,
+        action: `meng-approve (${approvedCount}/${needed}) dan menghapus arsip bulan ${reqObj.month_label} (${deletedCount} tugas)`,
         created_at: nowIso,
       });
 
@@ -7499,7 +7662,7 @@ async function startServer() {
         createNotification({
           user_id: uid,
           title: `Arsip ${reqObj.month_label} Dihapus`,
-          body: `Persetujuan ${approvedCount}/${needed} terpenuhi. Sebanyak ${deletedCount} tugas arsip bulan ${reqObj.month_label} telah dihapus permanen.`,
+          body: `Approval ${approvedCount}/${needed} terpenuhi. Sebanyak ${deletedCount} tugas arsip bulan ${reqObj.month_label} telah dihapus permanen.`,
           type: "archive_month_deleted",
           category: "tasks",
           actor_id: reqUser.user_id,
@@ -7539,27 +7702,39 @@ async function startServer() {
   });
 
   app.post("/api/tasks/bulk", (req, res) => {
-    const { ids, patch } = req.body;
+    const { ids, patch } = req.body || {};
     let updated = 0;
-    if (Array.isArray(ids)) {
+    if (Array.isArray(ids) && patch && typeof patch === "object") {
       ids.forEach((id: string) => {
         const t = db.tasks.find((x: any) => x.id === id);
         if (t) {
-          if (patch.assignee_id && !patch.assignee_ids) {
-            patch.assignee_ids = [patch.assignee_id];
-          } else if (patch.assignee_ids && !patch.assignee_id) {
-            patch.assignee_id = patch.assignee_ids[0] || null;
+          enforceTaskSaklekDone(t);
+          const isLocked = getTaskApprovedList(t).length >= 2;
+          const safePatch: any = { ...patch };
+          if (isLocked) {
+            if (safePatch.status !== undefined && safePatch.status !== "done") {
+              delete safePatch.status;
+              delete safePatch.progress;
+              delete safePatch.completed_at;
+              delete safePatch.completed_by;
+            }
           }
-          Object.assign(t, patch);
-          if (patch.assignee_id && Array.isArray(t.checkpoints)) {
+          if (safePatch.assignee_id && !safePatch.assignee_ids) {
+            safePatch.assignee_ids = [safePatch.assignee_id];
+          } else if (safePatch.assignee_ids && !safePatch.assignee_id) {
+            safePatch.assignee_id = safePatch.assignee_ids[0] || null;
+          }
+          Object.assign(t, safePatch);
+          if (safePatch.assignee_id && Array.isArray(t.checkpoints)) {
             t.checkpoints = t.checkpoints.map((c: any) =>
-              c && !c.assignee_id && !c.unassigned ? { ...c, assignee_id: patch.assignee_id } : c
+              c && !c.assignee_id && !c.unassigned ? { ...c, assignee_id: safePatch.assignee_id } : c
             );
           }
-          if (patch.archived) {
+          if (safePatch.archived) {
             t.archived_at = t.archived_at || new Date().toISOString();
             t.archived_month = t.archived_month || new Date().toISOString().slice(0, 7);
           }
+          enforceTaskSaklekDone(t);
           t.updated_at = new Date().toISOString();
           updated++;
         }
@@ -7645,39 +7820,13 @@ async function startServer() {
       ? t.requestor_ids
       : (t.requestor_id ? [t.requestor_id] : (t.created_by ? [t.created_by] : []));
 
-    const cardMsgs = (db.messages || []).filter((m: any) => m && m.task_id === t.id && m.type === "approval_card");
-    const msgApproved = cardMsgs.flatMap((m: any) =>
-      Array.isArray(m.approvals?.approved_by)
-        ? m.approvals.approved_by
-        : Array.isArray(m.task?.approvals?.approved_by)
-        ? m.task.approvals.approved_by
-        : []
-    );
-    const mergedApproved = Array.from(
-      new Set([
-        ...(Array.isArray(t.approvals?.approved_by) ? t.approvals.approved_by : []),
-        ...(Array.isArray(t.approval?.approved_by) ? t.approval.approved_by : []),
-        ...msgApproved,
-      ].filter(Boolean))
-    );
-    const syncedApprovals = {
-      needed: 2,
-      ...(t.approvals || t.approval || {}),
-      approved_by: mergedApproved,
-      status:
-        mergedApproved.length >= 2 || t.status === "done"
-          ? "approved"
-          : mergedApproved.length === 1
-          ? "partial"
-          : (t.approvals?.status || t.approval?.status || "pending"),
-    };
-    t.approvals = syncedApprovals;
-    t.approval = syncedApprovals;
+    const healedDetail = enforceTaskSaklekDone(t);
+    const mergedApproved = getTaskApprovedList(t);
+    const syncedApprovals = t.approvals;
     if (mergedApproved.length === 1 && (!Array.isArray(t.checkpoints) || t.checkpoints.length === 0) && (Number(t.progress) || 0) < 50) {
       t.progress = 50;
-    } else if (mergedApproved.length >= 2) {
-      t.progress = 100;
     }
+    if (healedDetail) saveDbToFile();
 
     res.json({
       ...t,
@@ -7695,6 +7844,13 @@ async function startServer() {
     const user = getReqUser(req) || currentSessionUser;
     if (!isTaskAccessible(t, user)) {
       return res.status(403).json({ detail: "Akses ditolak. Anda tidak memiliki izin untuk mengedit tugas divisi lain." });
+    }
+    enforceTaskSaklekDone(t);
+    const isLockedByApproval = getTaskApprovedList(t).length >= 2;
+    if (isLockedByApproval && req.body?.status !== undefined && req.body.status !== "done") {
+      return res.status(409).json({
+        detail: "Tugas sudah mencapai 2/2 Approval (100%) dan terkunci saklek di Done."
+      });
     }
 
     const actorId = user?.user_id || "user_admin1";
@@ -8127,16 +8283,22 @@ async function startServer() {
 
       // Recalculate progress percentage and auto-sync status when checkpoints complete
       const doneTotal = newCheckpoints.filter((c: any) => c.done).length;
-      req.body.progress = newCheckpoints.length > 0 ? Math.round((doneTotal / newCheckpoints.length) * 100) : (t.status === "done" ? 100 : 0);
-      if (newCheckpoints.length > 0 && req.body.status === undefined) {
-        if (doneTotal === newCheckpoints.length && t.status !== "done") {
-          req.body.status = "done";
-          req.body.completed_at = t.completed_at || patchNowIso;
-        } else if (doneTotal < newCheckpoints.length && t.status === "done") {
-          req.body.status = doneTotal > 0 ? "in_progress" : "todo";
-          req.body.completed_at = null;
-        } else if (doneTotal > 0 && t.status === "todo") {
-          req.body.status = "in_progress";
+      if (isLockedByApproval) {
+        req.body.progress = 100;
+        req.body.status = "done";
+        req.body.completed_at = t.completed_at || patchNowIso;
+      } else {
+        req.body.progress = newCheckpoints.length > 0 ? Math.round((doneTotal / newCheckpoints.length) * 100) : (t.status === "done" ? 100 : 0);
+        if (newCheckpoints.length > 0 && req.body.status === undefined) {
+          if (doneTotal === newCheckpoints.length && t.status !== "done") {
+            req.body.status = "done";
+            req.body.completed_at = t.completed_at || patchNowIso;
+          } else if (doneTotal < newCheckpoints.length && t.status === "done") {
+            req.body.status = doneTotal > 0 ? "in_progress" : "todo";
+            req.body.completed_at = null;
+          } else if (doneTotal > 0 && t.status === "todo") {
+            req.body.status = "in_progress";
+          }
         }
       }
 
@@ -8323,15 +8485,45 @@ async function startServer() {
       }
       if (req.body.progress === undefined) req.body.progress = 100;
     } else {
-      if (t.status === "done" && req.body.status !== "done") {
+      if (t.status === "done" && effectiveStatus !== "done") {
         t.completed_at = null;
+        t.completed_by = null;
         req.body.completed_at = null;
+        const existingAppCount = Array.isArray(t.approvals?.approved_by)
+          ? t.approvals.approved_by.length
+          : Array.isArray(t.approval?.approved_by)
+          ? t.approval.approved_by.length
+          : 0;
+        if (existingAppCount >= 2 || t.approvals?.status === "approved") {
+          const resetApprovals = {
+            needed: 2,
+            approved_by: [],
+            status: "pending",
+            revised_by: actorId,
+            revision_note: "",
+          };
+          t.approvals = resetApprovals;
+          t.approval = resetApprovals;
+          (db.messages || []).forEach((m: any) => {
+            if (m.task_id === t.id && m.type === "approval_card") {
+              m.task = { ...t, status: effectiveStatus, approvals: resetApprovals, approval: resetApprovals };
+              m.approvals = { ...resetApprovals };
+              broadcast({ type: "message:update", data: m });
+            }
+          });
+        }
       }
       if (effectiveDeadline && new Date() > new Date(effectiveDeadline)) {
         req.body.deadline_compliance = "Overdue";
       } else {
         req.body.deadline_compliance = "In Progress";
       }
+    }
+
+    // Never allow client PATCH payload to clobber 2/2 approvals
+    if (isLockedByApproval) {
+      delete req.body.approvals;
+      delete req.body.approval;
     }
 
     req.body.updated_at = new Date().toISOString();
@@ -8344,6 +8536,7 @@ async function startServer() {
     if (cpAddedCollaborators.length > 0) {
       t.collaborator_ids = Array.from(new Set([...(Array.isArray(t.collaborator_ids) ? t.collaborator_ids : []), ...cpAddedCollaborators]));
     }
+    enforceTaskSaklekDone(t);
 
     // Notify newly assigned users
     if (Array.isArray(t.assignee_ids)) {
@@ -11281,6 +11474,8 @@ async function startServer() {
 
     setUserOnlineStatus(uid, true);
 
+    if (normalizeDbTasksSaklek() || autoArchiveCheck() > 0) saveDbToFile();
+
     const rev = Number(db.revision || 0);
     const etag = `W/"boot-${uid}-${rev}"`;
     res.setHeader("ETag", etag);
@@ -11288,8 +11483,6 @@ async function startServer() {
     if (req.headers["if-none-match"] === etag) {
       return res.status(304).end();
     }
-
-    if (autoArchiveCheck() > 0) saveDbToFile();
 
     const myNotifs = (db.notifications || []).filter((n: any) => n.user_id === uid);
     const unreadNotifs = myNotifs.filter((n: any) => !n.read).length;
@@ -11301,7 +11494,12 @@ async function startServer() {
         const reqIds = Array.isArray(t.requestor_ids) && t.requestor_ids.length
           ? t.requestor_ids
           : (t.requestor_id ? [t.requestor_id] : (t.created_by ? [t.created_by] : []));
-        const isDone = t.status === "done";
+        const approvedArr = Array.isArray(t.approvals?.approved_by)
+          ? t.approvals.approved_by.filter(Boolean)
+          : Array.isArray(t.approval?.approved_by)
+          ? t.approval.approved_by.filter(Boolean)
+          : [];
+        const isDone = t.status === "done" || approvedArr.length >= 2;
         const completedAt = isDone ? (t.completed_at || t.updated_at || new Date(nowMs).toISOString()) : t.completed_at;
         let compliance = "In Progress";
         if (isDone) {
@@ -11311,6 +11509,18 @@ async function startServer() {
         }
         return {
           ...t,
+          ...(approvedArr.length >= 2 && t.status !== "done"
+            ? {
+                status: "done",
+                progress: 100,
+                approvals: {
+                  needed: 2,
+                  ...(t.approvals || t.approval || {}),
+                  approved_by: approvedArr,
+                  status: "approved",
+                },
+              }
+            : {}),
           requestor_ids: reqIds,
           requestor_id: reqIds[0] || t.created_by || null,
           ...(isDone && completedAt ? { completed_at: completedAt } : {}),
@@ -11596,7 +11806,7 @@ async function startServer() {
           detail: msgGroupType === "department"
             ? "Grup divisi hanya dapat diikuti melalui undangan."
             : msgGroupType === "private"
-            ? "Grup privat memerlukan persetujuan bergabung sebelum mengirim pesan."
+            ? "Grup privat memerlukan approval bergabung sebelum mengirim pesan."
             : "Anda bukan anggota percakapan ini"
         });
       }
@@ -12058,7 +12268,7 @@ async function startServer() {
         has_pending_request: true,
         is_member: false,
         group: updatedGroup || primary,
-        detail: `Permintaan bergabung ke "${primary.name}" telah dikirim ke admin grup untuk persetujuan.`,
+        detail: `Permintaan bergabung ke "${primary.name}" telah dikirim ke admin grup untuk approval.`,
       });
     }
 
@@ -12285,7 +12495,7 @@ async function startServer() {
     const primary = (db.groups || []).find((x: any) => x.id === req.params.id) || (db.conversations || []).find((x: any) => x.id === req.params.id);
     if (!primary) return res.status(404).json({ detail: "Grup tidak ditemukan." });
     if (!isGroupAdmin(primary, reqUser)) {
-      return res.status(403).json({ detail: "Hanya pembuat atau admin grup yang dapat menyetujui permintaan bergabung." });
+      return res.status(403).json({ detail: "Hanya pembuat atau admin grup yang dapat meng-approve permintaan bergabung." });
     }
 
     let updatedGroup: any = null;
@@ -12310,8 +12520,8 @@ async function startServer() {
 
     createNotification({
       user_id: targetUid,
-      title: `Disetujui Masuk Grup "${primary.name}"`,
-      body: `${reqUser.name || "Admin Grup"} menyetujui permintaan Anda untuk bergabung ke "${primary.name}".`,
+      title: `Approved Masuk Grup "${primary.name}"`,
+      body: `${reqUser.name || "Admin Grup"} meng-approve permintaan Anda untuk bergabung ke "${primary.name}".`,
       type: "group_join_approved",
       category: "system",
       actor_id: reqUser.user_id,
@@ -12351,7 +12561,7 @@ async function startServer() {
     createNotification({
       user_id: targetUid,
       title: `Permintaan Masuk "${primary.name}" Ditolak`,
-      body: `Permintaan Anda untuk bergabung ke grup privat "${primary.name}" tidak disetujui.`,
+      body: `Permintaan Anda untuk bergabung ke grup privat "${primary.name}" tidak di-approve.`,
       type: "group_join_rejected",
       category: "system",
       actor_id: reqUser.user_id,
@@ -12833,13 +13043,20 @@ async function startServer() {
     const actorId = actor?.user_id || "user_admin1";
     const actorName = actor?.name || "User";
     
-    // Set task to in_review and initialize 2-person approval structure
-    task.status = "in_review";
-    const existingApproved = Array.isArray(task.approvals?.approved_by)
-      ? task.approvals.approved_by
-      : Array.isArray(task.approval?.approved_by)
-      ? task.approval.approved_by
-      : [];
+    enforceTaskSaklekDone(task);
+    const existingApproved = getTaskApprovedList(task);
+    // Preserve Done if 2 approvals already collected; otherwise transition to In Review for 2-person approval
+    if (existingApproved.length >= 2) {
+      task.status = "done";
+      task.progress = 100;
+      task.completed_at = task.completed_at || new Date().toISOString();
+      task.deadline_compliance = task.deadline
+        ? (new Date(task.completed_at) > new Date(task.deadline) ? "Overdue" : "On time")
+        : "On time";
+    } else {
+      task.status = "in_review";
+      task.deadline_compliance = task.deadline && new Date() > new Date(task.deadline) ? "Overdue" : "In Progress";
+    }
     task.approvals = {
       needed: 2,
       approved_by: existingApproved,
@@ -12870,7 +13087,10 @@ async function startServer() {
     const shareAct = {
       id: `act_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       actor_id: actorId,
-      action: `mengirimkan preview tugas ke grup untuk review & approval (status: In Review)`,
+      action:
+        task.status === "done"
+          ? `mengirimkan preview tugas yang sudah Done (2/2 Approved) ke grup`
+          : `mengirimkan preview tugas ke grup untuk review & approval (status: In Review)`,
       task_id: task.id,
       task_title: task.title,
       created_at: new Date().toISOString()
@@ -12901,11 +13121,8 @@ async function startServer() {
     const userId = actor?.user_id || "user_admin1";
     const actorName = actor?.name || "User";
 
-    const prevApproved = Array.isArray(task.approvals?.approved_by)
-      ? task.approvals.approved_by
-      : Array.isArray(task.approval?.approved_by)
-      ? task.approval.approved_by
-      : [];
+    enforceTaskSaklekDone(task);
+    const prevApproved = getTaskApprovedList(task);
 
     task.approvals = {
       needed: 2,
@@ -12924,15 +13141,24 @@ async function startServer() {
       const count = task.approvals.approved_by.length;
 
       if (count >= 2) {
+        const nowIso = new Date().toISOString();
+        const wasAlreadyDone = task.status === "done";
         task.status = "done";
-        task.completed_at = new Date().toISOString();
-        task.completed_by = userId;
+        if (!wasAlreadyDone || !task.completed_at) {
+          task.completed_at = nowIso;
+        }
+        if (!wasAlreadyDone || !task.completed_by) {
+          task.completed_by = userId;
+        }
         task.progress = 100;
         task.approvals.status = "approved";
+        task.deadline_compliance = task.deadline
+          ? (new Date(task.completed_at) > new Date(task.deadline) ? "Overdue" : "On time")
+          : "On time";
         if (Array.isArray(task.checkpoints) && task.checkpoints.length > 0) {
           task.checkpoints = task.checkpoints.map((cp: any) =>
             cp && !cp.done
-              ? { ...cp, done: true, done_at: new Date().toISOString(), done_by: userId }
+              ? { ...cp, done: true, done_at: cp.done_at || nowIso, done_by: userId }
               : cp
           );
         }
@@ -12945,7 +13171,7 @@ async function startServer() {
             : `memberikan approval tambahan (${count} orang) untuk tugas.`,
           task_id: task.id,
           task_title: task.title,
-          created_at: new Date().toISOString()
+          created_at: nowIso
         };
         task.activity.unshift(finalAct);
         db.activity.unshift(finalAct);
@@ -12955,9 +13181,9 @@ async function startServer() {
           actor_id: userId,
           actor_name: actorName,
           action: count === 2
-            ? `menyetujui approval (2/2) tugas ${task.number_str} (status otomatis Done)`
-            : `menyetujui approval tambahan (${count} orang) tugas ${task.number_str}`,
-          created_at: new Date().toISOString()
+            ? `meng-approve (2/2) tugas ${task.number_str} (status otomatis Done)`
+            : `meng-approve tambahan (${count} orang) tugas ${task.number_str}`,
+          created_at: nowIso
         });
       } else {
         task.approvals.status = "partial";
@@ -12967,7 +13193,7 @@ async function startServer() {
         const partAct = {
           id: `act_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
           actor_id: userId,
-          action: `menyetujui tugas (1/2 approval terkumpul - 50%)`,
+          action: `meng-approve tugas (1/2 approval terkumpul - 50%)`,
           task_id: task.id,
           task_title: task.title,
           created_at: new Date().toISOString()
@@ -12976,10 +13202,20 @@ async function startServer() {
         db.activity.unshift(partAct);
       }
     } else if (decision === "revise") {
+      if (prevApproved.length >= 2) {
+        return res.status(409).json({
+          detail: "Tugas ini sudah mencapai 2/2 Approval (100%) dan terkunci saklek di Done."
+        });
+      }
+      const reviseNowIso = new Date().toISOString();
       task.status = "in_progress";
+      task.completed_at = null;
+      task.completed_by = null;
+      task.deadline_compliance = task.deadline && new Date() > new Date(task.deadline) ? "Overdue" : "In Progress";
       task.approvals.approved_by = [];
       task.approvals.status = "revised";
       task.approvals.revised_by = userId;
+      task.approvals.revised_at = reviseNowIso;
       task.approvals.revision_note = note ? String(note) : "";
       if (!Array.isArray(task.checkpoints) || task.checkpoints.length === 0) {
         task.progress = 0;
@@ -13941,7 +14177,7 @@ async function startServer() {
       req.body?.require_approval !== undefined;
     if (touchesAccessPolicy && !["super_admin", "workspace_admin"].includes(reqUser.role)) {
       return res.status(403).json({
-        detail: "Hanya Super Admin atau Workspace Admin yang dapat mengubah kebijakan domain & persetujuan masuk.",
+        detail: "Hanya Super Admin atau Workspace Admin yang dapat mengubah kebijakan domain & approval masuk.",
       });
     }
 
@@ -14502,7 +14738,168 @@ async function startServer() {
     return decodeHtmlEntities(String(fallbackTitle || "").replace(/^▶\s*/, "")).trim().slice(0, 320);
   }
 
-  async function fetchInstagramPublicMeta(username: string, postUrl?: string, shortcode?: string) {
+  const IG_AVATARS_DIR = path.join(UPLOADS_DIR, "ig_avatars");
+  try {
+    if (!fs.existsSync(IG_AVATARS_DIR)) {
+      fs.mkdirSync(IG_AVATARS_DIR, { recursive: true });
+    }
+  } catch {}
+
+  function sanitizeIgUsername(raw: string): string {
+    const clean = String(raw || "")
+      .trim()
+      .replace(/^@/, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9._]/g, "");
+    if (!clean || clean.length > 64 || clean.includes("..")) return "";
+    return clean;
+  }
+
+  function isAllowedInstagramMediaUrl(rawUrl: string): boolean {
+    try {
+      const u = new URL(rawUrl);
+      if (u.protocol !== "https:") return false;
+      if (u.username || u.password) return false;
+      if (u.port && u.port !== "443") return false;
+      const host = u.hostname.toLowerCase();
+      if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) || host.includes(":")) return false;
+      if (host.endsWith(".cdninstagram.com") || host.endsWith(".fbcdn.net")) {
+        return true;
+      }
+      if ((host === "www.instagram.com" || host === "instagram.com") && /^\/(?:p|reel|tv)\/[A-Za-z0-9_-]+\/media\/?$/i.test(u.pathname)) {
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  function getIgAvatarCachePaths(username: string) {
+    const safe = sanitizeIgUsername(username);
+    if (!safe) return null;
+    const dataPath = path.join(IG_AVATARS_DIR, `${safe}.bin`);
+    const metaPath = path.join(IG_AVATARS_DIR, `${safe}.json`);
+    if (!dataPath.startsWith(IG_AVATARS_DIR) || !metaPath.startsWith(IG_AVATARS_DIR)) return null;
+    return { safe, dataPath, metaPath };
+  }
+
+  function readCachedIgAvatarMeta(username: string): {
+    exists: boolean;
+    cachedAt: number;
+    contentType: string;
+    dataPath: string;
+  } | null {
+    const paths = getIgAvatarCachePaths(username);
+    if (!paths) return null;
+    try {
+      if (!fs.existsSync(paths.dataPath)) return null;
+      const stat = fs.statSync(paths.dataPath);
+      if (!stat.isFile() || stat.size < 100) return null;
+      let contentType = "image/jpeg";
+      let cachedAt = stat.mtimeMs;
+      if (fs.existsSync(paths.metaPath)) {
+        try {
+          const parsed = JSON.parse(fs.readFileSync(paths.metaPath, "utf8"));
+          if (parsed?.contentType && String(parsed.contentType).startsWith("image/")) {
+            contentType = String(parsed.contentType);
+          }
+          if (Number.isFinite(Number(parsed?.cachedAt))) {
+            cachedAt = Number(parsed.cachedAt);
+          }
+        } catch {}
+      }
+      return { exists: true, cachedAt, contentType, dataPath: paths.dataPath };
+    } catch {
+      return null;
+    }
+  }
+
+  async function cacheIgAvatarToDisk(
+    username: string,
+    imageUrl: string
+  ): Promise<{ contentType: string; buf: Buffer; cachedAt: number } | null> {
+    const paths = getIgAvatarCachePaths(username);
+    if (!paths || !imageUrl || !isAllowedInstagramMediaUrl(imageUrl)) return null;
+    try {
+      if (!fs.existsSync(IG_AVATARS_DIR)) {
+        fs.mkdirSync(IG_AVATARS_DIR, { recursive: true });
+      }
+      const upstream = await fetch(imageUrl, {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+          Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        },
+        redirect: "follow",
+        signal: AbortSignal.timeout(7000),
+      });
+      const contentType = upstream.headers.get("content-type") || "";
+      if (!upstream.ok || !contentType.startsWith("image/")) return null;
+      const buf = Buffer.from(await upstream.arrayBuffer());
+      if (buf.length < 150 || buf.length > 5 * 1024 * 1024) return null;
+      const cachedAt = Date.now();
+      await fs.promises.writeFile(paths.dataPath, buf);
+      await fs.promises.writeFile(
+        paths.metaPath,
+        JSON.stringify({ contentType, cachedAt, sourceUrl: imageUrl }),
+        "utf8"
+      );
+      return { contentType, buf, cachedAt };
+    } catch {
+      return null;
+    }
+  }
+
+  let igHtmlQueuePromise: Promise<void> = Promise.resolve();
+  let lastIgHtmlFetchAt = 0;
+
+  function enqueueIgHtmlFetch<T>(fn: () => Promise<T>, minGapMs = 850): Promise<T> {
+    const run = igHtmlQueuePromise.then(async () => {
+      const wait = Math.max(0, lastIgHtmlFetchAt + minGapMs - Date.now());
+      if (wait > 0) {
+        await new Promise((r) => setTimeout(r, wait));
+      }
+      lastIgHtmlFetchAt = Date.now();
+      return fn();
+    });
+    igHtmlQueuePromise = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return run;
+  }
+
+  function extractOgMetaFromHtml(html: string) {
+    const extractMeta = (prop: string) => {
+      const m =
+        html.match(new RegExp(`<meta[^>]+(?:property|name)=["']${prop}["'][^>]+content=["']([^"']+)["']`, "i")) ||
+        html.match(new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']${prop}["']`, "i"));
+      return m ? decodeHtmlEntities(m[1]) : "";
+    };
+    return {
+      ogTitle: extractMeta("og:title"),
+      twTitle: extractMeta("twitter:title"),
+      ogDesc: extractMeta("og:description") || extractMeta("description"),
+      ogImage: extractMeta("og:image"),
+    };
+  }
+
+  function isValidProfileAvatarUrl(url: string): boolean {
+    if (!url || !isAllowedInstagramMediaUrl(url)) return false;
+    const lower = url.toLowerCase();
+    if (lower.includes("static.cdninstagram.com/rsrc.php")) return false;
+    if (lower.includes("static.cdninstagram.com")) return false;
+    if (lower.includes("threads_logo")) return false;
+    return true;
+  }
+
+  async function fetchInstagramPublicMeta(
+    username: string,
+    postUrl?: string,
+    shortcode?: string,
+    options?: { forceAvatar?: boolean }
+  ) {
     const result: {
       display_name?: string;
       avatar_url?: string;
@@ -14514,6 +14911,8 @@ async function startServer() {
       latest_media_count?: number;
       latest_is_video?: boolean;
       followers_text?: string;
+      has_cached_avatar?: boolean;
+      avatar_cached_at?: number;
     } = {};
 
     const browserHeaders = {
@@ -14521,166 +14920,136 @@ async function startServer() {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
       Accept: "application/json,text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
     };
 
-    // 1. Primary Latest-Post Resolver via RSS-Bridge JSON Feed (retrieves real latest post URL, media & caption)
+    const existingAvatarCache = username ? readCachedIgAvatarMeta(username) : null;
+    if (existingAvatarCache?.exists) {
+      result.has_cached_avatar = true;
+      result.avatar_cached_at = existingAvatarCache.cachedAt;
+    }
+
+    // 1. Parallel Latest-Post Resolver across all RSS-Bridge mirrors (never break on first cached bridge!)
     if (username && !shortcode) {
       const bridgeBases = [
-        "https://rss-bridge.org/bridge01/",
         "https://wtf.roflcopter.fr/rss-bridge/",
+        "https://rss-bridge.org/bridge01/",
       ];
-      for (const base of bridgeBases) {
-        if (result.latest_shortcode) break;
-        try {
+      const bridgeResponses = await Promise.allSettled(
+        bridgeBases.map(async (base) => {
           const bridgeUrl = `${base}?action=display&bridge=InstagramBridge&context=Username&u=${encodeURIComponent(username)}&media_type=all&format=Json`;
           const resp = await fetch(bridgeUrl, {
             headers: browserHeaders,
-            signal: AbortSignal.timeout(7000),
+            signal: AbortSignal.timeout(8000),
           });
-          if (!resp.ok) continue;
+          if (!resp.ok) return [];
           const json: any = await resp.json();
-          const items = Array.isArray(json?.items) ? json.items : [];
-          if (items.length > 0) {
-            const latest = items[0];
-            const itemUrl = String(latest?.url || latest?.id || "").trim();
-            const scMatch = itemUrl.match(/instagram\.com\/(?:[^/]+\/)?(?:p|reel|tv)\/([A-Za-z0-9_-]+)/i);
-            if (scMatch && scMatch[1]) {
-              result.latest_shortcode = scMatch[1];
-              result.latest_post_url = itemUrl.includes("instagram.com/")
-                ? itemUrl
-                : `https://www.instagram.com/p/${scMatch[1]}/`;
-            }
-            const attachments = Array.isArray(latest?.attachments) ? latest.attachments : [];
-            const imageAtt = attachments.find(
-              (a: any) =>
-                a?.url &&
-                (String(a?.mime_type || "").startsWith("image/") ||
-                  String(a.url).includes("cdninstagram") ||
-                  String(a.url).includes("/media"))
-            );
-            const htmlImgMatch = String(latest?.content_html || "").match(/<img[^>]+src="([^"]+)"/i);
-            const thumbCandidate =
-              latest?._rssbridge?.thumbnail ||
-              latest?.image ||
-              imageAtt?.url ||
-              (htmlImgMatch ? decodeHtmlEntities(htmlImgMatch[1]) : "");
-            if (thumbCandidate) {
-              result.latest_thumb = String(thumbCandidate);
-            }
-            const isVideo = Boolean(
-              String(latest?.content_html || "").includes("<video") ||
-                String(latest?.title || "").trim().startsWith("▶") ||
-                itemUrl.includes("/reel/")
-            );
-            result.latest_is_video = isVideo;
-            result.latest_media_count = Math.max(1, attachments.length || 1);
-            const cleanedCaption = cleanRssHtmlCaption(latest?.content_html || "", latest?.title || "");
-            if (cleanedCaption) {
-              result.latest_caption = cleanedCaption;
-            }
-            if (latest?.date_modified || latest?.date_published) {
-              result.latest_posted_at = String(latest.date_modified || latest.date_published);
-            }
-            if (latest?.author?.name && !result.display_name) {
-              const authName = String(latest.author.name).trim();
-              if (authName && authName.toLowerCase() !== username.toLowerCase()) {
-                result.display_name = authName;
-              }
-            }
-          }
-        } catch {}
-      }
-    }
+          return Array.isArray(json?.items) ? json.items : [];
+        })
+      );
 
-    // 2. Opportunistic direct Instagram web_profile_info (may return 429 on shared IPs, safe fallback)
-    try {
-      if (username && (!result.latest_shortcode || !result.avatar_url || !result.display_name)) {
-        const apiResp = await fetch(
-          `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`,
-          {
-            headers: {
-              ...browserHeaders,
-              "x-ig-app-id": "936619743392459",
-              Referer: `https://www.instagram.com/${username}/`,
-            },
-            signal: AbortSignal.timeout(3500),
-          }
+      const allItems: Array<{ item: any; ts: number; sc: string; url: string }> = [];
+      for (const settled of bridgeResponses) {
+        if (settled.status !== "fulfilled" || !Array.isArray(settled.value)) continue;
+        for (const item of settled.value) {
+          const itemUrl = String(item?.url || item?.id || "").trim();
+          const scMatch = itemUrl.match(/instagram\.com\/(?:[^/]+\/)?(?:p|reel|tv)\/([A-Za-z0-9_-]+)/i);
+          if (!scMatch?.[1]) continue;
+          const rawDate = String(item?.date_modified || item?.date_published || "");
+          const parsedTs = rawDate ? Date.parse(rawDate) : 0;
+          allItems.push({
+            item,
+            ts: Number.isFinite(parsedTs) ? parsedTs : 0,
+            sc: scMatch[1],
+            url: itemUrl.includes("instagram.com/")
+              ? itemUrl
+              : `https://www.instagram.com/p/${scMatch[1]}/`,
+          });
+        }
+      }
+
+      if (allItems.length > 0) {
+        // Sort strictly newest-first by post publish/modified timestamp
+        allItems.sort((a, b) => {
+          if (b.ts !== a.ts) return b.ts - a.ts;
+          const aScore = (Array.isArray(a.item?.attachments) ? a.item.attachments.length : 0) + (a.item?.content_html ? 1 : 0);
+          const bScore = (Array.isArray(b.item?.attachments) ? b.item.attachments.length : 0) + (b.item?.content_html ? 1 : 0);
+          return bScore - aScore;
+        });
+
+        const picked = allItems[0];
+        const latest = picked.item;
+        result.latest_shortcode = picked.sc;
+        result.latest_post_url = picked.url;
+
+        const attachments = Array.isArray(latest?.attachments) ? latest.attachments : [];
+        const imageAtt = attachments.find(
+          (a: any) =>
+            a?.url &&
+            (String(a?.mime_type || "").startsWith("image/") ||
+              String(a.url).includes("cdninstagram") ||
+              String(a.url).includes("/media"))
         );
-        if (apiResp.ok) {
-          const json: any = await apiResp.json();
-          const user = json?.data?.user;
-          if (user) {
-            if (!result.display_name && user.full_name) result.display_name = user.full_name;
-            if (!result.avatar_url) {
-              result.avatar_url = user.profile_pic_url_hd || user.profile_pic_url || "";
-            }
-            const edges = user.edge_owner_to_timeline_media?.edges;
-            if (!result.latest_shortcode && Array.isArray(edges) && edges.length > 0) {
-              const latestNode = edges[0]?.node;
-              if (latestNode?.shortcode) {
-                result.latest_shortcode = latestNode.shortcode;
-                result.latest_post_url = `https://www.instagram.com/p/${latestNode.shortcode}/`;
-                result.latest_thumb = latestNode.display_url || latestNode.thumbnail_src || result.latest_thumb || "";
-                result.latest_is_video = Boolean(latestNode.is_video);
-                const capEdges = latestNode.edge_media_to_caption?.edges;
-                if (Array.isArray(capEdges) && capEdges[0]?.node?.text) {
-                  result.latest_caption = String(capEdges[0].node.text).slice(0, 320);
-                }
-                if (latestNode.taken_at_timestamp) {
-                  result.latest_posted_at = new Date(Number(latestNode.taken_at_timestamp) * 1000).toISOString();
-                }
-              }
-            }
+        const htmlImgMatch = String(latest?.content_html || "").match(/<img[^>]+src="([^"]+)"/i);
+        const thumbCandidate =
+          latest?._rssbridge?.thumbnail ||
+          latest?.image ||
+          imageAtt?.url ||
+          (htmlImgMatch ? decodeHtmlEntities(htmlImgMatch[1]) : "");
+        if (thumbCandidate && isAllowedInstagramMediaUrl(String(thumbCandidate))) {
+          result.latest_thumb = String(thumbCandidate);
+        }
+        const isVideo = Boolean(
+          String(latest?.content_html || "").includes("<video") ||
+            String(latest?.title || "").trim().startsWith("▶") ||
+            picked.url.includes("/reel/")
+        );
+        result.latest_is_video = isVideo;
+        result.latest_media_count = Math.max(1, attachments.length || 1);
+        const cleanedCaption = cleanRssHtmlCaption(latest?.content_html || "", latest?.title || "");
+        if (cleanedCaption) {
+          result.latest_caption = cleanedCaption;
+        }
+        if (latest?.date_modified || latest?.date_published) {
+          result.latest_posted_at = String(latest.date_modified || latest.date_published);
+        }
+        if (latest?.author?.name && !result.display_name) {
+          const authName = String(latest.author.name).trim();
+          if (authName && authName.toLowerCase() !== username.toLowerCase()) {
+            result.display_name = authName;
           }
         }
       }
-    } catch {}
+    }
 
     const finalShortcode = shortcode || result.latest_shortcode || "";
 
-    // 3. Profile OG metadata via Pinterestbot/Twitterbot + Threads profile fallback (retrieves display_name & profile avatar)
+    // 2. Profile Avatar + Name via Threads (.com first to avoid redirect latency)
+    const avatarIsFreshOnDisk = Boolean(
+      existingAvatarCache?.exists &&
+        !options?.forceAvatar &&
+        Date.now() - existingAvatarCache.cachedAt < 12 * 60 * 60_000
+    );
+
     if (username && (!result.display_name || !result.avatar_url)) {
-      const profileSources: Array<{ url: string; ua: string }> = [
-        {
-          url: `https://www.instagram.com/${encodeURIComponent(username)}/?hl=en`,
-          ua: "Pinterestbot/1.0 (+http://www.pinterest.com/bot.html)",
-        },
-        {
-          url: `https://www.instagram.com/${encodeURIComponent(username)}/`,
-          ua: "Pinterestbot/1.0",
-        },
-        {
-          url: `https://www.threads.net/@${encodeURIComponent(username)}`,
-          ua: "Twitterbot/1.0",
-        },
-        {
-          url: `https://www.instagram.com/${encodeURIComponent(username)}/`,
-          ua: "Twitterbot/1.0",
-        },
-      ];
-      for (const src of profileSources) {
-        if (result.display_name && result.avatar_url) break;
+      for (const threadsHost of ["www.threads.com", "www.threads.net"]) {
+        if (result.avatar_url && result.display_name) break;
         try {
-          const profResp = await fetch(src.url, {
+          const trResp = await fetch(`https://${threadsHost}/@${encodeURIComponent(username)}`, {
             headers: {
-              "User-Agent": src.ua,
+              "User-Agent": "Twitterbot/1.0",
               Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             },
-            signal: AbortSignal.timeout(4500),
+            redirect: "follow",
+            signal: AbortSignal.timeout(6500),
           });
-          if (!profResp.ok) continue;
-          const html = await profResp.text();
-          const extractMeta = (prop: string) => {
-            const m =
-              html.match(new RegExp(`<meta[^>]+(?:property|name)=["']${prop}["'][^>]+content=["']([^"']+)["']`, "i")) ||
-              html.match(new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']${prop}["']`, "i"));
-            return m ? decodeHtmlEntities(m[1]) : "";
-          };
-          const ogTitle = extractMeta("og:title") || extractMeta("twitter:title");
-          const ogDesc = extractMeta("og:description") || extractMeta("description");
-          const ogImage = extractMeta("og:image");
-          if (ogTitle && !result.display_name) {
-            const cleanName = ogTitle.split("(@")[0]?.replace(/•.*$/, "")?.trim();
+          if (!trResp.ok) continue;
+          const html = await trResp.text();
+          const { ogTitle, twTitle, ogImage } = extractOgMetaFromHtml(html);
+          const candidateTitle = ogTitle || twTitle;
+          if (candidateTitle && !result.display_name) {
+            const cleanName = candidateTitle.split("(@")[0]?.replace(/•.*$/, "")?.trim();
             if (
               cleanName &&
               cleanName.replace(/^@/, "").toLowerCase() !== username.toLowerCase() &&
@@ -14690,15 +15059,68 @@ async function startServer() {
               result.display_name = cleanName;
             }
           }
-          if (
-            ogImage &&
-            !result.avatar_url &&
-            !ogImage.includes("static.cdninstagram.com/rsrc.php") &&
-            !ogImage.includes("threads")
-          ) {
+          if (ogImage && !result.avatar_url && isValidProfileAvatarUrl(ogImage)) {
+            result.avatar_url = ogImage;
+            break;
+          }
+        } catch {}
+      }
+    }
+
+    // 3. Serialized Instagram Profile SSR (for accounts without Threads like @asliriid)
+    // Skip redundant Pinterestbot calls when avatar is already freshly cached unless forceAvatar is requested
+    const needIgProfileFetch =
+      Boolean(username) &&
+      (!result.avatar_url && (!avatarIsFreshOnDisk || options?.forceAvatar));
+
+    if (needIgProfileFetch) {
+      const igProfileAttempts = [
+        {
+          url: `https://www.instagram.com/${encodeURIComponent(username)}/?hl=en`,
+          ua: "Mozilla/5.0 (compatible; Pinterestbot/1.0; +http://www.pinterest.com/bot.html)",
+        },
+        {
+          url: `https://www.instagram.com/${encodeURIComponent(username)}/?hl=en`,
+          ua: "Pinterestbot/1.0 (+http://www.pinterest.com/bot.html)",
+        },
+        {
+          url: `https://www.instagram.com/${encodeURIComponent(username)}/`,
+          ua: "Pinterestbot/1.0",
+        },
+      ];
+
+      for (const attempt of igProfileAttempts) {
+        if (result.avatar_url) break;
+        try {
+          const profHtml = await enqueueIgHtmlFetch(async () => {
+            const profResp = await fetch(attempt.url, {
+              headers: {
+                "User-Agent": attempt.ua,
+                Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+              },
+              signal: AbortSignal.timeout(6000),
+            });
+            if (!profResp.ok) return "";
+            return await profResp.text();
+          });
+          if (!profHtml) continue;
+          const { ogTitle, twTitle, ogDesc, ogImage } = extractOgMetaFromHtml(profHtml);
+          const candidateTitle = ogTitle || twTitle;
+          if (candidateTitle && !result.display_name) {
+            const cleanName = candidateTitle.split("(@")[0]?.replace(/•.*$/, "")?.trim();
+            if (
+              cleanName &&
+              cleanName.replace(/^@/, "").toLowerCase() !== username.toLowerCase() &&
+              !cleanName.toLowerCase().includes("instagram") &&
+              !cleanName.toLowerCase().includes("threads")
+            ) {
+              result.display_name = cleanName;
+            }
+          }
+          if (ogImage && !result.avatar_url && isValidProfileAvatarUrl(ogImage)) {
             result.avatar_url = ogImage;
           }
-          if (ogDesc && !result.followers_text && !src.url.includes("threads.net")) {
+          if (ogDesc && !result.followers_text) {
             const fMatch = ogDesc.match(/^([^-]+Followers[^-]*)/i);
             if (fMatch) result.followers_text = fMatch[1].trim();
           }
@@ -14706,37 +15128,39 @@ async function startServer() {
       }
     }
 
-    // 4. Post-level OG metadata (reliably returns full account display_name & exact publish date!)
+    // Persist avatar bytes locally so CDN token expiration or future rate-limits never drop the avatar
+    if (username && result.avatar_url) {
+      const saved = await cacheIgAvatarToDisk(username, result.avatar_url);
+      if (saved) {
+        result.has_cached_avatar = true;
+        result.avatar_cached_at = saved.cachedAt;
+      }
+    }
+
+    // 4. Post-level OG metadata (fills missing display_name, caption, or date for direct post overrides)
     if (finalShortcode && (!result.display_name || !result.latest_caption || !result.latest_posted_at)) {
       try {
-        const postTargetUrl = postUrl && /\/(?:p|reel|tv)\//i.test(postUrl)
-          ? postUrl
-          : `https://www.instagram.com/p/${finalShortcode}/`;
+        const postTargetUrl =
+          postUrl && /\/(?:p|reel|tv)\//i.test(postUrl)
+            ? postUrl
+            : `https://www.instagram.com/p/${finalShortcode}/`;
         const postResp = await fetch(postTargetUrl, {
           headers: {
             "User-Agent": "Twitterbot/1.0",
             Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
           },
-          signal: AbortSignal.timeout(4500),
+          signal: AbortSignal.timeout(5000),
         });
         if (postResp.ok) {
           const html = await postResp.text();
-          const extractMeta = (prop: string) => {
-            const m =
-              html.match(new RegExp(`<meta[^>]+(?:property|name)=["']${prop}["'][^>]+content=["']([^"']+)["']`, "i")) ||
-              html.match(new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']${prop}["']`, "i"));
-            return m ? decodeHtmlEntities(m[1]) : "";
-          };
-          const twTitle = extractMeta("twitter:title");
-          const ogTitle = extractMeta("og:title");
-          const ogDesc = extractMeta("og:description") || extractMeta("description");
-          const ogImage = extractMeta("og:image");
+          const { ogTitle, twTitle, ogDesc, ogImage } = extractOgMetaFromHtml(html);
 
           if (!result.display_name) {
             const fromTw = twTitle ? twTitle.split("(@")[0]?.replace(/•.*$/, "")?.trim() : "";
-            const fromOg = ogTitle && ogTitle.includes(" on Instagram:")
-              ? ogTitle.split(" on Instagram:")[0]?.trim()
-              : "";
+            const fromOg =
+              ogTitle && ogTitle.includes(" on Instagram:")
+                ? ogTitle.split(" on Instagram:")[0]?.trim()
+                : "";
             const picked = fromTw || fromOg;
             if (picked && !picked.toLowerCase().includes("instagram")) {
               result.display_name = picked;
@@ -14771,6 +15195,17 @@ async function startServer() {
     return result;
   }
 
+  function hydrateIgAccountsWithCacheMeta(list: any[]) {
+    return (Array.isArray(list) ? list : []).map((acc: any) => {
+      const cache = acc?.username ? readCachedIgAvatarMeta(acc.username) : null;
+      return {
+        ...acc,
+        has_cached_avatar: Boolean(cache?.exists || acc?.has_cached_avatar),
+        avatar_cached_at: cache?.cachedAt || acc?.avatar_cached_at || 0,
+      };
+    });
+  }
+
   function ensureInstagramTrackedAccounts() {
     db.workspace = db.workspace || {};
     db.workspace.deleted_instagram_account_ids = Array.isArray(db.workspace.deleted_instagram_account_ids)
@@ -14782,7 +15217,6 @@ async function startServer() {
     ]);
 
     if (!Array.isArray(db.workspace.instagram_accounts)) {
-      const nowIso = new Date().toISOString();
       db.workspace.instagram_accounts = [
         {
           id: "ig_acc_bankabdi",
@@ -14798,9 +15232,9 @@ async function startServer() {
         },
         {
           id: "ig_acc_asliri",
-          username: "asli.ri",
+          username: "asliriid",
           display_name: "ASLI RI Official",
-          profile_url: "https://www.instagram.com/asli.ri/",
+          profile_url: "https://www.instagram.com/asliriid/",
           latest_post_url: "",
           latest_shortcode: "",
           latest_caption: "",
@@ -14809,10 +15243,10 @@ async function startServer() {
           last_checked_at: "",
         },
         {
-          id: "ig_acc_tomydfondy",
-          username: "tomydfondy",
-          display_name: "Tomy Dfondy",
-          profile_url: "https://www.instagram.com/tomydfondy/",
+          id: "ig_acc_tixfly",
+          username: "tixfly.id",
+          display_name: "tixfly.id",
+          profile_url: "https://www.instagram.com/tixfly.id/",
           latest_post_url: "",
           latest_shortcode: "",
           latest_caption: "",
@@ -14822,10 +15256,9 @@ async function startServer() {
         },
       ].filter((a) => !delSet.has(a.id));
     } else {
-      db.workspace.instagram_accounts = db.workspace.instagram_accounts
+      const cleaned = db.workspace.instagram_accounts
         .filter((a: any) => a && a.id && !delSet.has(String(a.id)))
         .map((a: any) => {
-          // Upgrade legacy default seed "bankabdi" (missing dot) -> "bank.abdi" if unpopulated
           if (a.id === "ig_acc_bankabdi" && a.username === "bankabdi" && !a.latest_shortcode) {
             return {
               ...a,
@@ -14836,59 +15269,130 @@ async function startServer() {
           }
           return a;
         });
+
+      // Deduplicate accounts that have identical lowercase usernames (keeping richest/newest row)
+      const byUsername = new Map<string, any>();
+      const deduped: any[] = [];
+      for (const item of cleaned) {
+        const key = sanitizeIgUsername(item.username || "");
+        if (!key || key === "instagram_post") {
+          deduped.push(item);
+          continue;
+        }
+        const existing = byUsername.get(key);
+        if (!existing) {
+          byUsername.set(key, item);
+          deduped.push(item);
+        } else {
+          const exTs = Date.parse(existing.latest_posted_at || "") || 0;
+          const itTs = Date.parse(item.latest_posted_at || "") || 0;
+          if (!existing.avatar_url && item.avatar_url) {
+            existing.avatar_url = item.avatar_url;
+          }
+          if ((!existing.display_name || existing.display_name.startsWith("@")) && item.display_name && !item.display_name.startsWith("@")) {
+            existing.display_name = item.display_name;
+          }
+          if (itTs > exTs && item.latest_shortcode) {
+            existing.latest_shortcode = item.latest_shortcode;
+            existing.latest_post_url = item.latest_post_url || existing.latest_post_url;
+            existing.latest_caption = item.latest_caption || existing.latest_caption;
+            existing.latest_thumb = item.latest_thumb || existing.latest_thumb;
+            existing.latest_posted_at = item.latest_posted_at;
+          }
+          if (item.id && !db.workspace.deleted_instagram_account_ids.includes(item.id)) {
+            db.workspace.deleted_instagram_account_ids.push(String(item.id));
+          }
+        }
+      }
+      db.workspace.instagram_accounts = deduped;
     }
     return db.workspace.instagram_accounts;
   }
 
-  function applyInstagramMetaToAccount(target: any, meta: Awaited<ReturnType<typeof fetchInstagramPublicMeta>>, nowIso: string) {
+  function applyInstagramMetaToAccount(
+    target: any,
+    meta: Awaited<ReturnType<typeof fetchInstagramPublicMeta>>,
+    nowIso: string,
+    opts?: { forcePostUpdate?: boolean }
+  ) {
     if (meta.display_name) {
       target.display_name = meta.display_name;
     }
-    if (meta.avatar_url) target.avatar_url = meta.avatar_url;
+    if (meta.avatar_url) {
+      target.avatar_url = meta.avatar_url;
+    }
+    if (meta.has_cached_avatar) {
+      target.has_cached_avatar = true;
+      if (meta.avatar_cached_at) target.avatar_cached_at = meta.avatar_cached_at;
+    }
     if (meta.followers_text) target.followers_text = meta.followers_text;
+
     if (meta.latest_shortcode) {
-      const isNewPost = target.latest_shortcode !== meta.latest_shortcode;
-      target.latest_shortcode = meta.latest_shortcode;
-      target.latest_post_url = meta.latest_post_url || `https://www.instagram.com/p/${meta.latest_shortcode}/`;
-      if (isNewPost) {
-        target.is_live_today = true;
+      const isNewShortcode = target.latest_shortcode !== meta.latest_shortcode;
+      const oldTs = target.latest_posted_at ? Date.parse(target.latest_posted_at) : NaN;
+      const newTs = meta.latest_posted_at ? Date.parse(meta.latest_posted_at) : NaN;
+      const wouldDowngrade =
+        !opts?.forcePostUpdate &&
+        Boolean(target.latest_shortcode) &&
+        isNewShortcode &&
+        Number.isFinite(oldTs) &&
+        Number.isFinite(newTs) &&
+        newTs < oldTs;
+
+      if (!wouldDowngrade) {
+        target.latest_shortcode = meta.latest_shortcode;
+        target.latest_post_url =
+          meta.latest_post_url || `https://www.instagram.com/p/${meta.latest_shortcode}/`;
+        if (isNewShortcode) {
+          target.is_live_today = true;
+          target.latest_caption = meta.latest_caption || "";
+          target.latest_thumb =
+            meta.latest_thumb || `https://www.instagram.com/p/${meta.latest_shortcode}/media/?size=l`;
+          target.latest_posted_at = meta.latest_posted_at || "";
+        } else {
+          if (meta.latest_caption) target.latest_caption = meta.latest_caption;
+          if (meta.latest_thumb) target.latest_thumb = meta.latest_thumb;
+          if (meta.latest_posted_at && (!Number.isFinite(oldTs) || (Number.isFinite(newTs) && newTs > oldTs))) {
+            target.latest_posted_at = meta.latest_posted_at;
+          }
+        }
+        if (typeof meta.latest_media_count === "number") target.latest_media_count = meta.latest_media_count;
+        if (typeof meta.latest_is_video === "boolean") target.latest_is_video = meta.latest_is_video;
       }
     } else if (target.latest_post_url && !/\/(?:p|reel|tv)\//i.test(target.latest_post_url)) {
       target.latest_post_url = "";
-    }
-    if (meta.latest_caption) target.latest_caption = meta.latest_caption;
-    if (meta.latest_thumb) target.latest_thumb = meta.latest_thumb;
-    if (typeof meta.latest_media_count === "number") target.latest_media_count = meta.latest_media_count;
-    if (typeof meta.latest_is_video === "boolean") target.latest_is_video = meta.latest_is_video;
-    if (meta.latest_posted_at) {
-      target.latest_posted_at = meta.latest_posted_at;
     }
     target.last_checked_at = nowIso;
   }
 
   const igHydrationAttempts = new Map<string, number>();
 
-  function isAllowedInstagramMediaUrl(rawUrl: string): boolean {
-    try {
-      const u = new URL(rawUrl);
-      if (u.protocol !== "https:") return false;
-      const host = u.hostname.toLowerCase();
-      if (host.endsWith(".cdninstagram.com") || host.endsWith(".fbcdn.net")) {
-        return true;
-      }
-      if ((host === "www.instagram.com" || host === "instagram.com") && /^\/(?:p|reel|tv)\/[A-Za-z0-9_-]+\/media\/?$/i.test(u.pathname)) {
-        return true;
-      }
-      return false;
-    } catch {
-      return false;
-    }
-  }
-
-  // Domain-allowlisted Instagram media proxy so images bypass CORP same-origin blocks cleanly
+  // Domain-allowlisted Instagram media proxy + persistent profile avatar disk cache
   app.get("/api/instagram-tracker/media", async (req, res) => {
     const shortcode = String(req.query.shortcode || "").replace(/[^A-Za-z0-9_-]/g, "");
+    const username = sanitizeIgUsername(String(req.query.username || ""));
     const rawUrl = String(req.query.url || "").trim();
+    const wantFresh = req.query.fresh === "1";
+
+    const sendCachedAvatar = () => {
+      if (!username) return false;
+      const cache = readCachedIgAvatarMeta(username);
+      if (!cache?.exists) return false;
+      res.setHeader("Content-Type", cache.contentType);
+      res.setHeader("Cache-Control", "public, max-age=300, stale-while-revalidate=86400");
+      res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+      res.sendFile(cache.dataPath);
+      return true;
+    };
+
+    // Fast path: serve freshly cached profile avatar from disk (< 12h old) unless ?fresh=1
+    if (username && !shortcode && !wantFresh) {
+      const cache = readCachedIgAvatarMeta(username);
+      if (cache?.exists && Date.now() - cache.cachedAt < 12 * 60 * 60_000) {
+        return sendCachedAvatar();
+      }
+    }
+
     const targetUrl =
       rawUrl && isAllowedInstagramMediaUrl(rawUrl)
         ? rawUrl
@@ -14897,10 +15401,23 @@ async function startServer() {
         : "";
 
     if (!targetUrl) {
-      return res.status(400).json({ detail: "Invalid Instagram media source" });
+      if (sendCachedAvatar()) return;
+      return res.status(404).end();
     }
 
     try {
+      if (username && !shortcode) {
+        const saved = await cacheIgAvatarToDisk(username, targetUrl);
+        if (saved) {
+          res.setHeader("Content-Type", saved.contentType);
+          res.setHeader("Cache-Control", "public, max-age=300, stale-while-revalidate=86400");
+          res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+          return res.send(saved.buf);
+        }
+        if (sendCachedAvatar()) return;
+        return res.status(404).end();
+      }
+
       const upstream = await fetch(targetUrl, {
         headers: {
           "User-Agent":
@@ -14912,50 +15429,86 @@ async function startServer() {
       });
       const contentType = upstream.headers.get("content-type") || "";
       if (!upstream.ok || !contentType.startsWith("image/")) {
+        if (sendCachedAvatar()) return;
         return res.status(404).end();
       }
       const buf = Buffer.from(await upstream.arrayBuffer());
       res.setHeader("Content-Type", contentType);
-      res.setHeader("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400");
+      res.setHeader("Cache-Control", "public, max-age=1800, stale-while-revalidate=86400");
       res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
       return res.send(buf);
     } catch {
+      if (sendCachedAvatar()) return;
       return res.status(502).end();
     }
   });
 
-  app.get("/api/instagram-tracker", async (_req, res) => {
+  app.get("/api/instagram-tracker", async (req, res) => {
     const accounts = ensureInstagramTrackedAccounts();
+    const forceRefresh = req.query.refresh === "1" || req.query.force === "1";
     const now = Date.now();
+
     const candidates = accounts
       .filter((acc: any) => {
         if (!acc?.username) return false;
+        if (forceRefresh) return true;
         const lastTry = igHydrationAttempts.get(acc.id) || 0;
-        const missingAvatar = !acc.avatar_url;
-        if (now - lastTry < (missingAvatar ? 10_000 : 60_000)) return false;
+        const diskAvatar = readCachedIgAvatarMeta(acc.username);
+        const missingAvatar = !acc.avatar_url && !diskAvatar?.exists;
+        if (now - lastTry < (missingAvatar ? 10_000 : 15_000)) return false;
         const lastCheckedMs = acc.last_checked_at ? new Date(acc.last_checked_at).getTime() : 0;
         const missingNameOrAvatar =
           !acc.display_name ||
           acc.display_name.startsWith("@") ||
           acc.display_name.toLowerCase() === String(acc.username).toLowerCase() ||
           missingAvatar;
-        return !acc.latest_shortcode || missingNameOrAvatar || now - lastCheckedMs > 15 * 60_000;
+        // Refresh automatically on reload/mount whenever data is older than 30s or metadata is incomplete
+        return !acc.latest_shortcode || missingNameOrAvatar || now - lastCheckedMs > 30_000;
       })
-      .slice(0, 6);
+      .slice(0, 8);
 
     if (candidates.length > 0) {
       const nowIso = new Date().toISOString();
       candidates.forEach((acc: any) => igHydrationAttempts.set(acc.id, now));
       await Promise.allSettled(
         candidates.map(async (acc: any) => {
-          const meta = await fetchInstagramPublicMeta(acc.username, acc.latest_post_url, acc.latest_shortcode);
+          const meta = await fetchInstagramPublicMeta(
+            acc.username,
+            acc.latest_post_url,
+            acc.latest_shortcode,
+            { forceAvatar: forceRefresh && !acc.avatar_url && !readCachedIgAvatarMeta(acc.username)?.exists }
+          );
           applyInstagramMetaToAccount(acc, meta, nowIso);
         })
       );
       saveDbToFile(true);
     }
 
-    res.json({ accounts });
+    res.json({ accounts: hydrateIgAccountsWithCacheMeta(accounts) });
+  });
+
+  app.post("/api/instagram-tracker/refresh-all", async (_req, res) => {
+    const accounts = ensureInstagramTrackedAccounts();
+    const now = Date.now();
+    const nowIso = new Date().toISOString();
+
+    await Promise.allSettled(
+      accounts.map(async (acc: any) => {
+        if (!acc?.username) return;
+        igHydrationAttempts.set(acc.id, now);
+        const diskAvatar = readCachedIgAvatarMeta(acc.username);
+        const meta = await fetchInstagramPublicMeta(acc.username, "", "", {
+          forceAvatar: !diskAvatar?.exists,
+        });
+        applyInstagramMetaToAccount(acc, meta, nowIso, { forcePostUpdate: false });
+      })
+    );
+
+    const hydrated = hydrateIgAccountsWithCacheMeta(accounts);
+    db.workspace.instagram_accounts = accounts;
+    saveDbToFile(true);
+    broadcast({ type: "instagram_tracker:changed", accounts: hydrated });
+    res.json({ accounts: hydrated });
   });
 
   app.post("/api/instagram-tracker", async (req, res) => {
@@ -14973,7 +15526,9 @@ async function startServer() {
 
     const parsed = parseInstagramInput(rawUser || latest_post_url || "");
     const postParsed = latest_post_url ? parseInstagramInput(latest_post_url) : { username: "", shortcode: "", postUrl: "" };
-    const cleanUsername = (parsed.username || postParsed.username || String(rawUser || "").replace(/^@/, "").trim().toLowerCase()).replace(/[^a-z0-9._]/g, "");
+    const cleanUsername = sanitizeIgUsername(
+      parsed.username || postParsed.username || String(rawUser || "").replace(/^@/, "").trim().toLowerCase()
+    );
     const shortcode = postParsed.shortcode || parsed.shortcode || "";
     const resolvedPostUrl = postParsed.postUrl || parsed.postUrl || (shortcode ? `https://www.instagram.com/p/${shortcode}/` : "");
 
@@ -14981,7 +15536,7 @@ async function startServer() {
       return res.status(400).json({ detail: "Tempel link profil Instagram (contoh: https://www.instagram.com/bank.abdi/) atau username." });
     }
 
-    const meta = await fetchInstagramPublicMeta(cleanUsername, resolvedPostUrl, shortcode);
+    const meta = await fetchInstagramPublicMeta(cleanUsername, resolvedPostUrl, shortcode, { forceAvatar: true });
     const nowIso = new Date().toISOString();
     const finalUsername = cleanUsername || "instagram_post";
     const finalShortcode = shortcode || meta.latest_shortcode || "";
@@ -14994,13 +15549,15 @@ async function startServer() {
       : null;
 
     if (existing) {
-      applyInstagramMetaToAccount(existing, meta, nowIso);
+      applyInstagramMetaToAccount(existing, meta, nowIso, { forcePostUpdate: Boolean(shortcode) });
       if (display_name) existing.display_name = String(display_name).trim();
       existing.updated_by_name = reqUser?.name || existing.updated_by_name || "Member";
       igHydrationAttempts.set(existing.id, Date.now());
       saveDbToFile(true);
-      broadcast({ type: "instagram_tracker:changed", accounts });
-      return res.json({ account: existing, accounts, updated: true });
+      const hydrated = hydrateIgAccountsWithCacheMeta(accounts);
+      const hydratedExisting = hydrated.find((a: any) => a.id === existing.id) || existing;
+      broadcast({ type: "instagram_tracker:changed", accounts: hydrated });
+      return res.json({ account: hydratedExisting, accounts: hydrated, updated: true });
     }
 
     const newAcc = {
@@ -15009,6 +15566,8 @@ async function startServer() {
       display_name: String(display_name || meta.display_name || `@${finalUsername}`).trim(),
       category: String(category || "").trim(),
       avatar_url: meta.avatar_url || "",
+      has_cached_avatar: Boolean(meta.has_cached_avatar),
+      avatar_cached_at: meta.avatar_cached_at || 0,
       followers_text: meta.followers_text || "",
       profile_url: `https://www.instagram.com/${finalUsername}/`,
       latest_post_url: finalPostUrl,
@@ -15031,15 +15590,16 @@ async function startServer() {
     accounts.unshift(newAcc);
     db.workspace.instagram_accounts = accounts;
     saveDbToFile(true);
-    broadcast({ type: "instagram_tracker:changed", accounts });
-    res.json({ account: newAcc, accounts });
+    const hydrated = hydrateIgAccountsWithCacheMeta(accounts);
+    broadcast({ type: "instagram_tracker:changed", accounts: hydrated });
+    res.json({ account: hydrated[0] || newAcc, accounts: hydrated });
   });
 
   app.patch("/api/instagram-tracker/reorder", (req, res) => {
     const accounts = ensureInstagramTrackedAccounts();
     const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : [];
     if (ids.length === 0) {
-      return res.json({ accounts });
+      return res.json({ accounts: hydrateIgAccountsWithCacheMeta(accounts) });
     }
     const byId = new Map(accounts.map((a: any) => [String(a.id), a]));
     const ordered: any[] = [];
@@ -15055,8 +15615,9 @@ async function startServer() {
     }
     db.workspace.instagram_accounts = ordered;
     saveDbToFile(true);
-    broadcast({ type: "instagram_tracker:changed", accounts: ordered });
-    res.json({ accounts: ordered });
+    const hydrated = hydrateIgAccountsWithCacheMeta(ordered);
+    broadcast({ type: "instagram_tracker:changed", accounts: hydrated });
+    res.json({ accounts: hydrated });
   });
 
   app.patch("/api/instagram-tracker/:id", async (req, res) => {
@@ -15074,10 +15635,9 @@ async function startServer() {
     } = req.body || {};
 
     const parsedInput = username ? parseInstagramInput(username) : { username: "", shortcode: "", postUrl: "" };
-    const cleanInputUser = (
-      parsedInput.username ||
-      String(username || "").replace(/^@/, "").trim().toLowerCase()
-    ).replace(/[^a-z0-9._]/g, "");
+    const cleanInputUser = sanitizeIgUsername(
+      parsedInput.username || String(username || "").replace(/^@/, "").trim().toLowerCase()
+    );
 
     let target =
       accounts.find((a: any) => a && a.id === req.params.id) ||
@@ -15094,7 +15654,7 @@ async function startServer() {
       const postParsed = latest_post_url ? parseInstagramInput(latest_post_url) : { username: "", shortcode: "", postUrl: "" };
       const initShortcode = postParsed.shortcode || parsedInput.shortcode || "";
       const initPostUrl = postParsed.postUrl || parsedInput.postUrl || "";
-      const meta = await fetchInstagramPublicMeta(finalUsername, initPostUrl, initShortcode);
+      const meta = await fetchInstagramPublicMeta(finalUsername, initPostUrl, initShortcode, { forceAvatar: true });
 
       target = {
         id: String(req.params.id || `ig_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`),
@@ -15102,6 +15662,8 @@ async function startServer() {
         display_name: String(display_name || meta.display_name || `@${finalUsername}`).trim(),
         category: String(category || "").trim(),
         avatar_url: meta.avatar_url || "",
+        has_cached_avatar: Boolean(meta.has_cached_avatar),
+        avatar_cached_at: meta.avatar_cached_at || 0,
         followers_text: meta.followers_text || "",
         profile_url: `https://www.instagram.com/${finalUsername}/`,
         latest_post_url: initPostUrl || meta.latest_post_url || "",
@@ -15123,8 +15685,9 @@ async function startServer() {
       db.workspace.instagram_accounts = accounts;
       igHydrationAttempts.set(target.id, Date.now());
       saveDbToFile(true);
-      broadcast({ type: "instagram_tracker:changed", accounts });
-      return res.json({ account: target, accounts });
+      const hydrated = hydrateIgAccountsWithCacheMeta(accounts);
+      broadcast({ type: "instagram_tracker:changed", accounts: hydrated });
+      return res.json({ account: hydrated[0] || target, accounts: hydrated });
     }
 
     let usernameChanged = false;
@@ -15134,6 +15697,8 @@ async function startServer() {
       target.profile_url = `https://www.instagram.com/${cleanInputUser}/`;
       target.display_name = `@${cleanInputUser}`;
       target.avatar_url = "";
+      target.has_cached_avatar = false;
+      target.avatar_cached_at = 0;
       target.latest_thumb = "";
       target.latest_caption = "";
       target.latest_posted_at = "";
@@ -15162,16 +15727,20 @@ async function startServer() {
       target.latest_shortcode = parsedOverride.shortcode;
       target.latest_post_url = parsedOverride.postUrl;
       target.is_live_today = true;
-      const meta = await fetchInstagramPublicMeta(target.username, parsedOverride.postUrl, parsedOverride.shortcode);
-      applyInstagramMetaToAccount(target, meta, nowIso);
+      const meta = await fetchInstagramPublicMeta(target.username, parsedOverride.postUrl, parsedOverride.shortcode, {
+        forceAvatar: !target.avatar_url,
+      });
+      applyInstagramMetaToAccount(target, meta, nowIso, { forcePostUpdate: true });
     } else if (usernameChanged || (rawPostOverride !== undefined && !parsedOverride.shortcode)) {
       if (rawPostOverride !== undefined && !parsedOverride.shortcode) {
         target.latest_post_url = "";
         target.latest_shortcode = "";
         target.latest_thumb = "";
       }
-      const meta = await fetchInstagramPublicMeta(target.username, target.latest_post_url, target.latest_shortcode);
-      applyInstagramMetaToAccount(target, meta, nowIso);
+      const meta = await fetchInstagramPublicMeta(target.username, target.latest_post_url, target.latest_shortcode, {
+        forceAvatar: usernameChanged || !target.avatar_url,
+      });
+      applyInstagramMetaToAccount(target, meta, nowIso, { forcePostUpdate: Boolean(rawPostOverride !== undefined && !parsedOverride.shortcode) });
     }
 
     if (display_name !== undefined && String(display_name).trim()) {
@@ -15186,15 +15755,19 @@ async function startServer() {
     igHydrationAttempts.set(target.id, Date.now());
 
     saveDbToFile(true);
-    broadcast({ type: "instagram_tracker:changed", accounts });
-    res.json({ account: target, accounts });
+    const hydrated = hydrateIgAccountsWithCacheMeta(accounts);
+    const hydratedTarget = hydrated.find((a: any) => a.id === target.id) || target;
+    broadcast({ type: "instagram_tracker:changed", accounts: hydrated });
+    res.json({ account: hydratedTarget, accounts: hydrated });
   });
 
   app.post("/api/instagram-tracker/:id/refresh", async (req, res) => {
     const accounts = ensureInstagramTrackedAccounts();
     const rawUser = String(req.body?.username || req.body?.profile_url || "").trim();
     const parsed = rawUser ? parseInstagramInput(rawUser) : { username: "", shortcode: "", postUrl: "" };
-    const cleanUser = (parsed.username || rawUser.replace(/^@/, "").trim().toLowerCase()).replace(/[^a-z0-9._]/g, "");
+    const cleanUser = sanitizeIgUsername(
+      parsed.username || rawUser.replace(/^@/, "").trim().toLowerCase()
+    );
 
     let target =
       accounts.find((a: any) => a && a.id === req.params.id) ||
@@ -15205,13 +15778,15 @@ async function startServer() {
         return res.status(404).json({ detail: "Akun Instagram tidak ditemukan." });
       }
       const nowIso = new Date().toISOString();
-      const meta = await fetchInstagramPublicMeta(cleanUser);
+      const meta = await fetchInstagramPublicMeta(cleanUser, "", "", { forceAvatar: true });
       target = {
         id: String(req.params.id || `ig_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`),
         username: cleanUser,
         display_name: meta.display_name || `@${cleanUser}`,
         category: "",
         avatar_url: meta.avatar_url || "",
+        has_cached_avatar: Boolean(meta.has_cached_avatar),
+        avatar_cached_at: meta.avatar_cached_at || 0,
         followers_text: meta.followers_text || "",
         profile_url: `https://www.instagram.com/${cleanUser}/`,
         latest_post_url: meta.latest_post_url || "",
@@ -15233,18 +15808,24 @@ async function startServer() {
       db.workspace.instagram_accounts = accounts;
       igHydrationAttempts.set(target.id, Date.now());
       saveDbToFile(true);
-      broadcast({ type: "instagram_tracker:changed", accounts });
-      return res.json({ account: target, accounts });
+      const hydrated = hydrateIgAccountsWithCacheMeta(accounts);
+      broadcast({ type: "instagram_tracker:changed", accounts: hydrated });
+      return res.json({ account: hydrated[0] || target, accounts: hydrated });
     }
 
-    const meta = await fetchInstagramPublicMeta(target.username);
+    const diskAvatar = readCachedIgAvatarMeta(target.username);
+    const meta = await fetchInstagramPublicMeta(target.username, "", "", {
+      forceAvatar: !diskAvatar?.exists || Boolean(req.body?.forceAvatar),
+    });
     const nowIso = new Date().toISOString();
-    applyInstagramMetaToAccount(target, meta, nowIso);
+    applyInstagramMetaToAccount(target, meta, nowIso, { forcePostUpdate: false });
     igHydrationAttempts.set(target.id, Date.now());
 
     saveDbToFile(true);
-    broadcast({ type: "instagram_tracker:changed", accounts });
-    res.json({ account: target, accounts });
+    const hydrated = hydrateIgAccountsWithCacheMeta(accounts);
+    const hydratedTarget = hydrated.find((a: any) => a.id === target.id) || target;
+    broadcast({ type: "instagram_tracker:changed", accounts: hydrated });
+    res.json({ account: hydratedTarget, accounts: hydrated });
   });
 
   app.delete("/api/instagram-tracker/:id", (req, res) => {
@@ -15256,12 +15837,13 @@ async function startServer() {
     );
     recordServerDeletedIds([delId]);
     saveDbToFile(true);
+    const hydrated = hydrateIgAccountsWithCacheMeta(db.workspace.instagram_accounts);
     broadcast({
       type: "instagram_tracker:changed",
-      accounts: db.workspace.instagram_accounts,
+      accounts: hydrated,
       deleted_id: delId,
     });
-    res.json({ success: true, accounts: db.workspace.instagram_accounts, deleted_id: delId });
+    res.json({ success: true, accounts: hydrated, deleted_id: delId });
   });
 
   // Global Workspace Search Endpoint

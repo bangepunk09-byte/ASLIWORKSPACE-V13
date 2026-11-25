@@ -75,7 +75,7 @@ function NotificationPrefs() {
       } else if (res.permission === "denied") {
         toast.error("Izin notifikasi diblokir oleh browser. Buka pengaturan situs browser untuk mengizinkannya.");
       } else {
-        toast.info("Izin notifikasi belum disetujui.");
+        toast.info("Izin notifikasi belum diizinkan.");
       }
     } catch {
       toast.error("Gagal meminta izin notifikasi sistem.");
