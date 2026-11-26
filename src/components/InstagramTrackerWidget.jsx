@@ -152,7 +152,7 @@ function IgLatestPostPreview({ account, shortcode, targetUrl, isRefreshing }) {
         href={targetUrl}
         target="_blank"
         rel="noreferrer"
-        className="group relative flex aspect-square w-full flex-col items-center justify-center gap-2.5 overflow-hidden rounded-xl border border-dashed border-border bg-surface2/45 px-5 text-center transition-colors hover:bg-surface2/75"
+        className="group relative flex aspect-[3/4] w-full flex-col items-center justify-center gap-2.5 overflow-hidden rounded-xl border border-dashed border-border bg-surface2/45 px-5 text-center transition-colors hover:bg-surface2/75"
       >
         <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-border/80 bg-surface text-sub">
           {isRefreshing ? (
@@ -184,7 +184,7 @@ function IgLatestPostPreview({ account, shortcode, targetUrl, isRefreshing }) {
       href={targetUrl}
       target="_blank"
       rel="noreferrer"
-      className="group relative block aspect-square w-full overflow-hidden rounded-xl border border-border/80 bg-surface2/50"
+      className="group relative block aspect-[3/4] w-full overflow-hidden rounded-xl border border-border/80 bg-surface2/50"
     >
       {!failedAll && imgSrc ? (
         <img
@@ -193,7 +193,7 @@ function IgLatestPostPreview({ account, shortcode, targetUrl, isRefreshing }) {
           onError={handleImageError}
           referrerPolicy="no-referrer"
           loading="lazy"
-          className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+          className="h-full w-full object-cover object-center transition-transform duration-200 group-hover:scale-[1.02]"
         />
       ) : (
         <div className="flex h-full w-full flex-col items-center justify-center gap-2 px-4 text-center">
@@ -208,7 +208,7 @@ function IgLatestPostPreview({ account, shortcode, targetUrl, isRefreshing }) {
 
       {/* Subtle format indicator without carousel slider controls */}
       {(account?.latest_is_video || (account?.latest_media_count || 1) > 1) && (
-        <div className="pointer-events-none absolute top-2.5 right-2.5 inline-flex items-center gap-1 rounded-lg bg-black/65 px-2 py-1 text-[11px] font-semibold text-white backdrop-blur-xs">
+        <div className="pointer-events-none absolute top-2.5 right-2.5 inline-flex items-center gap-1 rounded-lg bg-black/75 px-2 py-1 text-[11px] font-semibold text-white">
           {account?.latest_is_video ? (
             <>
               <Play size={11} className="fill-white" />
@@ -232,7 +232,8 @@ export default function InstagramTrackerWidget() {
   const [refreshingId, setRefreshingId] = useState(null);
   const [refreshingAll, setRefreshingAll] = useState(false);
 
-  // Quick single-input add bar
+  // Add Account Modal
+  const [addOpen, setAddOpen] = useState(false);
   const [quickInput, setQuickInput] = useState("");
   const [submittingAdd, setSubmittingAdd] = useState(false);
 
@@ -365,6 +366,7 @@ export default function InstagramTrackerWidget() {
         toast.info(`@${addedAcc?.username || "Akun"} ditambahkan (belum ada postingan publik yang terbaca)`);
       }
       setQuickInput("");
+      setAddOpen(false);
       void syncWorkspaceMirror(api, true);
     } catch (err) {
       toast.error(errMsg(err, "Gagal menambahkan akun Instagram"));
@@ -428,19 +430,28 @@ export default function InstagramTrackerWidget() {
       className="card w-full min-w-0 overflow-hidden p-4 sm:p-6"
       data-testid="instagram-tracker-widget"
     >
-      {/* Header + Single-Input Instant Link Bar */}
-      <div className="flex flex-col gap-3.5 border-b border-border/70 pb-4 sm:pb-5 min-w-0">
-        <div className="flex flex-wrap items-center justify-between gap-2.5 min-w-0">
-          <div className="flex flex-wrap items-center gap-2 min-w-0">
-            <h3 className="flex items-center gap-2 text-lg sm:text-xl font-bold leading-snug text-ink">
-              <Instagram size={19} className="text-rose-500 shrink-0" />
-              <span className="truncate py-0.5">Postingan Terakhir Instagram</span>
-            </h3>
-            <span className="text-xs sm:text-sm font-medium text-sub tabular-nums">
-              · {accounts.length} akun
-            </span>
-          </div>
+      {/* Compact Single-Row Header */}
+      <div className="flex flex-wrap items-center justify-between gap-2.5 min-w-0">
+        <div className="flex flex-wrap items-center gap-2 min-w-0">
+          <h3 className="flex items-center gap-2 text-lg sm:text-xl font-bold leading-snug text-ink">
+            <Instagram size={19} className="text-rose-500 shrink-0" />
+            <span className="truncate py-0.5">Postingan Terakhir Instagram</span>
+          </h3>
+          <span className="text-xs sm:text-sm font-medium text-sub tabular-nums">
+            · {accounts.length} akun
+          </span>
+        </div>
 
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => setAddOpen(true)}
+            data-testid="ig-open-add-btn"
+            className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-border bg-surface2/75 px-3 text-xs sm:text-sm font-semibold text-ink shadow-xs transition-colors hover:bg-surface2 cursor-pointer shrink-0"
+          >
+            <Plus size={14} />
+            <span>Tambah Akun</span>
+          </button>
           {accounts.length > 0 && (
             <button
               type="button"
@@ -454,47 +465,24 @@ export default function InstagramTrackerWidget() {
             </button>
           )}
         </div>
-
-        {/* Direct Single-Input Link Form */}
-        <form
-          onSubmit={handleQuickAddAccount}
-          className="flex flex-col gap-2 sm:flex-row sm:items-center min-w-0"
-        >
-          <div className="relative flex-1 min-w-0">
-            <input
-              type="text"
-              value={quickInput}
-              onChange={(e) => setQuickInput(e.target.value)}
-              placeholder="Tempel link profil IG, misal: https://www.instagram.com/bank.abdi/"
-              disabled={submittingAdd}
-              data-testid="ig-quick-link-input"
-              className="h-10 w-full rounded-xl border border-border bg-surface2/75 px-3.5 text-xs sm:text-sm text-ink placeholder:text-sub/75 outline-none transition-colors focus:border-brand focus:bg-surface focus:ring-2 focus:ring-brand/20"
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={submittingAdd}
-            data-testid="ig-add-account-btn"
-            className="btn-accent inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl px-4 text-xs sm:text-sm font-semibold text-white shadow-xs transition-opacity hover:opacity-95 cursor-pointer disabled:opacity-60"
-          >
-            {submittingAdd ? (
-              <Loader2 size={15} className="animate-spin shrink-0" />
-            ) : (
-              <Plus size={15} className="shrink-0" />
-            )}
-            <span>{submittingAdd ? "Mengambil Postingan..." : "Tampilkan Postingan"}</span>
-          </button>
-        </form>
       </div>
 
       {/* Side-by-Side 3-Column Card Grid (Fit Fix, Zero Slider, Zero Scrollbar) */}
       {accounts.length === 0 ? (
-        <div className="mt-5 flex flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-surface2/30 px-6 py-10 text-center">
+        <div className="mt-4 flex flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-surface2/30 px-6 py-10 text-center">
           <Instagram size={28} className="text-sub mb-2.5" />
           <p className="text-sm font-bold text-ink">Belum ada akun Instagram ditampilkan</p>
           <p className="mt-1 max-w-md text-xs text-sub">
-            Tempel link profil Instagram di kolom atas (contoh: https://www.instagram.com/bank.abdi/) untuk langsung menampilkan postingan terakhirnya di sini.
+            Tambahkan profil Instagram untuk menampilkan postingan terakhirnya di sini.
           </p>
+          <button
+            type="button"
+            onClick={() => setAddOpen(true)}
+            className="btn-accent mt-4 inline-flex h-9 items-center gap-1.5 rounded-xl px-4 text-xs sm:text-sm font-semibold text-white shadow-xs cursor-pointer"
+          >
+            <Plus size={14} />
+            <span>Tambah Akun Instagram</span>
+          </button>
         </div>
       ) : (
         <div
@@ -647,6 +635,54 @@ export default function InstagramTrackerWidget() {
           })}
         </div>
       )}
+
+      {/* Modal Tambah Akun Instagram */}
+      <Dialog open={addOpen} onOpenChange={(v) => !submittingAdd && setAddOpen(v)}>
+        <DialogContent className="bg-surface rounded-2xl sm:rounded-3xl sm:max-w-md p-5 sm:p-6">
+          <DialogHeader>
+            <DialogTitle>Tambah Akun Instagram</DialogTitle>
+            <DialogDescription>
+              Tempel link profil atau username Instagram untuk menampilkan postingan terakhirnya.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleQuickAddAccount} className="space-y-3.5">
+            <div>
+              <label className="mb-1.5 block text-xs font-semibold text-sub">
+                Link Profil atau Username Instagram *
+              </label>
+              <input
+                type="text"
+                autoFocus
+                value={quickInput}
+                onChange={(e) => setQuickInput(e.target.value)}
+                placeholder="https://www.instagram.com/bank.abdi/"
+                disabled={submittingAdd}
+                data-testid="ig-quick-link-input"
+                className="h-10 w-full rounded-xl border border-border bg-surface2/75 px-3.5 text-sm text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/20"
+              />
+            </div>
+            <DialogFooter className="pt-2">
+              <button
+                type="button"
+                disabled={submittingAdd}
+                onClick={() => setAddOpen(false)}
+                className="h-10 rounded-xl border border-border bg-surface2/75 px-4 text-xs sm:text-sm font-semibold text-ink hover:bg-surface2 cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="submit"
+                disabled={submittingAdd}
+                data-testid="ig-add-account-btn"
+                className="btn-accent inline-flex h-10 items-center justify-center gap-1.5 rounded-xl px-4 text-xs sm:text-sm font-semibold text-white shadow-xs disabled:opacity-50 cursor-pointer"
+              >
+                {submittingAdd ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                <span>{submittingAdd ? "Mengambil Postingan..." : "Tampilkan Postingan"}</span>
+              </button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {/* Modal Edit Akun Instagram (Minimalis) */}
       <Dialog open={Boolean(editingAccount)} onOpenChange={(v) => !v && setEditingAccount(null)}>

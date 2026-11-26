@@ -1,4 +1,4 @@
-import { memo, useState, useEffect, useRef } from "react";
+import { memo, useMemo, useState, useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Reply, Smile, Pencil, Trash2, Pin, CheckSquare, FileText, MoreHorizontal, Check, CheckCheck, StickyNote, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
@@ -50,7 +50,7 @@ const STICKY_THEMES = {
   },
 };
 
-function StickyNoteMessageCard({ m }) {
+const StickyNoteMessageCard = memo(function StickyNoteMessageCard({ m }) {
   const { me, t: tr } = useApp();
   const [noteState, setNoteState] = useState(() => m.sticky_note || {});
   const [busyId, setBusyId] = useState(null);
@@ -148,7 +148,7 @@ function StickyNoteMessageCard({ m }) {
       <div className="mt-2 flex items-center gap-2">
         <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-900/10 dark:bg-white/10">
           <div
-            className={`h-full rounded-full transition-all duration-300 ${
+            className={`h-full rounded-full transition-[width] duration-200 ${
               isExecuted ? "bg-emerald-500" : theme.barFill
             }`}
             style={{ width: `${progress}%` }}
@@ -223,9 +223,9 @@ function StickyNoteMessageCard({ m }) {
       )}
     </div>
   );
-}
+});
 
-function TaskPreview({ m }) {
+const TaskPreview = memo(function TaskPreview({ m }) {
   const { userMap, me, isManager, isAdmin, subscribe, t: tr } = useApp();
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
@@ -340,7 +340,7 @@ function TaskPreview({ m }) {
         </div>
         <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
           <div
-            className={`h-full transition-all duration-500 ${isApprovedFull ? "bg-emerald-500" : "bg-amber-500"}`}
+            className={`h-full transition-[width] duration-300 ${isApprovedFull ? "bg-emerald-500" : "bg-amber-500"}`}
             style={{ width: `${progressPercent}%` }}
           />
         </div>
@@ -400,9 +400,9 @@ function TaskPreview({ m }) {
       )}
     </div>
   );
-}
+});
 
-function AccessRequestCard({ m }) {
+const AccessRequestCard = memo(function AccessRequestCard({ m }) {
   const { me, isManager, isAdmin, subscribe, t: tr } = useApp();
   const [busy, setBusy] = useState(false);
   const [req, setReq] = useState(m.access_request || {});
@@ -616,17 +616,17 @@ function AccessRequestCard({ m }) {
       </div>
     </div>
   );
-}
+});
 
 const QUICK = ["👍", "❤️", "😂", "🎉", "🙏", "👀"];
 
 function renderInline(text, userMap, isMine = false, mentionIds = []) {
   const normalized = String(text || "").replace(/^#{1,4}\s+(.+)$/gm, "**$1**");
   const { pattern: mentionPattern, resolve } = buildMentionMatcher(userMap, mentionIds);
+  const allMentionPattern = "(?<![\\p{L}\\p{N}._])@semua(?![\\p{L}\\p{N}_])";
+  const combinedMention = mentionPattern ? `${allMentionPattern}|${mentionPattern}` : allMentionPattern;
   const rx = new RegExp(
-    mentionPattern
-      ? `(\\*\\*[^*\\n]+\\*\\*|\`[^\`\\n]+\`|_[^_\\n]+_|(?:https?:\\/\\/|www\\.)[^\\s<>]+|${mentionPattern})`
-      : `(\\*\\*[^*\\n]+\\*\\*|\`[^\`\\n]+\`|_[^_\\n]+_|(?:https?:\\/\\/|www\\.)[^\\s<>]+)`,
+    `(\\*\\*[^*\\n]+\\*\\*|\`[^\`\\n]+\`|_[^_\\n]+_|(?:https?:\\/\\/|www\\.)[^\\s<>]+|${combinedMention})`,
     "giu"
   );
   const parts = normalized.split(rx);
@@ -669,6 +669,21 @@ function renderInline(text, userMap, isMine = false, mentionIds = []) {
       );
     }
     if (p.startsWith("@")) {
+      if (p.toLowerCase() === "@semua") {
+        return (
+          <span
+            key={i}
+            className={
+              isMine
+                ? "rounded bg-white/25 px-1 font-bold text-white"
+                : "rounded bg-soft-blue px-1 font-bold text-brand"
+            }
+            data-testid="mention-all"
+          >
+            {p}
+          </span>
+        );
+      }
       const mentionedUser = resolve(p);
       if (mentionedUser?.user_id) {
         return (
@@ -795,7 +810,7 @@ function MessageEmojiPicker({ onReact, messageId, isMine }) {
         <div
           role="menu"
           aria-label="Pilihan emoji"
-          className={`absolute bottom-full mb-1.5 z-40 flex items-center gap-1 rounded-full border border-subtle bg-surface/95 p-1 shadow-xl backdrop-blur-md animate-in fade-in zoom-in-95 duration-150 ${
+          className={`absolute bottom-full mb-1.5 z-40 flex items-center gap-1 rounded-full border border-subtle bg-surface p-1 shadow-xl animate-in fade-in zoom-in-95 duration-120 ${
             isMine ? "right-0" : "left-0"
           }`}
           onMouseEnter={handleMouseEnter}
@@ -876,6 +891,12 @@ function MessageItem({ m, mine, grouped, conv, onReply, onCreateTask, readBy }) 
   const isPoll = m.type === "poll" || Boolean(m.poll_id || m.poll);
   const isStickyNote = m.type === "sticky_note" || Boolean(m.sticky_note);
   const plain = m.type === "sticker" || isPoll || isStickyNote || m.type === "task" || m.type === "approval_card" || m.type === "access_request_card";
+  const renderedBody = useMemo(
+    () => (m.text && !isPoll && !isStickyNote && m.type !== "access_request_card"
+      ? renderText(m.text, userMap, isMine, m.mention_ids)
+      : null),
+    [m.text, m.type, isPoll, isStickyNote, userMap, isMine, m.mention_ids]
+  );
   return (
     <div className={`group flex w-full gap-2 sm:gap-2.5 ${isMine ? "flex-row-reverse justify-start" : "flex-row justify-start"} ${grouped ? "mt-0.5" : "mt-3.5 sm:mt-4"}`} data-testid={`message-${m.id}`}>
       {!isMine && (
@@ -911,7 +932,7 @@ function MessageItem({ m, mine, grouped, conv, onReply, onCreateTask, readBy }) 
               {(m.text && !isPoll && !isStickyNote && m.type !== "access_request_card") && (editing ? (
                 <div className="flex flex-col gap-1"><textarea value={val} onChange={(e) => setVal(e.target.value)} className="w-72 max-w-full rounded-xl border bg-surface p-2 text-sm text-ink" data-testid="edit-message-input" />
                   <div className="flex gap-2 text-xs"><button onClick={save} className="font-semibold text-brand" data-testid="save-edit-btn">{tr("chat_msg_save_edit", "Simpan")}</button><button onClick={() => setEditing(false)} className="text-sub">{tr("chat_msg_cancel_edit", "Batal")}</button></div></div>
-              ) : <div className={`${plain ? "mt-1 text-sm" : `rounded-2xl px-3.5 py-2 text-[14.5px] leading-relaxed ${bubble}`} whitespace-pre-wrap break-words`}>{renderText(m.text, userMap, isMine, m.mention_ids)}{m.edited && <span className="ml-1 text-[10px] opacity-70">{tr("chat_msg_edited", "· diedit")}</span>}</div>)}
+              ) : <div className={`${plain ? "mt-1 text-sm" : `rounded-2xl px-3.5 py-2 text-[14.5px] leading-relaxed ${bubble}`} whitespace-pre-wrap break-words`}>{renderedBody}{m.edited && <span className="ml-1 text-[10px] opacity-70">{tr("chat_msg_edited", "· diedit")}</span>}</div>)}
               {images.length > 0 && (
                 <div className={`mt-1 grid gap-1.5 ${images.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
                   {images.map((a) => (

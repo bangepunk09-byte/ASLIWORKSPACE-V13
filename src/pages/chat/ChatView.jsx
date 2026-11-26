@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowLeft, Search, PanelRight, BellOff, Bell, X, Pin, FileText, CheckSquare, UserPlus, MailPlus, Lock, LogOut, Archive, Trash2, Shield, MapPin, ShieldCheck, Sparkles, Check } from "lucide-react";
+import { ArrowLeft, Search, PanelRight, BellOff, Bell, X, Pin, FileText, CheckSquare, UserPlus, MailPlus, Lock, LogOut, Archive, Trash2, Shield, MapPin, ShieldCheck, Sparkles, Check, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { api, errMsg, fileUrl } from "../../lib/api";
 import { useApp } from "../../context/AppContext";
@@ -23,6 +23,7 @@ import {
   appendMessageToCache,
   updateMessageInCache,
   seedPollCache,
+  scheduleStorageWrite,
 } from "../../lib/workspaceCaches";
 import TaskCreate from "../tasks/TaskCreate";
 import { GroupDialog, MemberPicker } from "./GroupDialog";
@@ -53,9 +54,7 @@ export function prefetchConversation(cid) {
       if (arr) {
         arr.forEach((m) => { if (m?.poll) seedPollCache(m.poll); });
         CHAT_CACHE[`msgs_${cid}`] = arr;
-        setTimeout(() => {
-          try { localStorage.setItem(`circle_msgs_cache_${cid}`, JSON.stringify(arr)); } catch {}
-        }, 0);
+        try { scheduleStorageWrite(`circle_msgs_cache_${cid}`, JSON.stringify(arr)); } catch {}
       }
     }).catch(() => {});
   }
@@ -64,9 +63,7 @@ export function prefetchConversation(cid) {
 function writeMsgsCacheDeferred(cid, arr) {
   if (!cid || !Array.isArray(arr)) return;
   CHAT_CACHE[`msgs_${cid}`] = arr;
-  setTimeout(() => {
-    try { localStorage.setItem(`circle_msgs_cache_${cid}`, JSON.stringify(arr)); } catch {}
-  }, 0);
+  try { scheduleStorageWrite(`circle_msgs_cache_${cid}`, JSON.stringify(arr)); } catch {}
 }
 
 function areMessagesEquivalent(a, b) {
@@ -504,8 +501,30 @@ export default function ChatView({ cid, initialConv = null, onChange, onRead, on
   onLeftRef.current = onLeft;
   const bottom = useRef(null);
   const scroller = useRef(null);
+  const composerRef = useRef(null);
+  const dragDepthRef = useRef(0);
+  const [dragActive, setDragActive] = useState(false);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+
+  useEffect(() => {
+    dragDepthRef.current = 0;
+    setDragActive(false);
+  }, [cid]);
+
+  useEffect(() => {
+    if (!dragActive) return undefined;
+    const resetDrag = () => {
+      dragDepthRef.current = 0;
+      setDragActive(false);
+    };
+    window.addEventListener("dragend", resetDrag);
+    window.addEventListener("drop", resetDrag);
+    return () => {
+      window.removeEventListener("dragend", resetDrag);
+      window.removeEventListener("drop", resetDrag);
+    };
+  }, [dragActive]);
 
   const loadConv = useCallback((signal) => {
     const targetCid = cid;
@@ -760,7 +779,7 @@ export default function ChatView({ cid, initialConv = null, onChange, onRead, on
       requestAnimationFrame(() => bottom.current?.scrollIntoView({ behavior: "smooth" }));
       if (d.sender_id !== me?.user_id) {
         markRead();
-        playSound("message");
+        playSound("message_notif");
       }
     }
     if (e.type === "message:update" && d?.conversation_id === cid) {
@@ -821,53 +840,77 @@ export default function ChatView({ cid, initialConv = null, onChange, onRead, on
     requestAnimationFrame(() => { scroller.current.scrollTop = scroller.current.scrollHeight - h; });
   };
 
-  const activeConv = conv || getInitialConv(cid, me);
-  const memList = Array.isArray(activeConv.member_ids) ? activeConv.member_ids : (Array.isArray(activeConv.members) ? activeConv.members : []);
-  const otherMemberId = memList.find((x) => x && x !== me?.user_id) || me?.user_id;
+  const activeConv = useMemo(() => conv || getInitialConv(cid, me), [conv, cid, me]);
+  const memList = useMemo(
+    () => (Array.isArray(activeConv.member_ids) ? activeConv.member_ids : (Array.isArray(activeConv.members) ? activeConv.members : [])),
+    [activeConv.member_ids, activeConv.members]
+  );
+  const otherMemberId = useMemo(() => memList.find((x) => x && x !== me?.user_id) || me?.user_id, [memList, me?.user_id]);
   const isCircleAssistantConv = activeConv.type === "dm" && (otherMemberId === "user_circle_assistant" || activeConv.id?.startsWith("conv_circle_"));
-  const other = activeConv.type === "dm" ? (
-    isCircleAssistantConv ? {
-      user_id: "user_circle_assistant",
-      name: ws?.assistant_name || "Asli",
-      job_title: tr("messages_assistant_role", "Asisten AI Workspace"),
-      avatar: ws?.assistant_avatar || "https://api.dicebear.com/7.x/bottts/svg?seed=AsliWorkspace&backgroundColor=FF5364"
-    } : (userMap?.[otherMemberId] || null)
-  ) : null;
-
+  const other = useMemo(() => (
+    activeConv.type === "dm" ? (
+      isCircleAssistantConv ? {
+        user_id: "user_circle_assistant",
+        name: ws?.assistant_name || "Asli",
+        job_title: tr("messages_assistant_role", "Asisten AI Workspace"),
+        avatar: ws?.assistant_avatar || "https://api.dicebear.com/7.x/bottts/svg?seed=AsliWorkspace&backgroundColor=FF5364"
+      } : (userMap?.[otherMemberId] || null)
+    ) : null
+  ), [activeConv.type, isCircleAssistantConv, ws?.assistant_name, ws?.assistant_avatar, userMap, otherMemberId, tr]);
 
   const title = activeConv.type === "dm"
     ? (other?.name || (activeConv.name && activeConv.name !== "Direct Message" ? activeConv.name : tr("messages_default_dm_title", "Pesan Langsung")))
     : (activeConv.name || tr("messages_default_group_title", "Grup Chat"));
-  const typers = Object.entries(typing).filter(([, t]) => Date.now() - t < 4000).map(([id]) => userMap[id]?.name?.split(" ")[0]).filter(Boolean);
-  const toEpochMs = (v) => {
-    if (!v) return 0;
-    if (typeof v === "number") return v;
-    const n = Number(v);
-    if (!Number.isNaN(n) && n > 0) return n;
-    const parsed = new Date(v).getTime();
-    return Number.isNaN(parsed) ? 0 : parsed;
-  };
-  const safeMsgs = Array.isArray(msgs) ? msgs : [];
-  const readers = (ts) => {
-    const msgMs = toEpochMs(ts);
+  const typers = useMemo(() => {
+    const entries = Object.entries(typing);
+    if (!entries.length) return [];
+    const now = Date.now();
+    return entries.filter(([, ts]) => now - ts < 4000).map(([id]) => userMap[id]?.name?.split(" ")[0]).filter(Boolean);
+  }, [typing, userMap]);
+
+  const safeMsgs = useMemo(() => (Array.isArray(msgs) ? msgs : []), [msgs]);
+  const myUserId = me?.user_id;
+  const lastMineMsg = useMemo(() => {
+    if (!myUserId) return null;
+    for (let i = safeMsgs.length - 1; i >= 0; i -= 1) {
+      const m = safeMsgs[i];
+      if (m && (m.sender_id === myUserId || m.user_id === myUserId)) return m;
+    }
+    return null;
+  }, [safeMsgs, myUserId]);
+  const lastMine = lastMineMsg?.id;
+
+  const lastMineReadBy = useMemo(() => {
+    if (!lastMineMsg) return undefined;
+    const toEpochMs = (v) => {
+      if (!v) return 0;
+      if (typeof v === "number") return v;
+      const n = Number(v);
+      if (!Number.isNaN(n) && n > 0) return n;
+      const parsed = new Date(v).getTime();
+      return Number.isNaN(parsed) ? 0 : parsed;
+    };
+    const msgMs = toEpochMs(lastMineMsg.created_at);
     if (!msgMs) return 0;
     const readerSet = new Set();
     for (const [id, at] of Object.entries(activeConv.reads || {})) {
-      if (id && id !== me?.user_id && toEpochMs(at) >= msgMs) {
+      if (id && id !== myUserId && toEpochMs(at) >= msgMs) {
         readerSet.add(id);
       }
     }
-    for (const m of safeMsgs) {
+    for (let i = safeMsgs.length - 1; i >= 0; i -= 1) {
+      const m = safeMsgs[i];
+      const mMs = toEpochMs(m?.created_at);
+      if (mMs < msgMs) break;
       const sid = m?.sender_id || m?.user_id;
-      if (sid && sid !== me?.user_id && toEpochMs(m.created_at) >= msgMs) {
+      if (sid && sid !== myUserId) {
         readerSet.add(sid);
       }
     }
     return readerSet.size;
-  };
-  const isMyMessage = (m) => Boolean(me?.user_id && (m.sender_id === me.user_id || m.user_id === me.user_id));
-  const lastMine = [...safeMsgs].reverse().find((m) => isMyMessage(m))?.id;
-  const openPanel = () => (window.innerWidth >= 1280 ? setPanel(!panel) : setMobilePanel(true));
+  }, [lastMineMsg, activeConv.reads, safeMsgs, myUserId]);
+
+  const openPanel = useCallback(() => (window.innerWidth >= 1280 ? setPanel((p) => !p) : setMobilePanel(true)), []);
 
   const handleSent = (m, replaceId) => {
     setMsgs((x) => {
@@ -914,9 +957,92 @@ export default function ChatView({ cid, initialConv = null, onChange, onRead, on
     }
   };
 
+  const canDropFiles = activeConv.is_member !== false && !activeConv.archived;
+
+  const hasDraggedFiles = (e) => {
+    const dt = e?.dataTransfer;
+    if (!dt) return false;
+    if (dt.types && Array.from(dt.types).includes("Files")) return true;
+    if (dt.items && Array.from(dt.items).some((it) => it.kind === "file")) return true;
+    return Boolean(dt.files && dt.files.length > 0);
+  };
+
+  const extractDroppedFiles = (dt) => {
+    if (!dt) return [];
+    const direct = Array.from(dt.files || []).filter(Boolean);
+    if (direct.length > 0) return direct;
+    return Array.from(dt.items || [])
+      .filter((it) => it.kind === "file")
+      .map((it) => it.getAsFile())
+      .filter(Boolean);
+  };
+
+  const handleChatDragEnter = (e) => {
+    if (!canDropFiles || !hasDraggedFiles(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dragDepthRef.current += 1;
+    if (!dragActive) setDragActive(true);
+  };
+
+  const handleChatDragOver = (e) => {
+    if (!canDropFiles || !hasDraggedFiles(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    if (!dragActive) setDragActive(true);
+  };
+
+  const handleChatDragLeave = (e) => {
+    if (!canDropFiles) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0 || e.relatedTarget === null) {
+      dragDepthRef.current = 0;
+      setDragActive(false);
+    }
+  };
+
+  const handleChatDrop = (e) => {
+    dragDepthRef.current = 0;
+    setDragActive(false);
+    if (!canDropFiles) return;
+    const dropped = extractDroppedFiles(e.dataTransfer);
+    if (dropped.length === 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    composerRef.current?.addFiles(dropped);
+    composerRef.current?.focus();
+  };
+
   return (
     <div className="flex h-full max-h-full w-full max-w-full min-w-0 flex-1 overflow-hidden overscroll-none" data-testid="chat-view">
-      <div className="flex h-full max-h-full w-full max-w-full min-w-0 flex-1 flex-col overflow-hidden bg-background">
+      <div
+        onDragEnter={handleChatDragEnter}
+        onDragOver={handleChatDragOver}
+        onDragLeave={handleChatDragLeave}
+        onDrop={handleChatDrop}
+        className="relative flex h-full max-h-full w-full max-w-full min-w-0 flex-1 flex-col overflow-hidden bg-background"
+      >
+        {dragActive && canDropFiles && (
+          <div
+            className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center bg-background/85 p-6"
+            data-testid="chat-drop-overlay"
+          >
+            <div className="flex w-full max-w-md flex-col items-center justify-center rounded-3xl border-2 border-dashed border-brand bg-surface/95 px-6 py-10 text-center shadow-xl">
+              <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-brand/10 text-brand">
+                <Upload size={26} />
+              </div>
+              <p className="text-base font-bold text-ink">
+                {tr("chat_drop_title", "Lepaskan gambar atau file di sini")}
+              </p>
+              <p className="mt-1 text-xs text-sub">
+                {tr("chat_drop_desc", "Otomatis dilampirkan ke kolom pesan obrolan ini")}
+              </p>
+            </div>
+          </div>
+        )}
         <header className="flex h-14 sm:h-16 shrink-0 items-center gap-1.5 sm:gap-2 border-b bg-surface px-1.5 sm:px-4 pt-safe select-none">
           <button onClick={() => navigate("/messages")} className="btn-ghost flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 items-center justify-center lg:hidden" aria-label={tr("common_back", "Kembali")} data-testid="chat-back-btn"><ArrowLeft size={20} /></button>
           <button onClick={openPanel} className="flex min-w-0 flex-1 items-center gap-2.5 sm:gap-3 text-left">
@@ -956,8 +1082,8 @@ export default function ChatView({ cid, initialConv = null, onChange, onRead, on
           {safeMsgs.map((m, i) => {
             const prev = safeMsgs[i - 1];
             const grouped = prev && prev.sender_id === m.sender_id && prev.type !== "call" && new Date(m.created_at) - new Date(prev.created_at) < 300000;
-            const mine = isMyMessage(m);
-            return <MessageItem key={m.id || i} m={m} mine={mine} grouped={grouped} conv={activeConv} onReply={setReply} onCreateTask={setTaskFrom} readBy={m.id === lastMine ? readers(m.created_at) : undefined} />;
+            const mine = Boolean(myUserId && (m.sender_id === myUserId || m.user_id === myUserId));
+            return <MessageItem key={m.id || i} m={m} mine={mine} grouped={grouped} conv={activeConv} onReply={setReply} onCreateTask={setTaskFrom} readBy={m.id === lastMine ? lastMineReadBy : undefined} />;
           })}
           {!safeMsgs.length && (() => {
             const isDeptLocked = (activeConv.group_type === "department" || String(activeConv.id || "").startsWith("group_official_")) && activeConv.is_member === false;
@@ -1041,7 +1167,7 @@ export default function ChatView({ cid, initialConv = null, onChange, onRead, on
               </button>
             )}
           </div>
-        ) : <Composer conv={activeConv} reply={reply} onCancelReply={() => setReply(null)} onPoll={() => setPoll(true)} onSent={handleSent} isCircleConv={isCircleAssistantConv} onOpenFeatureHub={() => setFeatureHubOpen(true)} />}
+        ) : <Composer ref={composerRef} conv={activeConv} reply={reply} onCancelReply={() => setReply(null)} onPoll={() => setPoll(true)} onSent={handleSent} isCircleConv={isCircleAssistantConv} onOpenFeatureHub={() => setFeatureHubOpen(true)} />}
       </div>
       {panel && <aside className="hidden w-[320px] shrink-0 border-l bg-surface xl:block"><Panel conv={activeConv} reload={() => { loadConv(); onChange(); }} onClose={() => setPanel(false)} onLeft={onLeft} /></aside>}
       <Sheet open={mobilePanel} onOpenChange={setMobilePanel}><SheetContent className="w-full bg-surface p-0 sm:max-w-sm"><SheetHeader className="sr-only"><SheetTitle>{tr("chat_detail_title", "Detail")}</SheetTitle></SheetHeader><Panel conv={activeConv} reload={() => { loadConv(); onChange(); }} onClose={() => setMobilePanel(false)} onLeft={onLeft} /></SheetContent></Sheet>

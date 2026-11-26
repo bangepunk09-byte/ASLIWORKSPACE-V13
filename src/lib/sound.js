@@ -26,6 +26,8 @@ export const setSoundEnabled = (enabled) => {
   localStorage.setItem("circle_sound_effects", enabled ? "enabled" : "disabled");
 };
 
+let lastBbmSoundAt = 0;
+
 export function playSound(type = "click") {
   if (!isSoundEnabled()) return;
   try {
@@ -35,6 +37,63 @@ export function playSound(type = "click") {
     const now = ctx.currentTime;
 
     switch (type) {
+      case "bbm":
+      case "message_notif": {
+        // Classic BlackBerry Messenger (BBM) crystalline 3-note chime
+        const nowMs = typeof performance !== "undefined" ? performance.now() : Date.now();
+        if (nowMs - lastBbmSoundAt < 350) return;
+        lastBbmSoundAt = nowMs;
+
+        const notes = [
+          { freq: 1046.5, delay: 0.0, dur: 0.14, gain: 0.15 },   // C6
+          { freq: 1318.51, delay: 0.082, dur: 0.16, gain: 0.16 }, // E6
+          { freq: 1567.98, delay: 0.165, dur: 0.34, gain: 0.18 }, // G6
+        ];
+
+        notes.forEach(({ freq, delay, dur, gain: peak }) => {
+          const t0 = now + delay;
+
+          // Primary glassy sine chime
+          const osc1 = ctx.createOscillator();
+          const g1 = ctx.createGain();
+          osc1.type = "sine";
+          osc1.frequency.setValueAtTime(freq, t0);
+          g1.gain.setValueAtTime(0.001, t0);
+          g1.gain.linearRampToValueAtTime(peak, t0 + 0.004);
+          g1.gain.exponentialRampToValueAtTime(0.0008, t0 + dur);
+          osc1.connect(g1);
+          g1.connect(ctx.destination);
+          osc1.start(t0);
+          osc1.stop(t0 + dur + 0.02);
+
+          // Harmonic bell overtone (2x shimmer, faster decay)
+          const osc2 = ctx.createOscillator();
+          const g2 = ctx.createGain();
+          osc2.type = "sine";
+          osc2.frequency.setValueAtTime(freq * 2.003, t0);
+          g2.gain.setValueAtTime(0.001, t0);
+          g2.gain.linearRampToValueAtTime(peak * 0.28, t0 + 0.003);
+          g2.gain.exponentialRampToValueAtTime(0.0008, t0 + Math.min(0.11, dur * 0.65));
+          osc2.connect(g2);
+          g2.connect(ctx.destination);
+          osc2.start(t0);
+          osc2.stop(t0 + Math.min(0.13, dur * 0.7));
+
+          // Crisp percussive plink transient
+          const osc3 = ctx.createOscillator();
+          const g3 = ctx.createGain();
+          osc3.type = "triangle";
+          osc3.frequency.setValueAtTime(freq * 3, t0);
+          g3.gain.setValueAtTime(peak * 0.14, t0);
+          g3.gain.exponentialRampToValueAtTime(0.0008, t0 + 0.024);
+          osc3.connect(g3);
+          g3.connect(ctx.destination);
+          osc3.start(t0);
+          osc3.stop(t0 + 0.028);
+        });
+        break;
+      }
+
       case "message": {
         // Warm dual-tone pop
         const osc = ctx.createOscillator();

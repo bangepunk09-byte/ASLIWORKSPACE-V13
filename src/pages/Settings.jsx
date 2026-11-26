@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { Settings as Cog, Sun, Moon, Monitor, Upload, Download, RotateCcw, FileSpreadsheet, Search, Check, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { useApp } from "../context/AppContext";
@@ -132,7 +132,7 @@ function NotificationPrefs() {
     await showSystemNotification(payload, { force: true });
 
     // 3. Play sound feedback immediately
-    playSound("notification");
+    playSound(mode === "message" ? "message_notif" : "notification");
 
     // 4. Persist to server in background
     try {
@@ -294,11 +294,54 @@ function NotificationPrefs() {
   );
 }
 
+const CopywritingRow = memo(function CopywritingRow({ itemKey, currentVal, onUpdate, onReset }) {
+  const hasDefault = itemKey in DEFAULT_COPYWRITING;
+  const defVal = DEFAULT_COPYWRITING[itemKey];
+  const isCustomized = Boolean(String(currentVal || "").trim());
+
+  return (
+    <div className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 hover:bg-surface2/50 transition-colors">
+      <div className="sm:w-1/3 min-w-0">
+        <span className="font-mono text-[10px] text-brand block truncate">{itemKey}</span>
+        {hasDefault ? (
+          <span className="text-sub text-[11px] block mt-0.5 truncate" title={defVal}>Default: &ldquo;{defVal}&rdquo;</span>
+        ) : (
+          <span className="inline-block mt-0.5 rounded bg-brand/10 px-1.5 py-0.5 text-[10px] font-semibold text-brand">Key Kustom</span>
+        )}
+      </div>
+      <div className="sm:w-2/3 flex items-start gap-2">
+        <RichCopyField
+          compact
+          className="flex-1"
+          value={currentVal}
+          onChange={(val) => onUpdate(itemKey, val)}
+          placeholder={hasDefault ? defVal : "Masukkan teks kustom..."}
+          inputClassName={
+            isCustomized ? "border-brand bg-brand/5 text-ink font-semibold" : "bg-surface2 text-sub"
+          }
+          testid={`copywriting-field-${itemKey}`}
+        />
+        {isCustomized && (
+          <button
+            type="button"
+            title="Kembali ke default"
+            onClick={() => onReset(itemKey)}
+            className="text-sub hover:text-rose-500 p-1.5 shrink-0 mt-0.5"
+          >
+            <RotateCcw size={12} />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+});
+
 function CopywritingSettings() {
   const { me, isAdmin, prefs, savePrefs, ws, setSession, reloadWs, t } = useApp();
   const custom = getEffectiveCopywriting(ws?.custom_copywriting, prefs?.custom_copywriting);
   const [searchTerm, setSearchTerm] = useState("");
   const [category, setCategory] = useState("all");
+  const [visibleLimit, setVisibleLimit] = useState(60);
   const [draft, setDraft] = useState({ ...custom });
   const [saving, setSaving] = useState(false);
   const [newKey, setNewKey] = useState("");
@@ -310,6 +353,55 @@ function CopywritingSettings() {
   useEffect(() => {
     setDraft(getEffectiveCopywriting(ws?.custom_copywriting, prefs?.custom_copywriting));
   }, [ws?.custom_copywriting, prefs?.custom_copywriting]);
+
+  useEffect(() => {
+    setVisibleLimit(60);
+  }, [category, searchTerm]);
+
+  const handleRowUpdate = useCallback((key, val) => {
+    setDraft((prev) => ({ ...prev, [key]: val }));
+  }, []);
+
+  const handleRowReset = useCallback((key) => {
+    setDraft((prev) => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  }, []);
+
+  const allKeys = useMemo(
+    () => Array.from(new Set([...Object.keys(DEFAULT_COPYWRITING), ...Object.keys(draft)])),
+    [draft]
+  );
+
+  const groupCounts = useMemo(
+    () => COPYWRITING_GROUPS.map((g) => ({
+      ...g,
+      count: g.match ? allKeys.filter(g.match).length : allKeys.length,
+    })),
+    [allKeys]
+  );
+
+  const filteredKeys = useMemo(() => {
+    const activeGroup = COPYWRITING_GROUPS.find((g) => g.id === category);
+    const q = searchTerm.trim().toLowerCase();
+    return allKeys.filter((k) => {
+      if (activeGroup?.match && !activeGroup.match(k)) return false;
+      if (!q) return true;
+      return (
+        k.toLowerCase().includes(q) ||
+        (DEFAULT_COPYWRITING[k] || "").toLowerCase().includes(q) ||
+        (draft[k] || "").toLowerCase().includes(q)
+      );
+    });
+  }, [allKeys, category, searchTerm, draft]);
+
+  const customCount = useMemo(
+    () => Object.keys(draft).filter((k) => String(draft[k] || "").trim()).length,
+    [draft]
+  );
 
   if (!isAdmin) return null;
 
@@ -450,21 +542,6 @@ function CopywritingSettings() {
     toast.success(`Key '${k}' ditambahkan ke draft. Klik Simpan Copywriting.`);
   };
 
-  const allKeys = Array.from(new Set([...Object.keys(DEFAULT_COPYWRITING), ...Object.keys(draft)]));
-  const activeGroup = COPYWRITING_GROUPS.find((g) => g.id === category);
-  const filteredKeys = allKeys.filter((k) => {
-    if (activeGroup?.match && !activeGroup.match(k)) return false;
-    if (!searchTerm.trim()) return true;
-    const q = searchTerm.toLowerCase();
-    return (
-      k.toLowerCase().includes(q) ||
-      (DEFAULT_COPYWRITING[k] || "").toLowerCase().includes(q) ||
-      (draft[k] || "").toLowerCase().includes(q)
-    );
-  });
-
-  const customCount = Object.keys(draft).filter((k) => String(draft[k] || "").trim()).length;
-
   return (
     <Card title={t("settings_copywriting_title", "Kustomisasi Teks & Copywriting")} testid="copywriting-card">
       <div className="mb-4 space-y-2">
@@ -565,9 +642,8 @@ function CopywritingSettings() {
 
       {/* Category Filter Tabs */}
       <div className="mb-3 flex items-center gap-1.5 overflow-x-auto pb-1 scroll-thin">
-        {COPYWRITING_GROUPS.map((g) => {
-          const count = g.match ? allKeys.filter(g.match).length : allKeys.length;
-          if (g.id === "custom" && count === 0) return null;
+        {groupCounts.map((g) => {
+          if (g.id === "custom" && g.count === 0) return null;
           const active = category === g.id;
           return (
             <button
@@ -580,7 +656,7 @@ function CopywritingSettings() {
               data-testid={`copywriting-cat-${g.id}`}
             >
               <span>{g.label}</span>
-              <span className={`text-[10px] ${active ? "text-white/80" : "text-sub/70"}`}>{count}</span>
+              <span className={`text-[10px] ${active ? "text-white/80" : "text-sub/70"}`}>{g.count}</span>
             </button>
           );
         })}
@@ -602,52 +678,28 @@ function CopywritingSettings() {
         {filteredKeys.length === 0 ? (
           <div className="p-6 text-center text-sub">Tidak ditemukan kata kunci yang cocok</div>
         ) : (
-          filteredKeys.map((key) => {
-            const hasDefault = key in DEFAULT_COPYWRITING;
-            const defVal = DEFAULT_COPYWRITING[key];
-            const currentVal = draft[key] || "";
-            const isCustomized = !!String(currentVal).trim();
-
-            return (
-              <div key={key} className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 hover:bg-surface2/50 transition-colors">
-                <div className="sm:w-1/3 min-w-0">
-                  <span className="font-mono text-[10px] text-brand block truncate">{key}</span>
-                  {hasDefault ? (
-                    <span className="text-sub text-[11px] block mt-0.5 truncate" title={defVal}>Default: &ldquo;{defVal}&rdquo;</span>
-                  ) : (
-                    <span className="inline-block mt-0.5 rounded bg-brand/10 px-1.5 py-0.5 text-[10px] font-semibold text-brand">Key Kustom</span>
-                  )}
-                </div>
-                <div className="sm:w-2/3 flex items-start gap-2">
-                  <RichCopyField
-                    compact
-                    className="flex-1"
-                    value={currentVal}
-                    onChange={(val) => setDraft({ ...draft, [key]: val })}
-                    placeholder={hasDefault ? defVal : "Masukkan teks kustom..."}
-                    inputClassName={
-                      isCustomized ? "border-brand bg-brand/5 text-ink font-semibold" : "bg-surface2 text-sub"
-                    }
-                    testid={`copywriting-field-${key}`}
-                  />
-                  {isCustomized && (
-                    <button
-                      type="button"
-                      title="Kembali ke default"
-                      onClick={() => {
-                        const next = { ...draft };
-                        delete next[key];
-                        setDraft(next);
-                      }}
-                      className="text-sub hover:text-rose-500 p-1.5 shrink-0 mt-0.5"
-                    >
-                      <RotateCcw size={12} />
-                    </button>
-                  )}
-                </div>
+          <>
+            {filteredKeys.slice(0, visibleLimit).map((key) => (
+              <CopywritingRow
+                key={key}
+                itemKey={key}
+                currentVal={draft[key] || ""}
+                onUpdate={handleRowUpdate}
+                onReset={handleRowReset}
+              />
+            ))}
+            {filteredKeys.length > visibleLimit && (
+              <div className="p-3 text-center">
+                <button
+                  type="button"
+                  onClick={() => setVisibleLimit((n) => n + 60)}
+                  className="rounded-full border bg-surface2 px-4 py-1.5 text-xs font-semibold text-ink hover:bg-surface cursor-pointer"
+                >
+                  Tampilkan 60 lagi ({filteredKeys.length - visibleLimit} tersisa)
+                </button>
               </div>
-            );
-          })
+            )}
+          </>
         )}
       </div>
     </Card>

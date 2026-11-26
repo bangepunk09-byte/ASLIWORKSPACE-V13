@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Smile, Sticker, Paperclip, Image as ImageIcon, BarChart3, SendHorizonal, X, Search, Upload, FileText, Plus, Sparkles, Trash2, Palette } from "lucide-react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { Smile, Sticker, Paperclip, Image as ImageIcon, BarChart3, SendHorizonal, X, Search, Upload, FileText, Plus, Sparkles, Trash2, Palette, Users } from "lucide-react";
 import { toast } from "sonner";
 import { api, errMsg, fileUrl, uploadFile } from "../../lib/api";
 import { useApp } from "../../context/AppContext";
@@ -388,7 +388,13 @@ function StickerPicker({ onPick }) {
   );
 }
 
-export default function Composer({ conv, reply, onCancelReply, onSent, onPoll, isCircleConv, onOpenFeatureHub }) {
+function isImageFile(file) {
+  if (!file) return false;
+  if (file.type && file.type.startsWith("image/")) return true;
+  return /\.(png|jpe?g|gif|webp|avif|bmp|svg|heic|heif)$/i.test(file.name || "");
+}
+
+const Composer = forwardRef(function Composer({ conv, reply, onCancelReply, onSent, onPoll, isCircleConv, onOpenFeatureHub }, forwardedRef) {
   const { me, send, userMap, t: tr } = useApp();
   const [text, setText] = useState("");
   const [files, setFiles] = useState([]);
@@ -519,7 +525,14 @@ export default function Composer({ conv, reply, onCancelReply, onSent, onPoll, i
     const msgText = text;
     const msgFiles = files.map((f) => ({ id: f.id, name: f.name, content_type: f.content_type }));
     const msgReply = reply?.id;
-    const msgMentions = mentions.filter((m) => msgText.includes(`@${userMap[m]?.name}`));
+    const hasAllMention = /(?<![\p{L}\p{N}._])@semua(?![\p{L}\p{N}_])/iu.test(msgText);
+    const convMemberSet = new Set(conv?.member_ids || conv?.members || []);
+    const msgMentions = Array.from(
+      new Set([
+        ...mentions.filter((m) => m !== "__all__" && m !== "semua" && convMemberSet.has(m) && msgText.includes(`@${userMap[m]?.name}`)),
+        ...(hasAllMention ? ["semua"] : [])
+      ])
+    );
     setText("");
     setFiles([]);
     setMentions([]);
@@ -535,20 +548,106 @@ export default function Composer({ conv, reply, onCancelReply, onSent, onPoll, i
   };
   const pickMention = (u) => {
     const pos = ta.current.selectionStart;
-    const before = text.slice(0, pos).replace(/@[\w]*$/, `@${u.name} `);
+    const tagText = u.isAll ? "@semua " : `@${u.name} `;
+    const before = text.slice(0, pos).replace(/@[\w]*$/, tagText);
     setText(before + text.slice(pos));
-    setMentions([...mentions, u.user_id]);
+    setMentions((prev) => Array.from(new Set([...prev, u.isAll ? "semua" : u.user_id])));
     setMq(null);
     ta.current.focus();
   };
-  const addFiles = async (list) => {
-    for (const f of Array.from(list)) {
-      const tmp = { key: Math.random(), name: f.name, uploading: true, content_type: f.type, preview: f.type.startsWith("image/") ? URL.createObjectURL(f) : null };
-      setFiles((x) => [...x, tmp]);
-      try { const up = await uploadFile(f); setFiles((x) => x.map((y) => (y.key === tmp.key ? { ...y, ...up, uploading: false } : y))); } catch (e) { toast.error(errMsg(e)); setFiles((x) => x.filter((y) => y.key !== tmp.key)); }
+  const addFiles = useCallback(async (list) => {
+    if (conv?.archived || conv?.is_member === false) return;
+    const picked = Array.from(list || []).filter(Boolean);
+    if (picked.length === 0) return;
+
+    const entries = picked.map((f) => {
+      const imgLike = isImageFile(f);
+      return {
+        file: f,
+        imgLike,
+        tmp: {
+          key: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          name: f.name || (imgLike ? "gambar.png" : "file"),
+          uploading: true,
+          content_type: f.type || (imgLike ? "image/png" : ""),
+          preview: imgLike ? URL.createObjectURL(f) : null,
+        },
+      };
+    });
+
+    setFiles((x) => [...x, ...entries.map((e) => e.tmp)]);
+    requestAnimationFrame(() => focusComposer());
+
+    await Promise.all(
+      entries.map(async ({ file, imgLike, tmp }) => {
+        try {
+          const up = await uploadFile(file);
+          setFiles((x) =>
+            x.map((y) =>
+              y.key === tmp.key
+                ? {
+                    ...y,
+                    ...up,
+                    content_type: up?.content_type || up?.mimetype || y.content_type || (imgLike ? "image/png" : "application/octet-stream"),
+                    uploading: false,
+                  }
+                : y
+            )
+          );
+        } catch (e) {
+          if (tmp.preview) {
+            try { URL.revokeObjectURL(tmp.preview); } catch {}
+          }
+          toast.error(errMsg(e));
+          setFiles((x) => x.filter((y) => y.key !== tmp.key));
+        }
+      })
+    );
+  }, [conv?.archived, conv?.is_member, focusComposer]);
+
+  useImperativeHandle(forwardedRef, () => ({
+    addFiles,
+    focus: focusComposer,
+  }), [addFiles, focusComposer]);
+
+  const removeQueuedFile = (target) => {
+    if (target?.preview) {
+      try { URL.revokeObjectURL(target.preview); } catch {}
+    }
+    setFiles((prev) => prev.filter((x) => x.key !== target.key));
+  };
+
+  const handlePaste = (e) => {
+    if (conv?.archived || conv?.is_member === false) return;
+    const directFiles = Array.from(e.clipboardData?.files || []).filter(Boolean);
+    const fallbackFiles = directFiles.length > 0
+      ? directFiles
+      : Array.from(e.clipboardData?.items || [])
+          .filter((it) => it.kind === "file")
+          .map((it) => it.getAsFile())
+          .filter(Boolean);
+    if (fallbackFiles.length > 0) {
+      e.preventDefault();
+      addFiles(fallbackFiles);
     }
   };
-  const members = mq !== null ? (conv?.member_ids || []).map((id) => userMap[id]).filter((u) => u && u.name.toLowerCase().includes(mq)).slice(0, 6) : [];
+  const scopedHumanMembers = (conv?.member_ids || conv?.members || [])
+    .map((id) => userMap[id])
+    .filter((u) => u && u.user_id !== me?.user_id && !u.is_bot && u.role !== "assistant" && u.status !== "suspended" && u.status !== "pending");
+  const filteredMembers = mq !== null
+    ? scopedHumanMembers.filter((u) => (u.name || "").toLowerCase().includes(mq)).slice(0, 6)
+    : [];
+  const members = mq !== null && scopedHumanMembers.length > 0 && "semua".includes(mq)
+    ? [
+        {
+          user_id: "__all__",
+          name: "semua",
+          isAll: true,
+          count: scopedHumanMembers.length,
+        },
+        ...filteredMembers,
+      ].slice(0, 6)
+    : filteredMembers;
   const slashPrefix = circleMode && text.startsWith("/") && !text.slice(1).includes(" ") ? text.toLowerCase() : null;
   const matchingSlash = slashPrefix !== null
     ? slashCmds.filter((c) => c.command.startsWith(slashPrefix) || c.title.toLowerCase().includes(slashPrefix.slice(1))).slice(0, 8)
@@ -571,12 +670,41 @@ export default function Composer({ conv, reply, onCancelReply, onSent, onPoll, i
             <div key={f.key} className="relative flex h-16 shrink-0 items-center gap-2 rounded-xl border bg-surface2 px-2">
               {f.preview ? <img src={f.preview} alt="" className="h-12 w-12 rounded-lg object-cover" /> : <FileText size={18} className="text-sub" />}
               <span className="max-w-[120px] truncate text-xs">{f.uploading ? tr("chat_composer_uploading", "Mengunggah…") : f.name}</span>
-              <button onClick={() => setFiles(files.filter((x) => x.key !== f.key))} className="absolute -right-1 -top-1 rounded-full bg-ink p-0.5 text-[var(--c-surface)]" aria-label={tr("common_delete", "Hapus")}><X size={10} /></button>
+              <button onClick={() => removeQueuedFile(f)} className="absolute -right-1 -top-1 rounded-full bg-ink p-0.5 text-[var(--c-surface)]" aria-label={tr("common_delete", "Hapus")}><X size={10} /></button>
             </div>
           ))}
         </div>
       )}
-      {members.length > 0 && <div className="mb-2 rounded-xl border bg-surface p-1 shadow-lg" data-testid="mention-suggestions">{members.map((u) => <button key={u.user_id} onClick={() => pickMention(u)} className="flex w-full items-center gap-2 rounded-lg p-1.5 text-sm hover:bg-surface2"><Avatar user={u} size={22} showStatus={false} />{u.name}</button>)}</div>}
+      {members.length > 0 && (
+        <div className="mb-2 rounded-xl border bg-surface p-1 shadow-lg" data-testid="mention-suggestions">
+          {members.map((u) => (
+            <button
+              key={u.user_id}
+              type="button"
+              onClick={() => pickMention(u)}
+              className="flex w-full items-center gap-2 rounded-lg p-1.5 text-sm hover:bg-surface2 cursor-pointer"
+              data-testid={`chat-mention-${u.user_id}`}
+            >
+              {u.isAll ? (
+                <>
+                  <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full bg-brand/15 text-brand">
+                    <Users size={12} />
+                  </span>
+                  <span className="font-semibold text-brand">@semua</span>
+                  <span className="ml-auto text-[11px] text-sub">
+                    {conv?.type === "group" ? `Semua anggota grup (${u.count})` : "Tag semua"}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <Avatar user={u} size={22} showStatus={false} />
+                  <span>{u.name}</span>
+                </>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
       {matchingSlash.length > 0 && (
         <div className="mb-2 max-h-60 overflow-y-auto rounded-2xl border border-subtle bg-surface p-1.5 shadow-xl scroll-thin" data-testid="circle-slash-autocomplete">
           <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-sub">
@@ -702,7 +830,7 @@ export default function Composer({ conv, reply, onCancelReply, onSent, onPoll, i
           <input ref={imgRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
           <input ref={fileRef} type="file" multiple hidden onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} data-testid="attach-file-input" />
         </div>
-        <textarea ref={ta} rows={1} value={text} onChange={(e) => { setSlashIndex(0); onChange(e); }} placeholder={conv.archived ? tr("chat_composer_ph_archived", "Grup ini telah diarsipkan") : circleMode ? tr("chat_composer_ph_circle", "Tanya atau ketik / perintah…") : tr("chat_composer_ph_default", "Tulis pesan…")} disabled={conv.archived}
+        <textarea ref={ta} rows={1} value={text} onPaste={handlePaste} onChange={(e) => { setSlashIndex(0); onChange(e); }} placeholder={conv.archived ? tr("chat_composer_ph_archived", "Grup ini telah diarsipkan") : circleMode ? tr("chat_composer_ph_circle", "Tanya atau ketik / perintah…") : tr("chat_composer_ph_default", "Tulis pesan…")} disabled={conv.archived}
           onKeyDown={(e) => {
             if (matchingSlash.length > 0) {
               if (e.key === "ArrowDown") { e.preventDefault(); setSlashIndex((i) => (i + 1) % matchingSlash.length); return; }
@@ -716,4 +844,6 @@ export default function Composer({ conv, reply, onCancelReply, onSent, onPoll, i
       </div>
     </div>
   );
-}
+});
+
+export default Composer;

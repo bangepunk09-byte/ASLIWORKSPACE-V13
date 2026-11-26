@@ -8,7 +8,7 @@ import { playSound } from "../lib/sound";
 import { Avatar, Empty, fmtTime, GroupIcon } from "../components/common";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../components/ui/dialog";
 import ChatView, { hydrateConversationsCache, upsertConversationInCache, appendMessageToCache, updateMessageInCache, prefetchConversation } from "./chat/ChatView";
-import { removeConversationFromCache, clearConversationMessagesCache, removeGroupFromCache, saveConversationListCache } from "../lib/workspaceCaches";
+import { removeConversationFromCache, clearConversationMessagesCache, removeGroupFromCache, saveConversationListCache, getCachedConversationList, getLastConvsHydratedAt } from "../lib/workspaceCaches";
 
 const ConversationRow = memo(function ConversationRow({ c, active, onSelect, onContextMenu, emptyLabel }) {
   return (
@@ -117,16 +117,8 @@ export default function Messages() {
   const { cid } = useParams();
   const { me, userMap, subscribe, ws, isAdmin, t } = useApp();
   const [convs, setConvs] = useState(() => {
-    try {
-      const uid = me?.user_id;
-      if (uid) {
-        const saved = localStorage.getItem(`circle_convs_cache_${uid}`);
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-        }
-      }
-    } catch {}
+    const cached = getCachedConversationList(me?.user_id);
+    if (Array.isArray(cached) && cached.length > 0) return cached;
     return getDefaultConvsForUser(me);
   });
   const [q, setQ] = useState("");
@@ -149,22 +141,19 @@ export default function Messages() {
     }).catch(() => {});
   }, [me?.user_id]);
 
-  // Load conversations once per logged-in user (NOT on every cid click)
+  // Load conversations once per logged-in user (NOT on every cid click, and skip duplicate fetch right after bootstrap)
   useEffect(() => {
     if (!me?.user_id) return;
-    try {
-      const saved = localStorage.getItem(`circle_convs_cache_${me.user_id}`);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setConvs(parsed);
-        } else {
-          setConvs(getDefaultConvsForUser(me));
-        }
-      } else {
-        setConvs(getDefaultConvsForUser(me));
-      }
-    } catch {}
+    const cached = getCachedConversationList(me.user_id);
+    if (Array.isArray(cached) && cached.length > 0) {
+      setConvs(cached);
+    } else {
+      setConvs(getDefaultConvsForUser(me));
+    }
+    const hydratedAt = getLastConvsHydratedAt(me.user_id);
+    if (hydratedAt && Date.now() - hydratedAt < 4000 && Array.isArray(cached) && cached.length > 0) {
+      return;
+    }
     load();
   }, [me?.user_id, me?.department, load]);
 
@@ -296,6 +285,9 @@ export default function Messages() {
       }
     } else if (["conversation:new", "conversations:changed", "access_requests:changed"].includes(e.type)) {
       loadRef.current();
+    } else if (e.type === "bootstrap:dashboard") {
+      const cached = getCachedConversationList(me?.user_id);
+      if (Array.isArray(cached) && cached.length > 0) setConvs(cached);
     }
   }), [subscribe, me?.user_id, handleRead, navigate, t]);
 
@@ -365,7 +357,7 @@ export default function Messages() {
         return b._sortTs - a._sortTs;
       }
       return (a.title || "").localeCompare(b.title || "");
-    }), [safeConvs, userMap, me, ws?.assistant_name, ws?.assistant_avatar]);
+    }), [safeConvs, userMap, me, ws?.assistant_name, ws?.assistant_avatar, t]);
 
   const list = useMemo(
     () => named.filter((c) => (tab === "all" || (tab === "dm" ? c.type === "dm" : c.type === "group")) && (c.title || "").toLowerCase().includes(q.toLowerCase())),
@@ -422,7 +414,7 @@ export default function Messages() {
     };
   }, [ctxMenu]);
 
-  const openContextMenu = (e, c) => {
+  const openContextMenu = useCallback((e, c) => {
     e.preventDefault();
     e.stopPropagation();
     playSound("pop");
@@ -431,7 +423,7 @@ export default function Messages() {
     const x = Math.min(Math.max(8, e.clientX), Math.max(8, window.innerWidth - menuW - 8));
     const y = Math.min(Math.max(8, e.clientY), Math.max(8, window.innerHeight - menuH - 8));
     setCtxMenu({ x, y, conv: c });
-  };
+  }, []);
 
   const confirmDeleteConversation = async () => {
     if (!deleteTarget || deletingChat) return;
@@ -456,9 +448,7 @@ export default function Messages() {
         if (target.type === "group") removeGroupFromCache(target.id, me?.user_id);
         setConvs((prev) => {
           const next = (Array.isArray(prev) ? prev : []).filter((c) => c && c.id !== target.id);
-          if (me?.user_id) {
-            try { localStorage.setItem(`circle_convs_cache_${me.user_id}`, JSON.stringify(next)); } catch {}
-          }
+          saveConversationListCache(next, me?.user_id);
           return next;
         });
         toast.success(t("messages_delete_chat_success", "Percakapan berhasil dihapus"));

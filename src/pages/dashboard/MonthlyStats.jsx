@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { TrendingUp, LineChart as LineIcon, BarChart3, Users, Filter, MessageSquare, ArrowRight, CheckCircle2, AlertTriangle, Target, GitBranch, ChevronDown, Check } from "lucide-react";
 import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
 import { toast } from "sonner";
 import { useApp } from "../../context/AppContext";
 import { api, errMsg } from "../../lib/api";
-import { upsertConversationInCache } from "../../lib/workspaceCaches";
+import { scheduleJsonStorageWrite, upsertConversationInCache } from "../../lib/workspaceCaches";
 import { Avatar, AvatarStack, LabelChip } from "../../components/common";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../../components/ui/dropdown-menu";
 import { analyzeTaskFlow, toDayDate } from "../tasks/timelineFlow";
@@ -66,15 +66,11 @@ export function hydrateTeamStatsCache(userId, statsData, boardScopeKey = "defaul
   if (!isValidStats(statsData)) return;
   const key = makeStatsCacheKey(userId, boardScopeKey, rRange);
   statsMemoryCache[key] = statsData;
-  try {
-    localStorage.setItem(`circle_stats_team_v2_cache_${key}`, JSON.stringify(statsData));
-  } catch {}
+  scheduleJsonStorageWrite(`circle_stats_team_v2_cache_${key}`, statsData);
   if (statsData.scope?.board_id && statsData.scope.board_id !== boardScopeKey) {
     const altKey = makeStatsCacheKey(userId, statsData.scope.board_id, rRange);
     statsMemoryCache[altKey] = statsData;
-    try {
-      localStorage.setItem(`circle_stats_team_v2_cache_${altKey}`, JSON.stringify(statsData));
-    } catch {}
+    scheduleJsonStorageWrite(`circle_stats_team_v2_cache_${altKey}`, statsData);
   }
 }
 
@@ -567,27 +563,11 @@ function statsSignature(d) {
   }
 }
 
-function useScopeSmoothReveal(scopeKey) {
-  const ref = useRef(null);
-  const prevKeyRef = useRef(scopeKey);
-  useLayoutEffect(() => {
-    if (prevKeyRef.current === scopeKey) return;
-    prevKeyRef.current = scopeKey;
-    const el = ref.current;
-    if (!el || typeof el.animate !== "function") return;
-    if (typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) return;
-    el.animate(
-      [
-        { opacity: 0.72, transform: "translateY(4px)" },
-        { opacity: 1, transform: "translateY(0)" }
-      ],
-      { duration: 200, easing: "cubic-bezier(0.22, 1, 0.36, 1)", fill: "none" }
-    );
-  }, [scopeKey]);
-  return ref;
+function useScopeSmoothReveal(_scopeKey) {
+  return useRef(null);
 }
 
-function StatCard({ label, value, note, tone, icon: Icon, testid, className = "" }) {
+const StatCard = memo(function StatCard({ label, value, note, tone, icon: Icon, testid, className = "" }) {
   const t = {
     green: "border-emerald-200/90 bg-emerald-50/70 text-emerald-900 dark:bg-emerald-950/20 dark:text-emerald-200 dark:border-emerald-900/60",
     red: "border-rose-200/90 bg-rose-50/70 text-rose-900 dark:bg-rose-950/20 dark:text-rose-200 dark:border-rose-900/60",
@@ -601,7 +581,7 @@ function StatCard({ label, value, note, tone, icon: Icon, testid, className = ""
   }[tone];
 
   return (
-    <div className={`relative min-w-0 overflow-hidden rounded-2xl border p-3.5 sm:p-5 transition-all hover:shadow-md ${t} ${className}`} data-testid={testid}>
+    <div className={`relative min-w-0 overflow-hidden rounded-2xl border p-3.5 sm:p-5 transition-shadow duration-150 hover:shadow-md ${t} ${className}`} data-testid={testid}>
       <div className="flex items-start justify-between gap-2 min-w-0">
         <p className="text-[11px] sm:text-xs font-bold uppercase tracking-[0.08em] sm:tracking-[0.12em] opacity-80 leading-snug break-words min-w-0">{label}</p>
         {Icon && (
@@ -614,30 +594,53 @@ function StatCard({ label, value, note, tone, icon: Icon, testid, className = ""
       <p className="mt-1 text-xs sm:text-sm font-medium opacity-80 leading-snug">{note}</p>
     </div>
   );
-}
+});
 
-function TeamChart({ data, type }) {
+const CHART_MARGIN = { top: 10, right: 12, left: -18, bottom: 0 };
+const CHART_AXES = [
+  <CartesianGrid key="g" strokeDasharray="3 6" vertical={false} stroke="var(--c-border, #E5E7EB)" />,
+  <XAxis key="x" dataKey="name" tickLine={false} axisLine={false} tick={{ fontSize: 12, fill: "var(--c-sub, #7A8194)" }} />,
+  <YAxis key="y" allowDecimals={false} tickLine={false} axisLine={false} tick={{ fontSize: 12, fill: "var(--c-sub, #7A8194)" }} />,
+  <Tooltip key="t" cursor={{ fill: "rgba(0,0,0,0.04)" }} contentStyle={{ borderRadius: 12, border: "1px solid #E5E7EB", fontSize: 12 }} />
+];
+
+const TeamChart = memo(function TeamChart({ data, type }) {
   const safeData = data || INITIAL_DATA;
-  const rows = (safeData.series || []).map((s, i) => {
-    const d = new Date(`${s.start}T00:00:00`);
-    const future = s.start > safeData.today;
-    return {
-      name: safeData.range === "4w" ? `${d.getDate()} ${MON[d.getMonth()]}` : (WD_FULL[i] || s.name || s.start),
-      Selesai: future ? null : (s.done ?? s.Selesai ?? 0),
-      Overdue: future ? null : (s.overdue ?? s.Overdue ?? 0)
-    };
-  });
-  const common = { data: rows, margin: { top: 10, right: 12, left: -18, bottom: 0 } };
-  const axes = [<CartesianGrid key="g" strokeDasharray="3 6" vertical={false} stroke="var(--c-border, #E5E7EB)" />, <XAxis key="x" dataKey="name" tickLine={false} axisLine={false} tick={{ fontSize: 12, fill: "var(--c-sub, #7A8194)" }} />, <YAxis key="y" allowDecimals={false} tickLine={false} axisLine={false} tick={{ fontSize: 12, fill: "var(--c-sub, #7A8194)" }} />, <Tooltip key="t" cursor={{ fill: "rgba(0,0,0,0.04)" }} contentStyle={{ borderRadius: 12, border: "1px solid #E5E7EB", fontSize: 12 }} />];
+  const rows = useMemo(
+    () =>
+      (safeData.series || []).map((s, i) => {
+        const d = new Date(`${s.start}T00:00:00`);
+        const future = s.start > safeData.today;
+        return {
+          name: safeData.range === "4w" ? `${d.getDate()} ${MON[d.getMonth()]}` : (WD_FULL[i] || s.name || s.start),
+          Selesai: future ? null : (s.done ?? s.Selesai ?? 0),
+          Overdue: future ? null : (s.overdue ?? s.Overdue ?? 0)
+        };
+      }),
+    [safeData.series, safeData.today, safeData.range]
+  );
+  const dotCfg = useMemo(() => ({ r: safeData.range === "4w" ? 2 : 3 }), [safeData.range]);
+  const maxBar = safeData.range === "4w" ? 14 : 28;
   return (
     <div className="h-64 sm:h-72 min-h-[260px] w-full" data-testid="team-chart">
-      <ResponsiveContainer width="100%" height={260} debounce={0}>
-        {type === "line" ? <LineChart {...common}>{axes}<Line type="monotone" dataKey="Selesai" stroke={GREEN} strokeWidth={3} dot={{ r: safeData.range === "4w" ? 2 : 3 }} isAnimationActive={false} /><Line type="monotone" dataKey="Overdue" stroke={RED} strokeWidth={3} dot={{ r: safeData.range === "4w" ? 2 : 3 }} isAnimationActive={false} /></LineChart>
-          : <BarChart {...common}>{axes}<Bar dataKey="Selesai" fill={GREEN} radius={[6, 6, 0, 0]} maxBarSize={safeData.range === "4w" ? 14 : 28} isAnimationActive={false} /><Bar dataKey="Overdue" fill={RED} radius={[6, 6, 0, 0]} maxBarSize={safeData.range === "4w" ? 14 : 28} isAnimationActive={false} /></BarChart>}
+      <ResponsiveContainer width="100%" height={260} debounce={50}>
+        {type === "line" ? (
+          <LineChart data={rows} margin={CHART_MARGIN}>
+            {CHART_AXES}
+            <Line type="monotone" dataKey="Selesai" stroke={GREEN} strokeWidth={3} dot={dotCfg} isAnimationActive={false} />
+            <Line type="monotone" dataKey="Overdue" stroke={RED} strokeWidth={3} dot={dotCfg} isAnimationActive={false} />
+          </LineChart>
+        ) : (
+          <BarChart data={rows} margin={CHART_MARGIN}>
+            {CHART_AXES}
+            <Bar dataKey="Selesai" fill={GREEN} radius={[6, 6, 0, 0]} maxBarSize={maxBar} isAnimationActive={false} />
+            <Bar dataKey="Overdue" fill={RED} radius={[6, 6, 0, 0]} maxBarSize={maxBar} isAnimationActive={false} />
+          </BarChart>
+        )}
       </ResponsiveContainer>
     </div>
   );
-}
+});
 
 const Dot = ({ c, label }) => <span className="flex items-center gap-2 text-sm text-sub"><i className="h-3 w-3 rounded-full" style={{ background: c }} />{label}</span>;
 
@@ -815,7 +818,7 @@ function TeamPerformance({ data, anchor, setAnchor, range, setRange, scopeLabel,
   );
 }
 
-function PersonCard({ p, boardId, className = "" }) {
+const PersonCard = memo(function PersonCard({ p, boardId, className = "" }) {
   const { me, userMap, t: tr } = useApp();
   const navigate = useNavigate();
   const usr = userMap?.[p.user_id];
@@ -848,14 +851,14 @@ function PersonCard({ p, boardId, className = "" }) {
     ? `/tasks?assignee=${p.user_id}&kanban=1&board=${encodeURIComponent(boardId)}`
     : `/tasks?assignee=${p.user_id}&kanban=1`;
   return (
-    <div className={`flex min-w-0 w-full flex-col overflow-hidden rounded-2xl sm:rounded-3xl border bg-surface p-4 sm:p-5 transition-shadow hover:shadow-md ${className}`} data-testid={`person-card-${p.user_id}`}>
+    <div className={`flex min-w-0 w-full flex-col overflow-hidden rounded-2xl sm:rounded-3xl border bg-surface p-4 sm:p-5 transition-shadow duration-150 hover:shadow-md ${className}`} data-testid={`person-card-${p.user_id}`}>
       <div className="flex items-start gap-2.5 sm:gap-3 min-w-0">
         <Avatar user={usr} size={44} />
         <div className="min-w-0 flex-1"><p className="truncate font-bold text-sm sm:text-base leading-snug">{usr?.name}</p><p className="truncate text-xs sm:text-sm text-sub leading-snug">{usr?.job_title || "—"}</p><p className="truncate text-xs text-sub opacity-80 leading-snug">{usr?.department || tr("personnel_no_div", "Tanpa divisi")}</p></div>
         <span className={`flex shrink-0 items-center gap-1 rounded-full border px-2 sm:px-2.5 py-0.5 sm:py-1 text-[11px] sm:text-xs font-bold whitespace-nowrap ${cls}`} title={p.status_reason || `${p.day_deadlines ?? 0} deadline pada hari terpilih`} data-testid={`person-status-${p.user_id}`}>{emo} {statusLabel}</span>
       </div>
       <div className="mt-3.5 sm:mt-4 flex justify-between gap-2 text-xs sm:text-sm"><span className="font-medium text-sub truncate">{tr("personnel_active_load", "Beban Tugas Aktif")}</span><span className="font-semibold tabular-nums shrink-0" data-testid={`person-load-${p.user_id}`}>{p.active ?? 0} {tr("personnel_task_unit", "tugas")} ({p.share ?? 0}%)</span></div>
-      <span className="mt-2 block h-2 overflow-hidden rounded-full bg-surface2"><span className={`block h-full rounded-full ${barColor} transition-[width] duration-700`} style={{ width: `${p.share ?? 0}%` }} /></span>
+      <span className="mt-2 block h-2 overflow-hidden rounded-full bg-surface2"><span className={`block h-full rounded-full ${barColor} transition-[width] duration-300`} style={{ width: `${p.share ?? 0}%` }} /></span>
       {p.status_reason && <p className={`mt-2 truncate text-[11px] font-semibold ${reasonTone}`}>{p.status_reason}</p>}
       <p className="mt-3 text-[11px] font-bold uppercase tracking-[0.12em] text-sub">{tr("personnel_active_tasks_label", "Tugas sedang berjalan:")}</p>
       <div className="mt-1.5 sm:mt-2 flex-1 space-y-1 min-w-0">{tasks.length ? tasks.map((t) => <Link key={t.id} to={`/tasks?task=${t.id}`} className="block truncate text-xs sm:text-sm hover:text-brand">• {t.title}</Link>) : <p className="text-xs sm:text-sm italic text-sub">{tr("personnel_no_active_tasks", "Tidak ada tugas aktif saat ini.")}</p>}{(p.more ?? 0) > 0 && <p className="text-xs text-sub">+{p.more} {tr("personnel_more_tasks", "tugas lainnya")}</p>}</div>
@@ -865,7 +868,7 @@ function PersonCard({ p, boardId, className = "" }) {
       </div>
     </div>
   );
-}
+});
 
 function Personnel({ data, scopeLabel, availableScopes = [], activeBoardId, canSwitchBoards, isAdmin, onSelectBoard }) {
   const { userMap, t: tr } = useApp();
@@ -1189,7 +1192,7 @@ function BottleneckSummary({ tasks = [], projectsMap = {}, scope, scopeLabel, av
                           {bn.picName}
                         </span>
                       </div>
-                      <ArrowRight size={14} className="shrink-0 text-sub opacity-60 group-hover:text-brand group-hover:translate-x-0.5 transition-all md:ml-auto" />
+                      <ArrowRight size={14} className="shrink-0 text-sub opacity-60 group-hover:text-brand group-hover:translate-x-0.5 transition-[transform,color] duration-150 md:ml-auto" />
                     </div>
                   </button>
                 );
@@ -1223,7 +1226,7 @@ export default function MonthlyStats({ showPerformance = true, showBottleneck = 
   const [data, setData] = useState(() => getCachedStats(me?.user_id, "default", "7d", tasks, users, me, boards, []));
   const [projectsMap, setProjectsMap] = useState(() => {
     try {
-      const saved = localStorage.getItem("circle_cache_projects");
+      const saved = localStorage.getItem("circle_projects_cache") || localStorage.getItem("circle_cache_projects");
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) return Object.fromEntries(parsed.map((p) => [p.id, p]));
@@ -1239,6 +1242,7 @@ export default function MonthlyStats({ showPerformance = true, showBottleneck = 
   const availableScopesRef = useRef(Array.isArray(data?.available_scopes) ? data.available_scopes : []);
   const requestSeqRef = useRef(0);
   const abortRef = useRef(null);
+  const lastBootstrapStatsAtRef = useRef(0);
 
   tasksRef.current = tasks;
   usersRef.current = users;
@@ -1254,7 +1258,7 @@ export default function MonthlyStats({ showPerformance = true, showBottleneck = 
       .then((res) => {
         if (Array.isArray(res.data) && res.data.length > 0) {
           setBoards(res.data);
-          try { localStorage.setItem("circle_boards_cache", JSON.stringify(res.data)); } catch {}
+          scheduleJsonStorageWrite("circle_boards_cache", res.data);
         }
       })
       .catch(() => {});
@@ -1318,8 +1322,15 @@ export default function MonthlyStats({ showPerformance = true, showBottleneck = 
   }, [anchor, range, selectedBoardId, me?.user_id]);
 
   useEffect(() => {
-    load(range, selectedBoardId);
+    if (!selectedBoardId && range === "7d" && Date.now() - lastBootstrapStatsAtRef.current < 4000) {
+      return undefined;
+    }
+    const tId = setTimeout(() => {
+      if (!selectedBoardId && range === "7d" && Date.now() - lastBootstrapStatsAtRef.current < 4000) return;
+      load(range, selectedBoardId);
+    }, (!selectedBoardId && range === "7d") ? 200 : 0);
     return () => {
+      clearTimeout(tId);
       if (abortRef.current) {
         try { abortRef.current.abort(); } catch {}
       }
@@ -1333,16 +1344,18 @@ export default function MonthlyStats({ showPerformance = true, showBottleneck = 
       .then((res) => {
         if (Array.isArray(res.data)) {
           setProjectsMap(Object.fromEntries(res.data.map((p) => [p.id, p])));
-          try { localStorage.setItem("circle_cache_projects", JSON.stringify(res.data)); } catch {}
+          scheduleJsonStorageWrite("circle_projects_cache", res.data);
         }
       })
       .catch(() => {});
   }, [showBottleneck]);
 
   useEffect(() => {
-    return subscribe((evt) => {
+    let wsReloadTimer = null;
+    const unsub = subscribe((evt) => {
       if (evt.type === "bootstrap:dashboard") {
         if (isValidStats(evt.stats_team) && !selectedBoardId && range === "7d") {
+          lastBootstrapStatsAtRef.current = Date.now();
           if (Array.isArray(evt.stats_team.available_scopes) && evt.stats_team.available_scopes.length > 0) {
             availableScopesRef.current = evt.stats_team.available_scopes;
           }
@@ -1361,14 +1374,22 @@ export default function MonthlyStats({ showPerformance = true, showBottleneck = 
             .then((res) => {
               if (Array.isArray(res.data)) {
                 setBoards(res.data);
-                try { localStorage.setItem("circle_boards_cache", JSON.stringify(res.data)); } catch {}
+                scheduleJsonStorageWrite("circle_boards_cache", res.data);
               }
             })
             .catch(() => {});
         }
-        load(range, selectedBoardId);
+        if (wsReloadTimer) clearTimeout(wsReloadTimer);
+        wsReloadTimer = setTimeout(() => {
+          wsReloadTimer = null;
+          load(range, selectedBoardId);
+        }, 220);
       }
     });
+    return () => {
+      if (wsReloadTimer) clearTimeout(wsReloadTimer);
+      unsub();
+    };
   }, [subscribe, load, range, selectedBoardId]);
 
   const handleSelectBoard = useCallback((nextBoardId) => {

@@ -666,8 +666,10 @@ export const MentionText = memo(function MentionText({
   const str = String(text || "");
   if (!str) return null;
   const { pattern: mentionPattern, resolve } = buildMentionMatcher(userMap, mentionIds);
+  const allMentionPattern = "(?<![\\p{L}\\p{N}._])@semua(?![\\p{L}\\p{N}_])";
+  const combinedMention = mentionPattern ? `${allMentionPattern}|${mentionPattern}` : allMentionPattern;
   const urlPattern = "(?:https?:\\/\\/|www\\.)[^\\s<>]+";
-  const rx = new RegExp(mentionPattern ? `(${mentionPattern}|${urlPattern})` : `(${urlPattern})`, "giu");
+  const rx = new RegExp(`(${combinedMention}|${urlPattern})`, "giu");
 
   return str.split(rx).map((part, i) => {
     if (!part) return null;
@@ -692,6 +694,17 @@ export const MentionText = memo(function MentionText({
       );
     }
     if (part.startsWith("@")) {
+      if (part.toLowerCase() === "@semua") {
+        return (
+          <span
+            key={i}
+            className="rounded bg-brand/12 px-1 font-bold text-brand"
+            data-testid="mention-all"
+          >
+            {part}
+          </span>
+        );
+      }
       const u = resolve(part);
       if (u?.user_id) {
         return (

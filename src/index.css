@@ -111,7 +111,7 @@ select {
   background-position: right 12px center !important;
   background-size: 14px 14px !important;
   cursor: pointer;
-  transition: all 150ms ease;
+  transition: border-color 120ms ease, background-color 120ms ease;
 }
 
 select:hover {
@@ -135,7 +135,7 @@ select option {
   border: 1px solid var(--c-border);
   border-radius: var(--card-radius) !important;
   box-shadow: var(--shadow-card);
-  transition: box-shadow 200ms cubic-bezier(0.22, 1, 0.36, 1), border-color 200ms cubic-bezier(0.22, 1, 0.36, 1), transform 150ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: box-shadow 140ms cubic-bezier(0.22, 1, 0.36, 1), border-color 140ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* Global Shape Alignment for Action Buttons (preserves .card, calendar tiles, and rectangular rounded buttons) */
@@ -300,12 +300,17 @@ html[data-shape="sharp"] .rounded-md {
 }
 
 .animate-post-popup {
-  animation: post-popup-enter 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: post-popup-enter 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
   transform-origin: top center;
   will-change: transform, opacity;
 }
 
-.glass { background: color-mix(in srgb, var(--c-surface) 82%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
+@keyframes top-notif-shrink {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
+
+.glass { background: color-mix(in srgb, var(--c-surface) 92%, transparent); }
 
 /* GLOBAL SCROLLBAR REMOVAL AUDIT — HIDE ALL SLIDERS ON THE SIDE COMPLETELY */
 html, body, *, *::before, *::after {

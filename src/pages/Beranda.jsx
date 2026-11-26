@@ -20,7 +20,8 @@ import {
   Plus,
   Pin,
   Sparkles,
-  Search
+  Search,
+  Users
 } from "lucide-react";
 import { toast } from "sonner";
 import { useApp } from "../context/AppContext";
@@ -83,9 +84,11 @@ export function postMatchesTopic(p, rawFilter) {
 function RichText({ text, mentionIds }) {
   const { userMap } = useApp();
   const { pattern: mentionPattern, resolve } = buildMentionMatcher(userMap, mentionIds);
+  const allMentionPattern = "(?<![\\p{L}\\p{N}._])@semua(?![\\p{L}\\p{N}_])";
+  const combinedMention = mentionPattern ? `${allMentionPattern}|${mentionPattern}` : allMentionPattern;
   const tag = "(?<![\\p{L}\\p{N}_#])#[\\p{L}\\p{N}_]{1,40}";
   const urlPattern = "(?:https?://|www\\.)[^\\s<>]+";
-  const rx = new RegExp(mentionPattern ? `(${mentionPattern}|${tag}|${urlPattern})` : `(${tag}|${urlPattern})`, "giu");
+  const rx = new RegExp(`(${combinedMention}|${tag}|${urlPattern})`, "giu");
   return String(text || "").split(rx).map((part, i) => {
     if (!part) return null;
     if (part.startsWith("#")) return <Link key={i} to={`/beranda?tag=${encodeURIComponent(part.slice(1).toLowerCase())}`} onClick={(e) => e.stopPropagation()} className="font-semibold text-sky-600 hover:underline dark:text-sky-400" data-testid={`hashtag-${part.slice(1).toLowerCase()}`}>{part}</Link>;
@@ -104,6 +107,17 @@ function RichText({ text, mentionIds }) {
       );
     }
     if (part.startsWith("@")) {
+      if (part.toLowerCase() === "@semua") {
+        return (
+          <span
+            key={i}
+            className="rounded bg-brand/12 px-1 py-0.5 font-bold text-brand"
+            data-testid="mention-all"
+          >
+            {part}
+          </span>
+        );
+      }
       const mentionedUser = resolve(part);
       if (mentionedUser?.user_id) {
         return (
@@ -333,7 +347,15 @@ function Composer({ parentId, onPosted, placeholder, compact = false, defaultTop
     }
   }, [defaultTopic, parentId]);
 
-  const sugg = mq === null ? [] : (users || []).filter((u) => u.user_id !== me?.user_id && (u.name || "").toLowerCase().includes(mq)).slice(0, 6);
+  const activeMentionUsers = (users || []).filter(
+    (u) => u && u.user_id !== me?.user_id && !u.is_bot && u.role !== "assistant" && u.status !== "suspended" && u.status !== "pending"
+  );
+  const matchingUsers = mq === null
+    ? []
+    : activeMentionUsers.filter((u) => (u.name || "").toLowerCase().includes(mq)).slice(0, 6);
+  const sugg = mq !== null && "semua".includes(mq)
+    ? [{ user_id: "__all__", name: "semua", isAll: true, count: activeMentionUsers.length }, ...matchingUsers].slice(0, 6)
+    : matchingUsers;
   const onChange = (e) => {
     setText(e.target.value);
     const m = e.target.value.slice(0, e.target.selectionStart).match(/@([\w]*)$/);
@@ -341,8 +363,9 @@ function Composer({ parentId, onPosted, placeholder, compact = false, defaultTop
   };
   const pick = (u) => {
     const pos = ta.current.selectionStart;
-    setText(text.slice(0, pos).replace(/@[\w]*$/, `@${u.name} `) + text.slice(pos));
-    setMentions([...mentions, u.user_id]);
+    const tagText = u.isAll ? "@semua " : `@${u.name} `;
+    setText(text.slice(0, pos).replace(/@[\w]*$/, tagText) + text.slice(pos));
+    setMentions((prev) => Array.from(new Set([...prev, u.isAll ? "semua" : u.user_id])));
     setMq(null);
     ta.current.focus();
   };
@@ -397,6 +420,14 @@ function Composer({ parentId, onPosted, placeholder, compact = false, defaultTop
       };
       seedPollCache(optimisticPoll);
     }
+    const hasAllToken = /(?<![\p{L}\p{N}._])@semua(?![\p{L}\p{N}_])/iu.test(currentText);
+    const resolvedMentionIds = Array.from(
+      new Set([
+        ...currentMentions.filter((m) => m !== "__all__" && m !== "semua" && currentText.includes(`@${userMap[m]?.name}`)),
+        ...(hasAllToken ? ["semua"] : [])
+      ])
+    );
+
     const optimisticPost = {
       id: tempId,
       _clientKey: tempId,
@@ -408,7 +439,7 @@ function Composer({ parentId, onPosted, placeholder, compact = false, defaultTop
       poll: optimisticPoll || null,
       parent_id: parentId || null,
       attachments: currentFiles.map((f) => ({ id: f.id, name: f.name })),
-      mention_ids: currentMentions.filter((m) => currentText.includes(`@${userMap[m]?.name}`)),
+      mention_ids: resolvedMentionIds,
       likes: [],
       like_count: 0,
       liked: false,
@@ -433,7 +464,7 @@ function Composer({ parentId, onPosted, placeholder, compact = false, defaultTop
         poll: poll || undefined,
         parent_id: parentId || null,
         attachments: currentFiles.map((f) => ({ id: f.id })),
-        mention_ids: currentMentions.filter((m) => currentText.includes(`@${userMap[m]?.name}`))
+        mention_ids: resolvedMentionIds
       });
       if (data) {
         if (data.poll) seedPollCache(data.poll);
@@ -533,11 +564,25 @@ function Composer({ parentId, onPosted, placeholder, compact = false, defaultTop
               {sugg.map((u) => (
                 <button
                   key={u.user_id}
+                  type="button"
                   onClick={() => pick(u)}
-                  className="flex w-full items-center gap-2 rounded-lg p-1.5 text-sm hover:bg-surface2"
+                  className="flex w-full items-center gap-2 rounded-lg p-1.5 text-sm hover:bg-surface2 cursor-pointer"
                   data-testid={`post-mention-${u.user_id}`}
                 >
-                  <Avatar user={u} size={22} showStatus={false} />{u.name}
+                  {u.isAll ? (
+                    <>
+                      <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full bg-brand/15 text-brand">
+                        <Users size={12} />
+                      </span>
+                      <span className="font-semibold text-brand">@semua</span>
+                      <span className="ml-auto text-[11px] text-sub">Semua anggota</span>
+                    </>
+                  ) : (
+                    <>
+                      <Avatar user={u} size={22} showStatus={false} />
+                      <span>{u.name}</span>
+                    </>
+                  )}
                 </button>
               ))}
             </div>
@@ -700,7 +745,7 @@ function ReactionPicker({ p, onChange }) {
         <div
           role="menu"
           aria-label="Pilihan reaksi emoji"
-          className="absolute bottom-full left-0 mb-1.5 z-30 flex items-center gap-1 rounded-full border border-subtle bg-surface/95 p-1.5 shadow-xl backdrop-blur-md animate-in fade-in zoom-in-95 duration-150"
+          className="absolute bottom-full left-0 mb-1.5 z-30 flex items-center gap-1 rounded-full border border-subtle bg-surface p-1.5 shadow-xl animate-in fade-in zoom-in-95 duration-120"
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}
         >

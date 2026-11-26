@@ -16,7 +16,9 @@ import {
   hydrateGroupsCache,
   upsertGroupInCache,
   removeGroupFromCache,
+  scheduleJsonStorageWrite,
 } from "../lib/workspaceCaches";
+import { preloadAllRoutes } from "../lib/routePreload";
 import { setCachedDriveShortcuts } from "../data/initialDriveShortcuts";
 import { showSystemNotification, syncPushSubscription, syncAppBadge } from "../lib/systemNotifications";
 import { attemptAutoHydrateServer, syncWorkspaceMirror, scheduleRealtimeCloudSync, upsertAccountInVault, upsertAccountsListInVault, getKnownAccountsFromVault, hasCompletedInitialHydrate, rehydrateIfServerRestarted, recordDeletedTaskIds, recordDeletedCheckpointTemplateIds, recordDeletedEntityIds } from "../lib/persistentMirror";
@@ -166,10 +168,8 @@ export function AppProvider({ children }) {
             if (Array.isArray(r.data) && r.data.length > 0) {
               const normalized = r.data.map((t) => enforceTaskApprovalInvariant(t));
               setTasks(normalized);
-              try {
-                localStorage.setItem("circle_tasks_cache", JSON.stringify(normalized));
-                localStorage.setItem("circle_cache_tasks", JSON.stringify(normalized));
-              } catch {}
+              scheduleJsonStorageWrite("circle_tasks_cache", normalized);
+              scheduleJsonStorageWrite("circle_cache_tasks", normalized);
               subs.current.forEach((fn) => fn({ type: "tasks:changed", silentSync: true }));
             }
           }).catch(() => {});
@@ -179,10 +179,8 @@ export function AppProvider({ children }) {
     }
     const normalized = incomingList.map((t) => enforceTaskApprovalInvariant(t));
     setTasks(normalized);
-    try {
-      localStorage.setItem("circle_tasks_cache", JSON.stringify(normalized));
-      localStorage.setItem("circle_cache_tasks", JSON.stringify(normalized));
-    } catch {}
+    scheduleJsonStorageWrite("circle_tasks_cache", normalized);
+    scheduleJsonStorageWrite("circle_cache_tasks", normalized);
     if (silentSync) {
       subs.current.forEach((fn) => fn({ type: "tasks:changed", silentSync: true }));
     }
@@ -350,27 +348,27 @@ export function AppProvider({ children }) {
           setUsers(syncedUsers);
           upsertAccountsListInVault(syncedUsers);
           setOnline(new Set([...syncedUsers.filter((x) => x.online).map((x) => x.user_id), currentUid]));
-          try { localStorage.setItem("circle_users_cache", JSON.stringify(syncedUsers)); } catch {}
+          scheduleJsonStorageWrite("circle_users_cache", syncedUsers);
           const syncedMe = syncedUsers.find((x) => x.user_id === currentUid);
           if (syncedMe) {
             setSession((s) => {
               if (!s?.user) return s;
               const next = { ...s, user: { ...s.user, ...syncedMe } };
-              try { localStorage.setItem("circle_session_cache", JSON.stringify(next)); } catch {}
+              scheduleJsonStorageWrite("circle_session_cache", next);
               return next;
             });
             upsertAccountInVault(syncedMe);
           }
         } else {
-          setOnline((prev) => new Set([...prev, currentUid]));
+          setOnline((prev) => (prev.has(currentUid) ? prev : new Set([...prev, currentUid])));
         }
         if (Array.isArray(bootData.labels)) {
           setLabels(bootData.labels);
-          try { localStorage.setItem("circle_labels_cache", JSON.stringify(bootData.labels)); } catch {}
+          scheduleJsonStorageWrite("circle_labels_cache", bootData.labels);
         }
         if (bootData.notifications) {
           setUnread(bootData.notifications.unread || 0);
-          try { localStorage.setItem(`circle_notifications_cache_${currentUid}`, JSON.stringify(bootData.notifications)); } catch {}
+          scheduleJsonStorageWrite(`circle_notifications_cache_${currentUid}`, bootData.notifications);
         }
         if (Array.isArray(bootData.conversations)) {
           hydrateConversationsCache(bootData.conversations, currentUid);
@@ -391,24 +389,18 @@ export function AppProvider({ children }) {
           hydrateGroupsCache(bootData.groups, currentUid);
         }
         if (Array.isArray(bootData.meetings)) {
-          try {
-            localStorage.setItem(`circle_meetings_cache_${currentUid}`, JSON.stringify(bootData.meetings));
-            localStorage.setItem("circle_meetings_cache", JSON.stringify(bootData.meetings));
-          } catch {}
+          scheduleJsonStorageWrite(`circle_meetings_cache_${currentUid}`, bootData.meetings);
+          scheduleJsonStorageWrite("circle_meetings_cache", bootData.meetings);
         }
         if (Array.isArray(bootData.notes)) {
-          try {
-            localStorage.setItem(`circle_sticky_notes_v1_${currentUid}`, JSON.stringify(bootData.notes));
-            localStorage.setItem("circle_sticky_notes_v1", JSON.stringify(bootData.notes));
-          } catch {}
+          scheduleJsonStorageWrite(`circle_sticky_notes_v1_${currentUid}`, bootData.notes);
+          scheduleJsonStorageWrite("circle_sticky_notes_v1", bootData.notes);
         }
         if (Array.isArray(bootData.projects)) {
-          try {
-            localStorage.setItem("circle_projects_cache", JSON.stringify(bootData.projects));
-          } catch {}
+          scheduleJsonStorageWrite("circle_projects_cache", bootData.projects);
         }
         if (bootData.stats_team && typeof bootData.stats_team === "object") {
-          hydrateTeamStatsCache(currentUid, bootData.stats_team, "all", "7d");
+          hydrateTeamStatsCache(currentUid, bootData.stats_team, "default", "7d");
         }
         subs.current.forEach((fn) =>
           fn({
@@ -462,21 +454,19 @@ export function AppProvider({ children }) {
         setUsers(data.users);
         upsertAccountsListInVault(data.users);
         setOnline(new Set(data.users.filter((x) => x.online).map((x) => x.user_id)));
-        try { localStorage.setItem("circle_users_cache", JSON.stringify(data.users)); } catch {}
+        scheduleJsonStorageWrite("circle_users_cache", data.users);
       }
       if (Array.isArray(data.labels) && data.labels.length > 0) {
         setLabels(data.labels);
-        try { localStorage.setItem("circle_labels_cache", JSON.stringify(data.labels)); } catch {}
+        scheduleJsonStorageWrite("circle_labels_cache", data.labels);
       }
       if (Array.isArray(data.org_units)) {
-        try { localStorage.setItem("circle_org_units_cache", JSON.stringify(data.org_units)); } catch {}
+        scheduleJsonStorageWrite("circle_org_units_cache", data.org_units);
       }
       if (Array.isArray(data.drive_shortcuts)) {
         setCachedDriveShortcuts(data.drive_shortcuts);
       }
-      try {
-        localStorage.setItem("circle_user_prefs", JSON.stringify(mergedPrefs));
-      } catch {}
+      scheduleJsonStorageWrite("circle_user_prefs", mergedPrefs);
     } catch (err) {
       const status = err?.response?.status;
       if (status === 401 || status === 403) {
@@ -572,6 +562,7 @@ export function AppProvider({ children }) {
         // 1. Critical path: 1 single /api/bootstrap request so workspace is interactive ASAP
         await loadAll(true).catch(() => {});
         if (cancelled) return;
+        preloadAllRoutes();
         // 2. Defer non-critical background hydration, marketplace prefetch & push sync so first paint stays snappy
         bgHydrateTimer = setTimeout(async () => {
           if (cancelled) return;
@@ -805,17 +796,30 @@ export function AppProvider({ children }) {
         }
         if (!evt || typeof evt !== "object") return;
         if (evt.type === "presence" && evt.data?.user_id) {
-          const isUserOnline = evt.data.user_id === me?.user_id ? true : Boolean(evt.data.online);
+          const targetUid = evt.data.user_id;
+          const myUid = meRef.current?.user_id || me?.user_id;
+          const isUserOnline = targetUid === myUid ? true : Boolean(evt.data.online);
           const incomingAvail = evt.data.availability_status;
           setOnline((prev) => {
+            const hasTarget = prev.has(targetUid);
+            const hasMe = !myUid || prev.has(myUid);
+            if (hasTarget === isUserOnline && hasMe) return prev;
             const n = new Set(prev);
-            isUserOnline ? n.add(evt.data.user_id) : n.delete(evt.data.user_id);
-            if (me?.user_id) n.add(me.user_id);
+            isUserOnline ? n.add(targetUid) : n.delete(targetUid);
+            if (myUid) n.add(myUid);
             return n;
           });
           setUsers((prev) => {
-            const next = (Array.isArray(prev) ? prev : []).map((u) =>
-              u.user_id === evt.data.user_id
+            const list = Array.isArray(prev) ? prev : [];
+            const idx = list.findIndex((u) => u.user_id === targetUid);
+            if (idx === -1) return prev;
+            const cur = list[idx];
+            const nextAvail = incomingAvail || cur.availability_status;
+            if (Boolean(cur.online) === isUserOnline && cur.availability_status === nextAvail) {
+              return prev;
+            }
+            const next = list.map((u, i) =>
+              i === idx
                 ? {
                     ...u,
                     online: isUserOnline,
@@ -823,14 +827,15 @@ export function AppProvider({ children }) {
                   }
                 : u
             );
-            try { localStorage.setItem("circle_users_cache", JSON.stringify(next)); } catch {}
+            scheduleJsonStorageWrite("circle_users_cache", next);
             return next;
           });
-          if (incomingAvail && evt.data.user_id === me?.user_id) {
+          if (incomingAvail && targetUid === myUid) {
             setSession((s) => {
               if (!s?.user) return s;
+              if (s.user.availability_status === incomingAvail && s.user.online === true) return s;
               const next = { ...s, user: { ...s.user, availability_status: incomingAvail, online: true } };
-              try { localStorage.setItem("circle_session_cache", JSON.stringify(next)); } catch {}
+              scheduleJsonStorageWrite("circle_session_cache", next);
               return next;
             });
           }
@@ -843,17 +848,24 @@ export function AppProvider({ children }) {
             title: evt.data.title,
             body: evt.data.body,
             type: evt.data.type,
+            category: evt.data.category,
             link: evt.data.link,
             access_request: evt.data.access_request,
             group_id: evt.data.group_id,
             requester_id: evt.data.requester_id,
             conversation_id: evt.data.conversation_id,
             task_id: evt.data.task_id,
+            post_id: evt.data.post_id,
             sender: evt.data.sender
           };
           if (hasTopNotifQuickAction(nextNotif)) setTopQuickActionNotifActive(true);
           setTopNotif(nextNotif);
-          playSound("notification");
+          const isMsgNotif =
+            evt.data?.category === "messages" ||
+            evt.data?.category === "dm" ||
+            ["dm", "message", "group_message"].includes(evt.data?.type) ||
+            Boolean(evt.data?.conversation_id);
+          playSound(isMsgNotif ? "message_notif" : "notification");
           const curPrefs = prefsRef.current || prefs;
           const catKey = evt.data?.category === "dm" ? "messages" : evt.data?.category;
           const catEnabled = !catKey || curPrefs?.notifications?.[catKey] !== false;
@@ -896,8 +908,12 @@ export function AppProvider({ children }) {
               };
               if (hasTopNotifQuickAction(nextNotif)) setTopQuickActionNotifActive(true);
               setTopNotif(nextNotif);
+              const isMutedConv = (curPrefs?.muted_conversations || []).includes(evt.data.conversation_id);
+              if (!isMutedConv && curPrefs?.notifications?.messages !== false) {
+                playSound("message_notif");
+              }
               // For group chats (which don't emit a separate notification event), trigger OS/PWA notification too
-              if (evt.data.conversation_type === "group" && curPrefs?.notifications?.messages !== false) {
+              if (evt.data.conversation_type === "group" && !isMutedConv && curPrefs?.notifications?.messages !== false) {
                 showSystemNotification(
                   {
                     id: evt.data.id,
@@ -1032,20 +1048,20 @@ export function AppProvider({ children }) {
           api.get("/users").then((r) => {
             if (Array.isArray(r.data)) {
               setUsers(r.data);
-              try { localStorage.setItem("circle_users_cache", JSON.stringify(r.data)); } catch {}
+              scheduleJsonStorageWrite("circle_users_cache", r.data);
               setSession((s) => {
                 if (!s?.user) return s;
                 const updatedMe = r.data.find((u) => u.user_id === s.user.user_id);
                 if (!updatedMe) return s;
                 const next = { ...s, user: updatedMe };
-                try { localStorage.setItem("circle_session_cache", JSON.stringify(next)); } catch {}
+                scheduleJsonStorageWrite("circle_session_cache", next);
                 return next;
               });
             }
           }).catch(() => {});
         }
         if (evt.type === "org:changed" && Array.isArray(evt.units)) {
-          try { localStorage.setItem("circle_org_units_cache", JSON.stringify(evt.units)); } catch {}
+          scheduleJsonStorageWrite("circle_org_units_cache", evt.units);
         }
         if (evt.type === "drive_shortcuts:changed" && Array.isArray(evt.data)) {
           if (evt.deleted_id) recordDeletedEntityIds([evt.deleted_id]);
@@ -1059,10 +1075,8 @@ export function AppProvider({ children }) {
             setTasks((prev) => {
               const list = Array.isArray(prev) ? prev : [];
               const next = list.filter((x) => !delSet.has(String(x.id)));
-              try {
-                localStorage.setItem("circle_tasks_cache", JSON.stringify(next));
-                localStorage.setItem("circle_cache_tasks", JSON.stringify(next));
-              } catch {}
+              scheduleJsonStorageWrite("circle_tasks_cache", next);
+              scheduleJsonStorageWrite("circle_cache_tasks", next);
               return next;
             });
           } else if (evt.task) {
@@ -1094,10 +1108,8 @@ export function AppProvider({ children }) {
                 const next = existing
                   ? list.map((x) => (x.id === incoming.id ? mergedIncoming : x))
                   : [mergedIncoming, ...list];
-                try {
-                  localStorage.setItem("circle_tasks_cache", JSON.stringify(next));
-                  localStorage.setItem("circle_cache_tasks", JSON.stringify(next));
-                } catch {}
+                scheduleJsonStorageWrite("circle_tasks_cache", next);
+                scheduleJsonStorageWrite("circle_cache_tasks", next);
                 return next;
               });
             } else {
@@ -1123,10 +1135,8 @@ export function AppProvider({ children }) {
           setTasks((prev) => {
             const list = Array.isArray(prev) ? prev : [];
             const next = list.filter((x) => !delSet.has(String(x.id)));
-            try {
-              localStorage.setItem("circle_tasks_cache", JSON.stringify(next));
-              localStorage.setItem("circle_cache_tasks", JSON.stringify(next));
-            } catch {}
+            scheduleJsonStorageWrite("circle_tasks_cache", next);
+            scheduleJsonStorageWrite("circle_cache_tasks", next);
             return next;
           });
         }
@@ -1233,28 +1243,132 @@ export function AppProvider({ children }) {
     [effectiveCopywriting]
   );
 
+  const reloadTasks = useCallback(() => api.get("/tasks").then((r) => {
+    if (Array.isArray(r.data)) {
+      applyServerTasksSafely(r.data);
+    }
+  }), [applyServerTasksSafely]);
+
+  const handleSetTopNotif = useCallback((d) => {
+    setTopQuickActionNotifActive(hasTopNotifQuickAction(d));
+    setTopNotif(d);
+  }, []);
+
+  const closeTopNotif = useCallback(() => {
+    setTopQuickActionNotifActive(false);
+    setTopNotif(null);
+  }, []);
+
+  const reloadUsers = useCallback(() => api.get("/users").then((r) => {
+    if (Array.isArray(r.data)) {
+      setUsers(r.data);
+      scheduleJsonStorageWrite("circle_users_cache", r.data);
+      setSession((s) => {
+        if (!s?.user) return s;
+        const updatedMe = r.data.find((u) => u.user_id === s.user.user_id);
+        if (!updatedMe) return s;
+        const next = { ...s, user: updatedMe };
+        scheduleJsonStorageWrite("circle_session_cache", next);
+        return next;
+      });
+    }
+  }), [setSession]);
+
+  const reloadLabels = useCallback(() => api.get("/labels").then((r) => {
+    if (Array.isArray(r.data)) {
+      setLabels(r.data);
+      scheduleJsonStorageWrite("circle_labels_cache", r.data);
+    }
+  }), []);
+
+  const reloadWs = useCallback(() => api.get("/workspace").then((r) => {
+    if (r.data && typeof r.data === "object") {
+      reconcileMarketplaceEnabledCache(
+        meRef.current?.user_id,
+        r.data.marketplace_enabled !== false,
+        r.data.marketplace_config
+      );
+    }
+    setSession((s) => {
+      const next = { ...s, workspace: r.data };
+      scheduleJsonStorageWrite("circle_session_cache", next);
+      if (Array.isArray(r.data?.divisions)) {
+        scheduleJsonStorageWrite("circle_admin_divisions", r.data.divisions);
+      }
+      return next;
+    });
+  }), [setSession]);
+
+  const savePrefs = useCallback(async (patch) => {
+    setSession((s) => {
+      const nextPrefs = { ...(s?.prefs || {}), ...patch };
+      const nextSession = { ...s, prefs: nextPrefs };
+      scheduleJsonStorageWrite("circle_user_prefs", nextPrefs);
+      scheduleJsonStorageWrite("circle_session_cache", nextSession);
+      return nextSession;
+    });
+    try {
+      const { data } = await api.put("/prefs", patch);
+      setSession((s) => {
+        const synced = { ...(s?.prefs || {}), ...data };
+        const nextSession = { ...s, prefs: synced };
+        scheduleJsonStorageWrite("circle_user_prefs", synced);
+        scheduleJsonStorageWrite("circle_session_cache", nextSession);
+        return nextSession;
+      });
+    } catch (e) {
+      console.warn("Server prefs sync warning:", e);
+    }
+  }, [setSession]);
+
+  const subscribe = useCallback((fn) => {
+    subs.current.add(fn);
+    return () => subs.current.delete(fn);
+  }, []);
+
+  const send = useCallback(
+    (obj) => sock.current?.readyState === 1 && sock.current.send(JSON.stringify(obj)),
+    []
+  );
+
+  const updateAvailabilityStatus = useCallback(async (newStatus) => {
+    const normalized = String(newStatus || "online").toLowerCase().trim();
+    const uid = meRef.current?.user_id;
+    if (!uid) return;
+    setSession((s) => {
+      if (!s?.user) return s;
+      const next = { ...s, user: { ...s.user, availability_status: normalized, online: true } };
+      scheduleJsonStorageWrite("circle_session_cache", next);
+      return next;
+    });
+    setUsers((prev) => {
+      const next = (Array.isArray(prev) ? prev : []).map((u) =>
+        u.user_id === uid ? { ...u, availability_status: normalized, online: true } : u
+      );
+      scheduleJsonStorageWrite("circle_users_cache", next);
+      return next;
+    });
+    try {
+      await api.post("/presence/status", { user_id: uid, availability_status: normalized });
+    } catch (err) {
+      console.warn("Failed to sync availability status:", err);
+    }
+  }, [setSession]);
+
+  const logout = useCallback(async () => {
+    await api.post("/auth/logout").catch(() => {});
+    setSession(null);
+  }, [setSession]);
+
   const value = useMemo(() => {
     return {
       session, setSession, me, ws, prefs, users, userMap, labels, labelMap, online, unread, setUnread,
       tasks, userDeadlinesToday, userDeadlineReasons, hasDeadlineToday,
-      reloadTasks: () => api.get("/tasks").then((r) => {
-        if (Array.isArray(r.data)) {
-          applyServerTasksSafely(r.data);
-        }
-      }),
+      reloadTasks,
       topNotif,
-      setTopNotif: (d) => {
-        setTopQuickActionNotifActive(hasTopNotifQuickAction(d));
-        setTopNotif(d);
-      },
-      showTopNotif: (d) => {
-        setTopQuickActionNotifActive(hasTopNotifQuickAction(d));
-        setTopNotif(d);
-      },
-      closeTopNotif: () => {
-        setTopQuickActionNotifActive(false);
-        setTopNotif(null);
-      },
+      setTopNotif: handleSetTopNotif,
+      showTopNotif: handleSetTopNotif,
+      closeTopNotif,
       statuses,
       isAdmin: ["super_admin", "workspace_admin"].includes(me?.role),
       isManager: ["super_admin", "workspace_admin", "department_manager", "project_manager"].includes(me?.role),
@@ -1263,109 +1377,21 @@ export function AppProvider({ children }) {
       effectiveCopywriting,
       t,
       themeDraft, setThemeDraft,
-      reloadUsers: () => api.get("/users").then((r) => {
-        if (Array.isArray(r.data)) {
-          setUsers(r.data);
-          try { localStorage.setItem("circle_users_cache", JSON.stringify(r.data)); } catch {}
-          setSession((s) => {
-            if (!s?.user) return s;
-            const updatedMe = r.data.find((u) => u.user_id === s.user.user_id);
-            if (!updatedMe) return s;
-            const next = { ...s, user: updatedMe };
-            try { localStorage.setItem("circle_session_cache", JSON.stringify(next)); } catch {}
-            return next;
-          });
-        }
-      }),
-      reloadLabels: () => api.get("/labels").then((r) => {
-        if (Array.isArray(r.data)) {
-          setLabels(r.data);
-          try { localStorage.setItem("circle_labels_cache", JSON.stringify(r.data)); } catch {}
-        }
-      }),
-      reloadWs: () => api.get("/workspace").then((r) => {
-        if (r.data && typeof r.data === "object") {
-          reconcileMarketplaceEnabledCache(
-            meRef.current?.user_id || me?.user_id,
-            r.data.marketplace_enabled !== false,
-            r.data.marketplace_config
-          );
-        }
-        setSession((s) => {
-          const next = { ...s, workspace: r.data };
-          try {
-            localStorage.setItem("circle_session_cache", JSON.stringify(next));
-            if (Array.isArray(r.data?.divisions)) {
-              localStorage.setItem("circle_admin_divisions", JSON.stringify(r.data.divisions));
-            }
-          } catch {}
-          return next;
-        });
-      }),
-      savePrefs: async (patch) => {
-        setSession((s) => {
-          const nextPrefs = { ...(s?.prefs || {}), ...patch };
-          const nextSession = { ...s, prefs: nextPrefs };
-          try {
-            localStorage.setItem("circle_user_prefs", JSON.stringify(nextPrefs));
-            localStorage.setItem("circle_session_cache", JSON.stringify(nextSession));
-          } catch {}
-          return nextSession;
-        });
-        try {
-          const { data } = await api.put("/prefs", patch);
-          setSession((s) => {
-            const synced = { ...(s?.prefs || {}), ...data };
-            const nextSession = { ...s, prefs: synced };
-            try {
-              localStorage.setItem("circle_user_prefs", JSON.stringify(synced));
-              localStorage.setItem("circle_session_cache", JSON.stringify(nextSession));
-            } catch {}
-            return nextSession;
-          });
-        } catch (e) {
-          console.warn("Server prefs sync warning:", e);
-        }
-      },
-      subscribe: (fn) => {
-        subs.current.add(fn);
-        return () => subs.current.delete(fn);
-      },
-      send: (obj) => sock.current?.readyState === 1 && sock.current.send(JSON.stringify(obj)),
-      updateAvailabilityStatus: async (newStatus) => {
-        const normalized = String(newStatus || "online").toLowerCase().trim();
-        const uid = me?.user_id;
-        if (!uid) return;
-        setSession((s) => {
-          if (!s?.user) return s;
-          const next = { ...s, user: { ...s.user, availability_status: normalized, online: true } };
-          try { localStorage.setItem("circle_session_cache", JSON.stringify(next)); } catch {}
-          return next;
-        });
-        setUsers((prev) => {
-          const next = (Array.isArray(prev) ? prev : []).map((u) =>
-            u.user_id === uid ? { ...u, availability_status: normalized, online: true } : u
-          );
-          try { localStorage.setItem("circle_users_cache", JSON.stringify(next)); } catch {}
-          return next;
-        });
-        try {
-          await api.post("/presence/status", { user_id: uid, availability_status: normalized });
-        } catch (err) {
-          console.warn("Failed to sync availability status:", err);
-        }
-      },
-      logout: async () => {
-        await api.post("/auth/logout").catch(() => {});
-        setSession(null);
-      },
+      reloadUsers,
+      reloadLabels,
+      reloadWs,
+      savePrefs,
+      subscribe,
+      send,
+      updateAvailabilityStatus,
+      logout,
       checkAuth,
       reloadAll: loadAll,
       cloudSyncStatus,
       syncCloudNow,
       connectCloudGoogle,
     };
-  }, [session, setSession, me, ws, prefs, users, userMap, labels, labelMap, statuses, effectiveCopywriting, t, online, unread, topNotif, themeDraft, tasks, userDeadlinesToday, userDeadlineReasons, hasDeadlineToday, checkAuth, loadAll, cloudSyncStatus, syncCloudNow, connectCloudGoogle]);
+  }, [session, setSession, me, ws, prefs, users, userMap, labels, labelMap, statuses, effectiveCopywriting, t, online, unread, topNotif, themeDraft, tasks, userDeadlinesToday, userDeadlineReasons, hasDeadlineToday, reloadTasks, handleSetTopNotif, closeTopNotif, reloadUsers, reloadLabels, reloadWs, savePrefs, subscribe, send, updateAvailabilityStatus, logout, checkAuth, loadAll, cloudSyncStatus, syncCloudNow, connectCloudGoogle]);
 
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
 }

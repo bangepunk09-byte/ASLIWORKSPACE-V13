@@ -34,3 +34,42 @@ export function preloadRoute(path) {
     prefetched.delete(normalized);
   }
 }
+
+let allRoutesPreloaded = false;
+export function preloadAllRoutes() {
+  if (allRoutesPreloaded) return;
+  allRoutesPreloaded = true;
+  const targets = [
+    "/tasks",
+    "/messages",
+    "/beranda",
+    "/schedule",
+    "/groups",
+    "/directory",
+    "/employee",
+    "/people",
+    "/org",
+    "/projects",
+    "/marketplace",
+    "/settings",
+  ];
+  const runBatch = (idx) => {
+    if (idx >= targets.length) return;
+    const end = Math.min(idx + 3, targets.length);
+    for (let i = idx; i < end; i++) {
+      preloadRoute(targets[i]);
+    }
+    if (end < targets.length) {
+      if (typeof window !== "undefined" && typeof window.requestIdleCallback === "function") {
+        window.requestIdleCallback(() => runBatch(end), { timeout: 600 });
+      } else {
+        setTimeout(() => runBatch(end), 80);
+      }
+    }
+  };
+  if (typeof window !== "undefined" && typeof window.requestIdleCallback === "function") {
+    window.requestIdleCallback(() => runBatch(0), { timeout: 300 });
+  } else {
+    setTimeout(() => runBatch(0), 60);
+  }
+}

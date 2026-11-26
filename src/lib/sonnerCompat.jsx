@@ -151,7 +151,7 @@ function ToastItem({ item, closeButton, richColors, onDismiss }) {
     <div
       role="status"
       aria-live="polite"
-      className={`pointer-events-auto flex w-full max-w-sm items-center gap-2.5 rounded-2xl border px-3.5 py-2.5 text-xs font-semibold shadow-lg backdrop-blur-md transition-all ${tone}`}
+      className={`pointer-events-auto flex w-full max-w-sm items-center gap-2.5 rounded-2xl border px-3.5 py-2.5 text-xs font-semibold shadow-lg transition-opacity duration-150 ${tone}`}
     >
       <ToastIcon type={item.type} />
       <div className="min-w-0 flex-1">

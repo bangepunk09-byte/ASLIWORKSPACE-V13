@@ -113,7 +113,7 @@ export default function AutomationDialog({ open, onClose, onGenerated }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4">
       <div className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-3xl border border-slate-200 bg-surface p-6 shadow-2xl">
         <div className="flex items-center justify-between border-b pb-4">
           <div className="flex items-center gap-2.5">

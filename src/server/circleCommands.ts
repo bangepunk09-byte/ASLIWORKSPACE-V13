@@ -1549,9 +1549,10 @@ export async function tryExecuteCircleCommand(params: {
         title: `Pengumuman Internal (${targetRaw})`,
         body: bodyText.slice(0, 120),
         type: "announcement",
-        category: "social",
+        category: "beranda",
         actor_id: actorId,
-        link: "/beranda",
+        post_id: newPost.id,
+        link: `/beranda/${newPost.id}`,
         read: false,
         created_at: now.toISOString()
       });

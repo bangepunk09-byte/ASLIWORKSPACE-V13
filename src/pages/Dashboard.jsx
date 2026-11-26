@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { format } from "date-fns";
 import { id as localeId } from "date-fns/locale";
@@ -39,6 +39,7 @@ import { toast } from "sonner";
 import { useApp } from "../context/AppContext";
 import { api, errMsg, fileUrl } from "../lib/api";
 import { hasCompletedInitialHydrate } from "../lib/persistentMirror";
+import { scheduleJsonStorageWrite } from "../lib/workspaceCaches";
 import { bgLayer } from "../lib/theme";
 import { AvatarStack, AccentButton, GhostButton } from "../components/common";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "../components/ui/sheet";
@@ -117,13 +118,18 @@ export default function Dashboard() {
       setTasks(ctxTasks);
     }
   }, [ctxTasks]);
-  const meetingsCacheKey = `circle_cache_meetings_${me?.user_id || "default"}`;
+  const meetingsCacheKey = `circle_meetings_cache_${me?.user_id || "default"}`;
   const [meetings, setMeetings] = useState(() => {
     try {
-      const saved = localStorage.getItem(`circle_cache_meetings_${me?.user_id || "default"}`);
+      const uid = me?.user_id || "default";
+      const saved =
+        localStorage.getItem(`circle_meetings_cache_${uid}`) ||
+        localStorage.getItem(`circle_cache_meetings_${uid}`) ||
+        localStorage.getItem("circle_meetings_cache");
       return saved ? JSON.parse(saved) : [];
     } catch { return []; }
   });
+  const lastBootstrapMeetingsAtRef = useRef(0);
   const [driveShortcuts, setDriveShortcuts] = useState(() => getCachedDriveShortcuts());
   const [driveCatFilter, setDriveCatFilter] = useState("ALL");
   const [showAllMobileDrive, setShowAllMobileDrive] = useState(false);
@@ -159,11 +165,7 @@ export default function Dashboard() {
   const updateLayout = (updater) => {
     setWidgetLayout((prev) => {
       const next = typeof updater === "function" ? updater(prev) : { ...prev, ...updater };
-      try {
-        localStorage.setItem("circle_dashboard_layout_v2", JSON.stringify(next));
-      } catch (e) {
-        // ignore
-      }
+      scheduleJsonStorageWrite("circle_dashboard_layout_v2", next);
       return next;
     });
   };
@@ -200,10 +202,10 @@ export default function Dashboard() {
     toast.success("Tata letak dikembalikan ke pengaturan default.");
   };
 
-  const loadData = async () => {
+  const loadData = useCallback(async (force = false) => {
     try {
-      const needTasks = !Array.isArray(ctxTasks) || ctxTasks.length === 0;
-      const needDrive = !Array.isArray(driveShortcuts) || driveShortcuts.length === 0;
+      const needTasks = force || !Array.isArray(ctxTasks) || ctxTasks.length === 0;
+      const needDrive = force || !Array.isArray(driveShortcuts) || driveShortcuts.length === 0;
       const [tRes, mRes, dRes] = await Promise.all([
         needTasks ? api.get("/tasks") : Promise.resolve({ data: null }),
         api.get("/meetings").catch(() => ({ data: [] })),
@@ -212,7 +214,7 @@ export default function Dashboard() {
 
       if (tRes?.data && ((Array.isArray(tRes.data) && tRes.data.length > 0) || hasCompletedInitialHydrate())) {
         setTasks(tRes.data || []);
-        try { localStorage.setItem("circle_cache_tasks", JSON.stringify(tRes.data || [])); } catch {}
+        scheduleJsonStorageWrite("circle_cache_tasks", tRes.data || []);
       }
       setMeetings(mRes.data || []);
       if (Array.isArray(dRes.data)) {
@@ -222,31 +224,47 @@ export default function Dashboard() {
 
       // Update Cache per user
       if ((Array.isArray(mRes.data) && mRes.data.length > 0) || hasCompletedInitialHydrate()) {
-        try { localStorage.setItem(meetingsCacheKey, JSON.stringify(mRes.data || [])); } catch {}
+        scheduleJsonStorageWrite(meetingsCacheKey, mRes.data || []);
       }
     } catch (e) {
       console.warn("Failed to load dashboard data:", e);
     }
-  };
+  }, [ctxTasks, driveShortcuts, meetingsCacheKey]);
 
   useEffect(() => {
+    let hasCachedMeetings = false;
     try {
-      const saved = localStorage.getItem(meetingsCacheKey);
-      if (saved) setMeetings(JSON.parse(saved));
-      else setMeetings([]);
+      const uid = me?.user_id || "default";
+      const saved =
+        localStorage.getItem(`circle_meetings_cache_${uid}`) ||
+        localStorage.getItem(`circle_cache_meetings_${uid}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          setMeetings(parsed);
+          hasCachedMeetings = true;
+        }
+      } else {
+        setMeetings([]);
+      }
     } catch {
       setMeetings([]);
     }
-    loadData();
+    const timer = setTimeout(() => {
+      if (Date.now() - lastBootstrapMeetingsAtRef.current < 4000 && hasCachedMeetings) return;
+      loadData();
+    }, hasCachedMeetings ? 450 : 120);
+    return () => clearTimeout(timer);
   }, [me?.user_id]);
 
   useEffect(
     () =>
       subscribe((evt) => {
         if (evt.type === "bootstrap:dashboard") {
+          lastBootstrapMeetingsAtRef.current = Date.now();
           if (Array.isArray(evt.meetings)) {
             setMeetings(evt.meetings);
-            try { localStorage.setItem(meetingsCacheKey, JSON.stringify(evt.meetings)); } catch {}
+            scheduleJsonStorageWrite(meetingsCacheKey, evt.meetings);
           }
           if (Array.isArray(evt.drive_shortcuts)) {
             setDriveShortcuts(evt.drive_shortcuts);
@@ -262,7 +280,7 @@ export default function Dashboard() {
           if (evt.deleted_id) {
             setTasks((prev) => {
               const next = (Array.isArray(prev) ? prev : []).filter((x) => x.id !== evt.deleted_id);
-              try { localStorage.setItem("circle_cache_tasks", JSON.stringify(next)); } catch {}
+              scheduleJsonStorageWrite("circle_cache_tasks", next);
               return next;
             });
           } else if (evt.task?.id) {
@@ -272,14 +290,14 @@ export default function Dashboard() {
               const next = exists
                 ? list.map((x) => (x.id === evt.task.id ? { ...x, ...evt.task } : x))
                 : [evt.task, ...list];
-              try { localStorage.setItem("circle_cache_tasks", JSON.stringify(next)); } catch {}
+              scheduleJsonStorageWrite("circle_cache_tasks", next);
               return next;
             });
           } else {
             api.get("/tasks").then((r) => {
               if (Array.isArray(r.data)) {
                 setTasks(r.data);
-                try { localStorage.setItem("circle_cache_tasks", JSON.stringify(r.data)); } catch {}
+                scheduleJsonStorageWrite("circle_cache_tasks", r.data);
               }
             }).catch(() => {});
           }
@@ -287,10 +305,8 @@ export default function Dashboard() {
         if (evt.type === "tasks:deleted" && evt.id) {
           setTasks((prev) => {
             const next = (Array.isArray(prev) ? prev : []).filter((x) => x.id !== evt.id);
-            try {
-              localStorage.setItem("circle_cache_tasks", JSON.stringify(next));
-              localStorage.setItem("circle_tasks_cache", JSON.stringify(next));
-            } catch {}
+            scheduleJsonStorageWrite("circle_cache_tasks", next);
+            scheduleJsonStorageWrite("circle_tasks_cache", next);
             return next;
           });
         }
@@ -308,7 +324,7 @@ export default function Dashboard() {
           setMeetings((prev) => {
             const list = Array.isArray(prev) ? prev : [];
             const next = [...list.filter((item) => item.id !== evt.data.id), evt.data];
-            try { localStorage.setItem(meetingsCacheKey, JSON.stringify(next)); } catch {}
+            scheduleJsonStorageWrite(meetingsCacheKey, next);
             return next;
           });
         }
@@ -316,7 +332,7 @@ export default function Dashboard() {
           setMeetings((prev) => {
             const list = Array.isArray(prev) ? prev : [];
             const next = list.map((m) => (m.id === evt.data.id ? evt.data : m));
-            try { localStorage.setItem(meetingsCacheKey, JSON.stringify(next)); } catch {}
+            scheduleJsonStorageWrite(meetingsCacheKey, next);
             return next;
           });
         }
@@ -324,36 +340,48 @@ export default function Dashboard() {
           setMeetings((prev) => {
             const list = Array.isArray(prev) ? prev : [];
             const next = list.filter((m) => m.id !== evt.id);
-            try { localStorage.setItem(meetingsCacheKey, JSON.stringify(next)); } catch {}
+            scheduleJsonStorageWrite(meetingsCacheKey, next);
             return next;
           });
         }
         if (evt.type === "meetings:synced" && Array.isArray(evt.data)) {
           if (evt.user_id && me?.user_id && evt.user_id !== me.user_id) return;
           setMeetings(evt.data);
-          try { localStorage.setItem(meetingsCacheKey, JSON.stringify(evt.data)); } catch {}
+          scheduleJsonStorageWrite(meetingsCacheKey, evt.data);
         }
       }),
     [subscribe, me?.user_id, me?.email, meetingsCacheKey]
   );
 
-  const humanUsers = (users || []).filter(
-    (u) => !u.is_bot && u.role !== "assistant" && u.user_id !== "user_circle_assistant"
+  const humanUsers = useMemo(
+    () => (users || []).filter((u) => !u.is_bot && u.role !== "assistant" && u.user_id !== "user_circle_assistant"),
+    [users]
   );
-  const divisionsList = [...new Set(humanUsers.map((u) => u.department || "Lainnya"))].sort();
+  const divisionsList = useMemo(
+    () => [...new Set(humanUsers.map((u) => u.department || "Lainnya"))].sort(),
+    [humanUsers]
+  );
 
   // Strictly filter shortcuts on Dashboard so ONLY shortcuts the current user has access to are shown
-  const accessibleDashboardShortcuts = driveShortcuts
-    .filter((s) => s.show_on_dashboard !== false && hasShortcutAccess(s, me))
-    .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned));
+  const accessibleDashboardShortcuts = useMemo(
+    () =>
+      driveShortcuts
+        .filter((s) => s.show_on_dashboard !== false && hasShortcutAccess(s, me))
+        .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned)),
+    [driveShortcuts, me]
+  );
 
-  const dashboardDriveCategories = [
-    "ALL",
-    ...new Set(accessibleDashboardShortcuts.map((s) => s.category || "General"))
-  ];
+  const dashboardDriveCategories = useMemo(
+    () => ["ALL", ...new Set(accessibleDashboardShortcuts.map((s) => s.category || "General"))],
+    [accessibleDashboardShortcuts]
+  );
 
-  const displayedDriveShortcuts = accessibleDashboardShortcuts.filter(
-    (s) => driveCatFilter === "ALL" || (s.category || "General") === driveCatFilter
+  const displayedDriveShortcuts = useMemo(
+    () =>
+      accessibleDashboardShortcuts.filter(
+        (s) => driveCatFilter === "ALL" || (s.category || "General") === driveCatFilter
+      ),
+    [accessibleDashboardShortcuts, driveCatFilter]
   );
 
   const handleSaveDashboardShortcut = (payload) => {
@@ -408,16 +436,14 @@ export default function Dashboard() {
     }
     setTasks((prev) => {
       const next = prev.map((item) => (item.id === t.id ? { ...item, status: nextStatus, progress: !isDone ? 100 : 50 } : item));
-      try {
-        localStorage.setItem("circle_cache_tasks", JSON.stringify(next));
-        localStorage.setItem("circle_tasks_cache", JSON.stringify(next));
-      } catch {}
+      scheduleJsonStorageWrite("circle_cache_tasks", next);
+      scheduleJsonStorageWrite("circle_tasks_cache", next);
       return next;
     });
     toast.success(isDone ? `Tugas dikembalikan ke In Progress` : `Tugas selesai! (100%)`);
     api.patch(`/tasks/${t.id}`, { status: nextStatus }).catch((err) => {
       toast.error(errMsg(err));
-      loadData();
+      loadData(true);
     });
   };
 
@@ -432,34 +458,38 @@ export default function Dashboard() {
     : tr("dash_greeting_night", "Selamat Malam");
 
   // Data for Column 1: Meetings (strictly filter and sort the 3 nearest upcoming meetings)
-  const nowDate = new Date();
-  const todayIsoStr = format(nowDate, "yyyy-MM-dd");
-  const nowHhMmStr = format(nowDate, "HH:mm");
-
-  const upcomingMeetingsSorted = [...(Array.isArray(meetings) ? meetings : [])]
-    .filter((m) => {
-      if (!m || !m.date) return false;
-      const mDate = String(m.date).slice(0, 10);
-      if (mDate > todayIsoStr) return true;
-      if (mDate === todayIsoStr) {
-        const endT = String(m.end_time || m.start_time || "23:59").slice(0, 5);
-        return endT >= nowHhMmStr;
-      }
-      return false;
-    })
-    .sort((a, b) => {
-      const da = `${String(a.date || "").slice(0, 10)}T${String(a.start_time || "00:00").slice(0, 5)}`;
-      const db = `${String(b.date || "").slice(0, 10)}T${String(b.start_time || "00:00").slice(0, 5)}`;
-      return da.localeCompare(db);
-    });
-
-  const displayMeetings = upcomingMeetingsSorted.slice(0, 3);
+  const displayMeetings = useMemo(() => {
+    const nowDate = new Date();
+    const todayIsoStr = format(nowDate, "yyyy-MM-dd");
+    const nowHhMmStr = format(nowDate, "HH:mm");
+    return [...(Array.isArray(meetings) ? meetings : [])]
+      .filter((m) => {
+        if (!m || !m.date) return false;
+        const mDate = String(m.date).slice(0, 10);
+        if (mDate > todayIsoStr) return true;
+        if (mDate === todayIsoStr) {
+          const endT = String(m.end_time || m.start_time || "23:59").slice(0, 5);
+          return endT >= nowHhMmStr;
+        }
+        return false;
+      })
+      .sort((a, b) => {
+        const da = `${String(a.date || "").slice(0, 10)}T${String(a.start_time || "00:00").slice(0, 5)}`;
+        const db = `${String(b.date || "").slice(0, 10)}T${String(b.start_time || "00:00").slice(0, 5)}`;
+        return da.localeCompare(db);
+      })
+      .slice(0, 3);
+  }, [meetings]);
 
   // Data for Column 2: Today's Priority Tasks (active non-archived tasks sorted by closest deadline)
-  const todayTasks = (tasks || [])
-    .filter((t) => t && !t.archived && t.status !== "done")
-    .sort((a, b) => new Date(a.deadline || "9999-12-31").getTime() - new Date(b.deadline || "9999-12-31").getTime())
-    .slice(0, 3);
+  const todayTasks = useMemo(
+    () =>
+      (tasks || [])
+        .filter((t) => t && !t.archived && t.status !== "done")
+        .sort((a, b) => new Date(a.deadline || "9999-12-31").getTime() - new Date(b.deadline || "9999-12-31").getTime())
+        .slice(0, 3),
+    [tasks]
+  );
 
   // Density Spacing Presets (Responsive mobile-first padding + spacious desktop)
   const densityStyles = {
@@ -509,7 +539,7 @@ export default function Dashboard() {
   const renderMeetingsColumn = () => (
     <div
       key="meetings"
-      className={`flex min-w-0 w-full flex-col justify-between overflow-hidden rounded-2xl sm:rounded-[28px] border border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 ${densityStyles.cardPadding} shadow-[0_4px_24px_rgba(0,0,0,0.03)] hover:shadow-md transition-all duration-200`}
+      className={`flex min-w-0 w-full flex-col justify-between overflow-hidden rounded-2xl sm:rounded-[28px] border border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 ${densityStyles.cardPadding} shadow-[0_4px_24px_rgba(0,0,0,0.03)] hover:shadow-md transition-shadow duration-150`}
     >
       <div className="min-w-0">
         {/* Header */}
@@ -538,7 +568,7 @@ export default function Dashboard() {
             displayMeetings.map((m) => (
               <div
                 key={m.id}
-                className={`group rounded-2xl border border-slate-100 dark:border-slate-800/80 bg-slate-50/70 dark:bg-slate-800/40 ${densityStyles.itemPadding} transition-all hover:border-slate-300 dark:hover:border-slate-700 hover:bg-white dark:hover:bg-slate-800`}
+                className={`group rounded-2xl border border-slate-100 dark:border-slate-800/80 bg-slate-50/70 dark:bg-slate-800/40 ${densityStyles.itemPadding} transition-colors duration-150 hover:border-slate-300 dark:hover:border-slate-700 hover:bg-white dark:hover:bg-slate-800`}
               >
                 {/* Time pill & Date */}
                 <div className="flex items-center justify-between gap-3 mb-2.5">
@@ -571,7 +601,7 @@ export default function Dashboard() {
                     href={m.meet_link || "https://meet.google.com"}
                     target="_blank"
                     rel="noreferrer"
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-1.5 text-xs font-bold shadow-sm transition-all hover:scale-102 active:scale-98"
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-1.5 text-xs font-bold shadow-sm transition-transform duration-150 hover:scale-102 active:scale-98"
                   >
                     <Video size={13} />
                     <span>{tr("dash_meetings_join", "Gabung")}</span>
@@ -588,7 +618,7 @@ export default function Dashboard() {
       <div className={`${densityStyles.footerMargin} border-t border-slate-100 dark:border-slate-800`}>
         <button
           onClick={() => navigate("/schedule")}
-          className="flex h-11 sm:h-12 w-full items-center justify-center gap-2 rounded-full border border-slate-200/90 dark:border-slate-700 bg-surface px-4 text-xs sm:text-sm font-bold text-emerald-700 dark:text-emerald-400 hover:border-emerald-400 shadow-xs transition-all hover:scale-[1.01] active:scale-[0.99]"
+          className="flex h-11 sm:h-12 w-full items-center justify-center gap-2 rounded-full border border-slate-200/90 dark:border-slate-700 bg-surface px-4 text-xs sm:text-sm font-bold text-emerald-700 dark:text-emerald-400 hover:border-emerald-400 shadow-xs transition-[transform,border-color] duration-150 hover:scale-[1.01] active:scale-[0.99]"
         >
           <Plus size={15} />
           <span>{tr("dash_new_schedule", "Jadwal Baru")}</span>
@@ -601,7 +631,7 @@ export default function Dashboard() {
   const renderTasksColumn = () => (
     <div
       key="tasks"
-      className={`flex min-w-0 w-full flex-col justify-between overflow-hidden rounded-2xl sm:rounded-[28px] border border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 ${densityStyles.cardPadding} shadow-[0_4px_24px_rgba(0,0,0,0.03)] hover:shadow-md transition-all duration-200`}
+      className={`flex min-w-0 w-full flex-col justify-between overflow-hidden rounded-2xl sm:rounded-[28px] border border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 ${densityStyles.cardPadding} shadow-[0_4px_24px_rgba(0,0,0,0.03)] hover:shadow-md transition-shadow duration-150`}
     >
       <div className="min-w-0">
         {/* Header */}
@@ -636,7 +666,7 @@ export default function Dashboard() {
               <div
                 key={t.id}
                 onClick={() => setSelectedTaskId(t.id)}
-                className={`group cursor-pointer rounded-2xl border ${densityStyles.itemPadding} transition-all duration-200 ${
+                className={`group cursor-pointer rounded-2xl border ${densityStyles.itemPadding} transition-colors duration-150 ${
                   isDone
                     ? "border-emerald-200 bg-emerald-50/30 dark:border-emerald-900/40 dark:bg-emerald-950/20"
                     : "border-slate-100 bg-slate-50/70 hover:border-slate-300 hover:bg-white dark:border-slate-800/80 dark:bg-slate-800/40 dark:hover:bg-slate-800"
@@ -657,7 +687,7 @@ export default function Dashboard() {
                   <button
                     type="button"
                     onClick={(e) => toggleTaskDone(t, e)}
-                    className={`flex h-6 w-6 items-center justify-center rounded-full transition-all duration-200 ${
+                    className={`flex h-6 w-6 items-center justify-center rounded-full transition-colors duration-150 ${
                       isDone
                         ? "bg-emerald-500 text-white shadow-xs"
                         : "border-2 border-slate-300 hover:border-emerald-500 dark:border-slate-600"
@@ -698,7 +728,7 @@ export default function Dashboard() {
       <div className={`${densityStyles.footerMargin} border-t border-slate-100 dark:border-slate-800`}>
         <button
           onClick={() => setNewTaskOpen(true)}
-          className="flex h-12 w-full items-center justify-center gap-2 rounded-full border border-slate-200/90 dark:border-slate-700 bg-surface px-4 text-xs sm:text-sm font-bold text-sub hover:text-ink hover:border-slate-400 dark:hover:border-slate-500 shadow-xs transition-all hover:scale-[1.01] active:scale-[0.99]"
+          className="flex h-12 w-full items-center justify-center gap-2 rounded-full border border-slate-200/90 dark:border-slate-700 bg-surface px-4 text-xs sm:text-sm font-bold text-sub hover:text-ink hover:border-slate-400 dark:hover:border-slate-500 shadow-xs transition-[transform,border-color,color] duration-150 hover:scale-[1.01] active:scale-[0.99]"
         >
           <Plus size={15} className="text-rose-500" />
           <span>{tr("dash_add_task_item", "Tugas Baru")}</span>
@@ -912,7 +942,7 @@ export default function Dashboard() {
                     return (
                       <div
                         key={s.id}
-                        className={`group relative min-w-0 w-full flex-col justify-between overflow-hidden rounded-2xl border border-slate-200/80 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/40 p-3.5 sm:p-5 transition-all hover:border-slate-300 dark:hover:border-slate-700 hover:bg-white dark:hover:bg-slate-800 hover:shadow-sm ${
+                        className={`group relative min-w-0 w-full flex-col justify-between overflow-hidden rounded-2xl border border-slate-200/80 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/40 p-3.5 sm:p-5 transition-[background-color,border-color,box-shadow] duration-150 hover:border-slate-300 dark:hover:border-slate-700 hover:bg-white dark:hover:bg-slate-800 hover:shadow-sm ${
                           !showAllMobileDrive && idx >= 3 ? "hidden sm:flex" : "flex"
                         }`}
                         style={{
@@ -1050,7 +1080,7 @@ export default function Dashboard() {
                       playSound("click");
                       updateLayout({ density: d.id });
                     }}
-                    className={`flex flex-col items-center justify-center rounded-2xl border p-3 text-center transition-all ${
+                    className={`flex flex-col items-center justify-center rounded-2xl border p-3 text-center transition-colors duration-120 ${
                       active
                         ? "border-rose-500 bg-rose-50/50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 ring-2 ring-rose-500/20"
                         : "border-slate-200 dark:border-slate-800 bg-surface2/50 hover:bg-surface2 text-sub"
@@ -1084,7 +1114,7 @@ export default function Dashboard() {
                       playSound("click");
                       updateLayout({ gridStyle: style.id });
                     }}
-                    className={`flex flex-col items-center justify-center rounded-2xl border p-3 text-center transition-all ${
+                    className={`flex flex-col items-center justify-center rounded-2xl border p-3 text-center transition-colors duration-120 ${
                       active
                         ? "border-rose-500 bg-rose-50/50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 ring-2 ring-rose-500/20"
                         : "border-slate-200 dark:border-slate-800 bg-surface2/50 hover:bg-surface2 text-sub"
@@ -1119,7 +1149,7 @@ export default function Dashboard() {
                 return (
                   <div
                     key={colKey}
-                    className={`flex items-center justify-between rounded-2xl border p-3.5 transition-all ${
+                    className={`flex items-center justify-between rounded-2xl border p-3.5 transition-colors duration-120 ${
                       isVisible
                         ? "border-slate-200 dark:border-slate-700 bg-surface shadow-xs"
                         : "border-slate-200/60 dark:border-slate-800/60 bg-surface2/40 opacity-60"
@@ -1162,7 +1192,7 @@ export default function Dashboard() {
                       {/* Toggle Visibility */}
                       <button
                         onClick={() => toggleWidget(colKey)}
-                        className={`flex h-8 px-2.5 items-center gap-1.5 rounded-xl border text-xs font-semibold transition-all ${
+                        className={`flex h-8 px-2.5 items-center gap-1.5 rounded-xl border text-xs font-semibold transition-colors duration-120 ${
                           isVisible
                             ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
                             : "border-slate-200 bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400"
@@ -1221,7 +1251,7 @@ export default function Dashboard() {
                 return (
                   <div
                     key={item.key}
-                    className={`flex items-center justify-between rounded-2xl border p-3.5 transition-all ${
+                    className={`flex items-center justify-between rounded-2xl border p-3.5 transition-colors duration-120 ${
                       isVisible
                         ? "border-slate-200 dark:border-slate-700 bg-surface shadow-xs"
                         : "border-slate-200/60 dark:border-slate-800/60 bg-surface2/40 opacity-60"
@@ -1239,7 +1269,7 @@ export default function Dashboard() {
 
                     <button
                       onClick={() => toggleWidget(item.key)}
-                      className={`flex h-8 px-2.5 items-center gap-1.5 rounded-xl border text-xs font-semibold transition-all shrink-0 ml-2 ${
+                      className={`flex h-8 px-2.5 items-center gap-1.5 rounded-xl border text-xs font-semibold transition-colors duration-120 shrink-0 ml-2 ${
                         isVisible
                           ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
                           : "border-slate-200 bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400"
@@ -1287,9 +1317,9 @@ export default function Dashboard() {
       </Sheet>
 
       {/* Task Creation & Detail Sheets */}
-      <TaskCreate open={newTaskOpen} onOpenChange={setNewTaskOpen} onCreated={loadData} />
+      <TaskCreate open={newTaskOpen} onOpenChange={setNewTaskOpen} onCreated={() => loadData(true)} />
       {selectedTaskId && (
-        <TaskDetail id={selectedTaskId} onClose={() => setSelectedTaskId(null)} onChanged={loadData} />
+        <TaskDetail id={selectedTaskId} onClose={() => setSelectedTaskId(null)} onChanged={() => loadData(true)} />
       )}
 
       {/* Drive Shortcut Customize & Member Access Dialogs */}

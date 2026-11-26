@@ -13,6 +13,7 @@ export function seedPollCache(poll) {
 export const CHAT_CACHE = {};
 
 const pendingStorageWrites = new Map();
+const lastWrittenStorageValues = new Map();
 let storageFlushTimer = null;
 
 function flushPendingStorageWrites() {
@@ -23,19 +24,34 @@ function flushPendingStorageWrites() {
   }
   pendingStorageWrites.forEach((value, key) => {
     try {
-      if (value === null) localStorage.removeItem(key);
-      else localStorage.setItem(key, value);
+      if (value === null) {
+        lastWrittenStorageValues.delete(key);
+        localStorage.removeItem(key);
+      } else if (lastWrittenStorageValues.get(key) !== value) {
+        localStorage.setItem(key, value);
+        lastWrittenStorageValues.set(key, value);
+      }
     } catch {}
   });
   pendingStorageWrites.clear();
 }
 
-function scheduleStorageWrite(key, serializedValue) {
+export function scheduleStorageWrite(key, serializedValue) {
   if (!key) return;
+  if (serializedValue !== null && lastWrittenStorageValues.get(key) === serializedValue && !pendingStorageWrites.has(key)) {
+    return;
+  }
   pendingStorageWrites.set(key, serializedValue);
   if (!storageFlushTimer) {
-    storageFlushTimer = setTimeout(flushPendingStorageWrites, 0);
+    storageFlushTimer = setTimeout(flushPendingStorageWrites, 24);
   }
+}
+
+export function scheduleJsonStorageWrite(key, data) {
+  if (!key) return;
+  try {
+    scheduleStorageWrite(key, data === null ? null : JSON.stringify(data));
+  } catch {}
 }
 
 function stripMessagesFromConv(conv) {
@@ -49,11 +65,32 @@ export function saveConversationListCache(convs, userId) {
   if (!Array.isArray(convs)) return;
   if (convs.length === 0 && !hasCompletedInitialHydrate()) return;
   const slim = convs.map(stripMessagesFromConv);
+  CHAT_CACHE[userId ? `__convs_list_${userId}` : "__convs_list"] = slim;
   try {
     const serialized = JSON.stringify(slim);
     if (userId) scheduleStorageWrite(`circle_convs_cache_${userId}`, serialized);
     scheduleStorageWrite("circle_convs_cache", serialized);
   } catch {}
+}
+
+export function getCachedConversationList(userId) {
+  const memKey = userId ? `__convs_list_${userId}` : "__convs_list";
+  if (Array.isArray(CHAT_CACHE[memKey])) return CHAT_CACHE[memKey];
+  try {
+    const saved = (userId && localStorage.getItem(`circle_convs_cache_${userId}`)) || localStorage.getItem("circle_convs_cache");
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) {
+        CHAT_CACHE[memKey] = parsed;
+        return parsed;
+      }
+    }
+  } catch {}
+  return null;
+}
+
+export function getLastConvsHydratedAt(userId) {
+  return CHAT_CACHE[userId ? `__convs_hydrated_at_${userId}` : "__convs_hydrated_at"] || 0;
 }
 
 export function clearChatCache() {
@@ -87,6 +124,7 @@ export function getInitialMsgs(cid) {
 
 export function hydrateConversationsCache(convs, userId) {
   if (!Array.isArray(convs)) return;
+  CHAT_CACHE[userId ? `__convs_hydrated_at_${userId}` : "__convs_hydrated_at"] = Date.now();
   convs.forEach((c) => {
     if (!c || !c.id) return;
     CHAT_CACHE[`conv_${c.id}`] = stripMessagesFromConv(c);
@@ -265,15 +303,11 @@ export function hydratePostsCache(posts, trending) {
     posts.forEach((p) => {
       if (p?.poll) seedPollCache(p.poll);
     });
-    try {
-      localStorage.setItem("circle_cache_posts_feed", JSON.stringify(posts));
-    } catch {}
+    scheduleJsonStorageWrite("circle_cache_posts_feed", posts);
   }
   if (Array.isArray(trending)) {
     trendingCache = trending;
-    try {
-      localStorage.setItem("circle_cache_trending", JSON.stringify(trending));
-    } catch {}
+    scheduleJsonStorageWrite("circle_cache_trending", trending);
   }
 }
 
@@ -315,9 +349,7 @@ export function hydrateGroupsCache(arr, userId) {
   if (!Array.isArray(arr)) return;
   const filtered = arr.filter((g) => g && g.id && (g.is_member || g.has_invitation));
   groupsCache = filtered;
-  try {
-    localStorage.setItem(getGroupsCacheKey(userId), JSON.stringify(filtered));
-  } catch {}
+  scheduleJsonStorageWrite(getGroupsCacheKey(userId), filtered);
 }
 
 export function upsertGroupInCache(group, userId) {
@@ -335,9 +367,7 @@ export function upsertGroupInCache(group, userId) {
       : [{ ...group, is_member: isMember }, ...groupsCache];
   }
   groupsCache = next;
-  try {
-    localStorage.setItem(getGroupsCacheKey(userId), JSON.stringify(next));
-  } catch {}
+  scheduleJsonStorageWrite(getGroupsCacheKey(userId), next);
   return next;
 }
 

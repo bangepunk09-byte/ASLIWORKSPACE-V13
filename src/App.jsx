@@ -84,7 +84,13 @@ function Protected({ children }) {
   const { session, t } = useApp();
   if (session === undefined) return <Spinner label={t("err_loading_circle", "Loading ASLI")} />;
   if (!session?.user?.user_id) return <Navigate to="/login" replace />;
-  if (session.user?.needs_onboarding) return <Onboarding />;
+  if (session.user?.needs_onboarding) {
+    return (
+      <Suspense fallback={<Spinner label={t("err_loading_page", "Memuat halaman")} />}>
+        <Onboarding />
+      </Suspense>
+    );
+  }
   return children;
 }
 
@@ -93,33 +99,38 @@ function Router() {
   const { t } = useApp();
   if (location.hash?.includes("session_id=")) return <AuthCallback />;
   return (
-    <Suspense fallback={<Spinner label={t("err_loading_page", "Memuat halaman")} />}>
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route element={<Protected><Shell /></Protected>}>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/beranda" element={<Beranda />} />
-          <Route path="/beranda/:pid" element={<Beranda />} />
-          <Route path="/messages" element={<Messages />} />
-          <Route path="/messages/:cid" element={<Messages />} />
-          <Route path="/groups" element={<Groups />} />
-          <Route path="/directory" element={<Directory />} />
-          <Route path="/employee" element={<Employees />} />
-          <Route path="/people" element={<Employees />} />
-          <Route path="/people/:uid" element={<Profile />} />
-          <Route path="/org" element={<Org />} />
-          <Route path="/tasks" element={<Tasks />} />
-          <Route path="/schedule" element={<Schedule />} />
-          <Route path="/projects" element={<Projects />} />
-          <Route path="/projects/:pid" element={<Projects />} />
-          <Route path="/marketplace" element={<Marketplace />} />
-          <Route path="/marketplace/:itemId" element={<Marketplace />} />
-          <Route path="/notifications" element={<div className="h-[calc(100dvh-7.5rem)] bg-surface md:h-screen"><NotificationList /></div>} />
-          <Route path="/settings" element={<Settings />} />
-        </Route>
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </Suspense>
+    <Routes>
+      <Route
+        path="/login"
+        element={
+          <Suspense fallback={<Spinner label={t("err_loading_page", "Memuat halaman")} />}>
+            <Login />
+          </Suspense>
+        }
+      />
+      <Route element={<Protected><Shell /></Protected>}>
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/beranda" element={<Beranda />} />
+        <Route path="/beranda/:pid" element={<Beranda />} />
+        <Route path="/messages" element={<Messages />} />
+        <Route path="/messages/:cid" element={<Messages />} />
+        <Route path="/groups" element={<Groups />} />
+        <Route path="/directory" element={<Directory />} />
+        <Route path="/employee" element={<Employees />} />
+        <Route path="/people" element={<Employees />} />
+        <Route path="/people/:uid" element={<Profile />} />
+        <Route path="/org" element={<Org />} />
+        <Route path="/tasks" element={<Tasks />} />
+        <Route path="/schedule" element={<Schedule />} />
+        <Route path="/projects" element={<Projects />} />
+        <Route path="/projects/:pid" element={<Projects />} />
+        <Route path="/marketplace" element={<Marketplace />} />
+        <Route path="/marketplace/:itemId" element={<Marketplace />} />
+        <Route path="/notifications" element={<div className="h-[calc(100dvh-7.5rem)] bg-surface md:h-screen"><NotificationList /></div>} />
+        <Route path="/settings" element={<Settings />} />
+      </Route>
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   );
 }
 

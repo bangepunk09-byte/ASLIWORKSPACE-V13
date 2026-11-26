@@ -591,7 +591,7 @@ export function Timeline({ tasks, onOpen, onPatchTask, reload, initialFilterMode
                           data-testid={`timeline-cp-${st.id}`}
                         >
                           {/* Sub-row Left Info Column */}
-                          <div className="sticky left-0 z-10 flex w-[210px] sm:w-[290px] shrink-0 items-center gap-2 border-r bg-surface/95 pl-7 pr-2.5 py-1.5 backdrop-blur-xs">
+                          <div className="sticky left-0 z-10 flex w-[210px] sm:w-[290px] shrink-0 items-center gap-2 border-r bg-surface pl-7 pr-2.5 py-1.5">
                             <button
                               type="button"
                               onClick={(e) => handleToggleStageDone(t, st, e)}

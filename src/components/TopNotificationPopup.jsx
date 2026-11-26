@@ -10,39 +10,44 @@ import { playSound } from "../lib/sound";
 
 export function hasTopNotifQuickAction(notif) {
   if (!notif) return false;
-  const { type, access_request, conversation_id, task_id, group_id, requester_id, archive_request_id } = notif;
+  const { type, access_request, conversation_id, task_id, group_id, requester_id, archive_request_id, post_id, link } = notif;
   const isAccessReq = type === "access_request" || type === "access_request_card" || !!access_request;
   const isGroupJoinReq = type === "group_join_request" && Boolean(group_id && requester_id);
   const isGroupInvite = type === "group_invitation" && Boolean(group_id);
   const isArchiveDeleteReq = type === "archive_month_delete" && Boolean(archive_request_id);
   const isMessage = type === "message" || type === "dm" || !!conversation_id;
   const isProfileVerify = type === "profile_verify" || type === "profile_verified";
-  return Boolean(isAccessReq || isGroupJoinReq || isGroupInvite || isArchiveDeleteReq || isMessage || task_id || isProfileVerify);
+  const isBerandaPost =
+    type === "post_new" ||
+    type === "post_mention" ||
+    type === "post_reply" ||
+    type === "announcement" ||
+    Boolean(post_id) ||
+    (typeof link === "string" && link.startsWith("/beranda"));
+  return Boolean(isAccessReq || isGroupJoinReq || isGroupInvite || isArchiveDeleteReq || isMessage || task_id || isProfileVerify || isBerandaPost);
 }
 
 export default function TopNotificationPopup({ notif, onClose }) {
   const [replyOpen, setReplyOpen] = useState(false);
   const [replyText, setReplyText] = useState("");
   const [busy, setBusy] = useState(false);
-  const [progress, setProgress] = useState(100);
   const [paused, setPaused] = useState(false);
   const { me, t } = useApp() || {};
   const tr = t || ((_k, fb) => fb || _k);
   const navigate = useNavigate();
 
   const DURATION = 10000; // 10 seconds auto-dismiss
-
   const isPaused = paused || busy || replyOpen;
+  const notifKey = notif ? `${notif.id || ""}_${notif.title || ""}_${notif.body || ""}` : "none";
 
   useEffect(() => {
     const active = hasTopNotifQuickAction(notif);
     setTopQuickActionNotifActive(active);
     return () => setTopQuickActionNotifActive(false);
-  }, [notif?.id, notif?.type, notif?.access_request, notif?.conversation_id, notif?.task_id, notif?.group_id, notif?.requester_id, notif?.archive_request_id]);
+  }, [notif?.id, notif?.type, notif?.access_request, notif?.conversation_id, notif?.task_id, notif?.group_id, notif?.requester_id, notif?.archive_request_id, notif?.post_id, notif?.link]);
 
   useEffect(() => {
     if (notif) {
-      setProgress(100);
       setReplyOpen(false);
       setReplyText("");
       setPaused(false);
@@ -50,33 +55,22 @@ export default function TopNotificationPopup({ notif, onClose }) {
     }
   }, [notif?.id, notif?.title, notif?.body]);
 
-  useEffect(() => {
-    if (!notif || isPaused) return undefined;
-    const interval = 100;
-    const step = (interval / DURATION) * 100;
-
-    const timer = setInterval(() => {
-      setProgress((prev) => Math.max(0, prev - step));
-    }, interval);
-
-    return () => clearInterval(timer);
-  }, [isPaused, notif]);
-
-  useEffect(() => {
-    if (notif && progress <= 0) {
-      onClose?.();
-    }
-  }, [notif, progress, onClose]);
-
   if (!notif) return null;
 
-  const { title, body, type, sender, access_request, group_id, requester_id, archive_request_id, conversation_id, task_id, link } = notif;
+  const { title, body, type, sender, access_request, group_id, requester_id, archive_request_id, conversation_id, task_id, post_id, link } = notif;
   const isPasswordReset = access_request?.type === "password_reset";
   const isDeleteUser = access_request?.type === "delete_user";
   const isProfileVerify = type === "profile_verify" || type === "profile_verified";
   const isGroupJoinReq = type === "group_join_request" && Boolean(group_id && requester_id);
   const isGroupInvite = type === "group_invitation" && Boolean(group_id);
   const isArchiveDeleteReq = type === "archive_month_delete" && Boolean(archive_request_id);
+  const isBerandaPost =
+    type === "post_new" ||
+    type === "post_mention" ||
+    type === "post_reply" ||
+    type === "announcement" ||
+    Boolean(post_id) ||
+    (typeof link === "string" && link.startsWith("/beranda"));
 
   const handleApprove = async () => {
     if (!access_request?.id) return;
@@ -210,7 +204,7 @@ export default function TopNotificationPopup({ notif, onClose }) {
     <div
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => !replyOpen && setPaused(false)}
-      className="fixed top-3 sm:top-4 left-1/2 -translate-x-1/2 z-[100] w-[calc(100vw-1.5rem)] sm:w-[94%] max-w-lg rounded-2xl border border-slate-200/90 dark:border-slate-800 bg-surface/95 dark:bg-slate-900/95 backdrop-blur-md p-3.5 sm:p-4 shadow-2xl text-ink transition-all animate-in fade-in slide-in-from-top-4 duration-300"
+      className="fixed top-3 sm:top-4 left-1/2 -translate-x-1/2 z-[100] w-[calc(100vw-1.5rem)] sm:w-[94%] max-w-lg rounded-2xl border border-slate-200/90 dark:border-slate-800 bg-surface dark:bg-slate-900 p-3.5 sm:p-4 shadow-2xl text-ink animate-in fade-in slide-in-from-top-3 duration-150"
       data-testid="top-notification-popup"
     >
       {/* Header */}
@@ -439,13 +433,45 @@ export default function TopNotificationPopup({ notif, onClose }) {
             </button>
           </div>
         )}
+
+        {/* Case 5: Beranda Post / Mention / Reply CTA */}
+        {isBerandaPost && !isAccessReq && !isGroupJoinReq && !isGroupInvite && !isArchiveDeleteReq && !isMessage && !task_id && !isProfileVerify && (
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[11px] font-medium text-sub flex items-center gap-1">
+              <Bell size={12} className="text-brand" />{" "}
+              {type === "post_mention"
+                ? tr("notif_popup_beranda_mention", "Menyebut di Beranda")
+                : type === "post_reply"
+                ? tr("notif_popup_beranda_reply", "Balasan di Beranda")
+                : tr("notif_popup_beranda_new", "Postingan Baru Beranda")}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setTopQuickActionNotifActive(false);
+                navigate(link || (post_id ? `/beranda/${post_id}` : "/beranda"));
+                onClose();
+              }}
+              className="inline-flex h-8 items-center gap-1.5 rounded-xl bg-brand hover:bg-brand/90 px-3 text-xs font-bold text-white shadow-xs transition-colors cursor-pointer"
+              data-testid="notif-open-beranda-btn"
+            >
+              {tr("notif_popup_view_beranda", "Lihat di Beranda")}
+              <ArrowRight size={13} />
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* 10-Second Auto Dismiss Progress Bar */}
+      {/* 10-Second Auto Dismiss Progress Bar (GPU scaleX, zero timer ticks) */}
       <div className="absolute bottom-0 left-3 right-3 h-0.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
         <div
-          className="h-full bg-brand transition-all duration-100 ease-linear"
-          style={{ width: `${progress}%` }}
+          key={notifKey}
+          onAnimationEnd={() => onClose?.()}
+          className="h-full w-full bg-brand origin-left"
+          style={{
+            animation: `top-notif-shrink ${DURATION}ms linear forwards`,
+            animationPlayState: isPaused ? "paused" : "running",
+          }}
         />
       </div>
     </div>

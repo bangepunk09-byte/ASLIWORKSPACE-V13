@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Columns3, ArrowUp, ArrowDown, Eye, EyeOff, Plus, ArrowUpDown, Pencil, Maximize2, Link2, Layers, LayoutList } from "lucide-react";
 import { toast } from "sonner";
 import { api, errMsg } from "../../lib/api";
@@ -191,19 +191,10 @@ function TitleCell({ row, patch, onOpen }) {
   );
 }
 
-function Cell({ k, row, projects, boards = [], patch, onOpen }) {
-  const { userMap, users, statuses, labels, labelMap, ws, t } = useApp();
+const Cell = memo(function Cell({ k, row, projects, assigneeScope, scopedAssignUsers, patch, onOpen }) {
+  const { userMap, statuses, labels, labelMap, ws, t } = useApp();
   const taskItem = row.task;
   const cp = row.cp;
-  const humanUsers = users.filter((u) => u && !u.is_bot && u.role !== "assistant" && u.user_id !== "user_circle_assistant");
-  const assigneeScope = getBoardAssigneeScope({
-    boards,
-    boardId: taskItem.board_id,
-    projectId: taskItem.project_id,
-    department: taskItem.department,
-    users
-  });
-  const scopedAssignUsers = humanUsers.filter((u) => assigneeScope.ids.includes(u.user_id));
 
   switch (k) {
     case "requestor_id": {
@@ -213,7 +204,7 @@ function Cell({ k, row, projects, boards = [], patch, onOpen }) {
           <PopoverTrigger asChild>
             <button
               type="button"
-              className="flex h-7 w-full min-w-0 items-center justify-between gap-1.5 rounded-full bg-surface2 px-2.5 text-left text-xs hover:ring-1 hover:ring-brand/40 transition-all cursor-pointer outline-none focus:outline-none"
+              className="flex h-7 w-full min-w-0 items-center justify-between gap-1.5 rounded-full bg-surface2 px-2.5 text-left text-xs hover:ring-1 hover:ring-brand/40 transition-colors duration-100 cursor-pointer outline-none focus:outline-none"
               data-testid={`sheet-requestor-${taskItem.id}`}
             >
               <div className="flex items-center gap-1.5 min-w-0 flex-1">
@@ -270,7 +261,7 @@ function Cell({ k, row, projects, boards = [], patch, onOpen }) {
             <PopoverTrigger asChild>
               <button
                 type="button"
-                className="flex h-7 w-full min-w-0 items-center justify-between gap-1.5 rounded-full bg-surface2 px-2.5 text-left text-xs hover:ring-1 hover:ring-brand/40 transition-all cursor-pointer outline-none focus:outline-none"
+                className="flex h-7 w-full min-w-0 items-center justify-between gap-1.5 rounded-full bg-surface2 px-2.5 text-left text-xs hover:ring-1 hover:ring-brand/40 transition-colors duration-100 cursor-pointer outline-none focus:outline-none"
                 title={`PIC Tahap ${row.cpIndex + 1}: ${cp.title}${isInherited ? " · Otomatis dari Assignee" : ""}`}
                 data-testid={`sheet-name-${row.rowKey}`}
               >
@@ -357,7 +348,7 @@ function Cell({ k, row, projects, boards = [], patch, onOpen }) {
           <PopoverTrigger asChild>
             <button
               type="button"
-              className="flex h-7 w-full min-w-0 items-center justify-between gap-1.5 rounded-full bg-surface2 px-2.5 text-left text-xs hover:ring-1 hover:ring-brand/40 transition-all cursor-pointer outline-none focus:outline-none focus:ring-0"
+              className="flex h-7 w-full min-w-0 items-center justify-between gap-1.5 rounded-full bg-surface2 px-2.5 text-left text-xs hover:ring-1 hover:ring-brand/40 transition-colors duration-100 cursor-pointer outline-none focus:outline-none focus:ring-0"
               data-testid={`sheet-name-${taskItem.id}`}
             >
               <div className="flex items-center gap-1.5 min-w-0 flex-1">
@@ -427,7 +418,7 @@ function Cell({ k, row, projects, boards = [], patch, onOpen }) {
           <PopoverTrigger asChild>
             <button
               type="button"
-              className={`flex h-7 w-full min-w-0 items-center justify-between gap-1.5 rounded-full px-2.5 text-xs font-semibold cursor-pointer outline-none focus:outline-none transition-all hover:opacity-90 ${
+              className={`flex h-7 w-full min-w-0 items-center justify-between gap-1.5 rounded-full px-2.5 text-xs font-semibold cursor-pointer outline-none focus:outline-none transition-colors duration-100 hover:opacity-90 ${
                 l ? "" : "bg-surface2 text-sub hover:bg-surface2/80 font-medium"
               }`}
               style={l ? { background: l.color, color: "#fff" } : undefined}
@@ -485,7 +476,7 @@ function Cell({ k, row, projects, boards = [], patch, onOpen }) {
           trigger={
             <button
               type="button"
-              className={`flex h-7 w-full min-w-0 items-center justify-between gap-1.5 rounded-full px-2.5 text-xs font-semibold cursor-pointer outline-none focus:outline-none transition-all hover:opacity-90 border ${
+              className={`flex h-7 w-full min-w-0 items-center justify-between gap-1.5 rounded-full px-2.5 text-xs font-semibold cursor-pointer outline-none focus:outline-none transition-colors duration-100 hover:opacity-90 border ${
                 itemMeta ? "" : "border-transparent bg-surface2 text-sub hover:bg-surface2/80 font-medium"
               }`}
               style={itemBtnStyle}
@@ -507,7 +498,7 @@ function Cell({ k, row, projects, boards = [], patch, onOpen }) {
           <PopoverTrigger asChild>
             <button
               type="button"
-              className="flex h-7 w-full min-w-0 items-center justify-between gap-1.5 rounded-full bg-surface2 px-2.5 text-xs font-semibold cursor-pointer outline-none focus:outline-none hover:bg-surface2/80 transition-all"
+              className="flex h-7 w-full min-w-0 items-center justify-between gap-1.5 rounded-full bg-surface2 px-2.5 text-xs font-semibold cursor-pointer outline-none focus:outline-none hover:bg-surface2/80 transition-colors duration-100"
               data-testid={`list-priority-${taskItem.id}`}
             >
               <div className="flex items-center gap-1.5 min-w-0">
@@ -562,7 +553,7 @@ function Cell({ k, row, projects, boards = [], patch, onOpen }) {
           <PopoverTrigger asChild>
             <button
               type="button"
-              className={`flex h-7 w-full min-w-0 items-center justify-between gap-1.5 rounded-full px-2.5 text-xs font-semibold cursor-pointer outline-none focus:outline-none focus:ring-0 transition-all hover:opacity-90 ${
+              className={`flex h-7 w-full min-w-0 items-center justify-between gap-1.5 rounded-full px-2.5 text-xs font-semibold cursor-pointer outline-none focus:outline-none focus:ring-0 transition-colors duration-100 hover:opacity-90 ${
                 val === "On time"
                   ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
                   : val === "Overdue"
@@ -690,7 +681,7 @@ function Cell({ k, row, projects, boards = [], patch, onOpen }) {
       return cf ? <input defaultValue={taskItem.custom?.[k] || ""} onBlur={(e) => e.target.value !== (taskItem.custom?.[k] || "") && patch(taskItem, { custom: { ...(taskItem.custom || {}), [k]: e.target.value } })} className={ci} /> : null;
     }
   }
-}
+});
 
 function getColLabel(t, key, defaultLabel) {
   switch (key) {
@@ -781,7 +772,7 @@ export default function ListView({ tasks, projects, boards = [], projectId, onOp
   ];
   const visible = cols.filter((c) => !(cfg.hidden || []).includes(c[0]));
   const total = 4 + visible.reduce((s, c) => s + c[2], 0);
-  const patch = async (taskObj, body) => {
+  const patch = useCallback(async (taskObj, body) => {
     onPatchTask?.(taskObj.id, body);
     try {
       const { data } = await api.patch(`/tasks/${taskObj.id}`, body);
@@ -790,7 +781,34 @@ export default function ListView({ tasks, projects, boards = [], projectId, onOp
       toast.error(errMsg(e));
       reload();
     }
-  };
+  }, [onPatchTask, reload]);
+
+  const humanUsers = useMemo(
+    () => users.filter((u) => u && !u.is_bot && u.role !== "assistant" && u.user_id !== "user_circle_assistant"),
+    [users]
+  );
+
+  const scopeByKey = useMemo(() => {
+    const map = new Map();
+    const seenKeys = new Set();
+    tasks.forEach((taskItem) => {
+      if (!taskItem) return;
+      const sKey = `${taskItem.board_id || ""}::${taskItem.project_id || ""}::${taskItem.department || ""}`;
+      if (seenKeys.has(sKey)) return;
+      seenKeys.add(sKey);
+      const assigneeScope = getBoardAssigneeScope({
+        boards,
+        boardId: taskItem.board_id,
+        projectId: taskItem.project_id,
+        department: taskItem.department,
+        users
+      });
+      const idSet = new Set(assigneeScope.ids);
+      const scopedAssignUsers = humanUsers.filter((u) => idSet.has(u.user_id));
+      map.set(sKey, { assigneeScope, scopedAssignUsers });
+    });
+    return map;
+  }, [tasks, boards, users, humanUsers]);
 
   const expandedRows = useMemo(() => {
     const out = [];
@@ -921,7 +939,7 @@ export default function ListView({ tasks, projects, boards = [], projectId, onOp
           <button
             type="button"
             onClick={() => setReportMode("checkpoint")}
-            className={`inline-flex h-8 items-center gap-1.5 rounded-full px-3 sm:px-3.5 text-xs sm:text-sm font-semibold transition-all cursor-pointer whitespace-nowrap ${
+            className={`inline-flex h-8 items-center gap-1.5 rounded-full px-3 sm:px-3.5 text-xs sm:text-sm font-semibold transition-colors duration-120 cursor-pointer whitespace-nowrap ${
               reportMode === "checkpoint" ? "bg-brand text-white shadow-xs" : "text-sub hover:text-ink hover:bg-surface2"
             }`}
             data-testid="report-mode-checkpoint"
@@ -933,7 +951,7 @@ export default function ListView({ tasks, projects, boards = [], projectId, onOp
           <button
             type="button"
             onClick={() => setReportMode("card")}
-            className={`inline-flex h-8 items-center gap-1.5 rounded-full px-3 sm:px-3.5 text-xs sm:text-sm font-semibold transition-all cursor-pointer whitespace-nowrap ${
+            className={`inline-flex h-8 items-center gap-1.5 rounded-full px-3 sm:px-3.5 text-xs sm:text-sm font-semibold transition-colors duration-120 cursor-pointer whitespace-nowrap ${
               reportMode === "card" ? "bg-brand text-white shadow-xs" : "text-sub hover:text-ink hover:bg-surface2"
             }`}
             data-testid="report-mode-card"
@@ -999,6 +1017,8 @@ export default function ListView({ tasks, projects, boards = [], projectId, onOp
                         {rows.slice(0, lim).map((row, i) => {
                           const taskItem = row.task;
                           const on = selected.includes(taskItem.id);
+                          const sKey = `${taskItem.board_id || ""}::${taskItem.project_id || ""}::${taskItem.department || ""}`;
+                          const scopeEntry = scopeByKey.get(sKey) || { assigneeScope: { scopeLabel: "", emptyMessage: "", ids: [] }, scopedAssignUsers: humanUsers };
                           return (
                             <tr key={`${key}_row_${row.rowKey}`} className={`group border-b ${on ? "bg-soft-red" : i % 2 ? "bg-[var(--s-blue)]/30" : ""} hover:bg-surface2/70`} data-testid={`task-row-${row.rowKey}`}>
                               <td className="relative border-r p-0 text-center">
@@ -1014,7 +1034,7 @@ export default function ListView({ tasks, projects, boards = [], projectId, onOp
                               </td>
                               {visible.map(([k], idx) => (
                                 <td key={`${key}_cell_${row.rowKey}_${k || idx}`} className="border-r px-1 py-0.5 last:border-r-0">
-                                  <Cell k={k} row={row} projects={projects} boards={boards} patch={patch} onOpen={onOpen} />
+                                  <Cell k={k} row={row} projects={projects} assigneeScope={scopeEntry.assigneeScope} scopedAssignUsers={scopeEntry.scopedAssignUsers} patch={patch} onOpen={onOpen} />
                                 </td>
                               ))}
                             </tr>

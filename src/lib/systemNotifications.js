@@ -36,6 +36,7 @@ export function resolveNotificationUrl(notif) {
   if (!notif) return "/notifications";
   if (notif.link) return notif.link;
   if (notif.access_request) return "/settings";
+  if (notif.post_id) return `/beranda/${notif.post_id}`;
   if (notif.conversation_id) return `/messages/${notif.conversation_id}`;
   if (notif.task_id) return `/tasks?task=${notif.task_id}`;
   return "/notifications";

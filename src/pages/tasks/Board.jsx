@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import { MessageSquare, Paperclip, ListChecks, Plus, AlertTriangle, RotateCw, MoreHorizontal, Users, UserPlus, Archive, Trash2, ExternalLink, Copy } from "lucide-react";
 import { toast } from "sonner";
 import { api, errMsg } from "../../lib/api";
@@ -39,7 +39,7 @@ function formatUpdatedAgo(iso, tr) {
   }
 }
 
-export function TaskCard({ t, onOpen, done, draggable, onDragStart, onDragEnd, isDragging, reload }) {
+export const TaskCard = memo(function TaskCard({ t, onOpen, done, draggable, onDragStart, onDragEnd, isDragging, reload, onMoveTask }) {
   const { t: tr } = useApp();
   const [refreshing, setRefreshing] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -54,11 +54,15 @@ export function TaskCard({ t, onOpen, done, draggable, onDragStart, onDragEnd, i
           : Math.max(t.progress ?? 0, approvalPct)
       );
   const checkpointTotal = (t.checkpoints?.length || 0) + (t.checklist?.length || 0);
-  const userIds = Array.from(new Set([
-    ...(t.assignee_ids && t.assignee_ids.length ? t.assignee_ids : (t.assignee_id ? [t.assignee_id] : [])),
-    ...(t.requestor_ids || (t.requestor_id ? [t.requestor_id] : [])),
-    ...(t.collaborator_ids || [])
-  ].filter(Boolean)));
+  const userIds = useMemo(
+    () =>
+      Array.from(new Set([
+        ...(t.assignee_ids && t.assignee_ids.length ? t.assignee_ids : (t.assignee_id ? [t.assignee_id] : [])),
+        ...(t.requestor_ids || (t.requestor_id ? [t.requestor_id] : [])),
+        ...(t.collaborator_ids || [])
+      ].filter(Boolean))),
+    [t.assignee_ids, t.assignee_id, t.requestor_ids, t.requestor_id, t.collaborator_ids]
+  );
   const userCount = Math.max(userIds.length, 1);
 
   const handleRefresh = async (e) => {
@@ -67,10 +71,11 @@ export function TaskCard({ t, onOpen, done, draggable, onDragStart, onDragEnd, i
     setRefreshing(true);
     try {
       playSound("pop");
-      if (reload) {
+      const { data } = await api.get(`/tasks/${t.id}`);
+      if (data && onMoveTask) {
+        onMoveTask(t.id, data);
+      } else if (reload) {
         await reload(true);
-      } else {
-        await api.get(`/tasks/${t.id}`);
       }
       toast.success(`Tugas "${t.title}" berhasil disegarkan`);
     } catch (err) {
@@ -121,11 +126,11 @@ export function TaskCard({ t, onOpen, done, draggable, onDragStart, onDragEnd, i
   return (
     <div
       draggable={canDrag}
-      onDragStart={canDrag ? onDragStart : undefined}
+      onDragStart={canDrag ? (e) => onDragStart?.(e, t.id) : undefined}
       onDragEnd={canDrag ? onDragEnd : undefined}
       onClick={() => onOpen(t.id)}
       data-testid={`task-card-${t.id}`}
-      className={`group relative w-full min-w-0 overflow-hidden ${canDrag ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"} rounded-2xl sm:rounded-[26px] border border-slate-100/90 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5 text-left shadow-[0_4px_20px_rgba(0,0,0,0.03)] transition-all duration-200 ease-out hover:-translate-y-0.5 hover:shadow-[0_8px_30px_rgba(0,0,0,0.08)] animate-card-fade ${
+      className={`group relative w-full min-w-0 overflow-hidden ${canDrag ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"} rounded-2xl sm:rounded-[26px] border border-slate-100/90 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5 text-left shadow-[0_4px_20px_rgba(0,0,0,0.03)] transition-[transform,box-shadow,opacity] duration-150 ease-out hover:-translate-y-0.5 hover:shadow-[0_8px_30px_rgba(0,0,0,0.08)] ${
         isDragging ? "opacity-30 scale-95 shadow-none border-dashed border-brand" : "opacity-100 scale-100"
       }`}
       style={t.card_color ? { borderTop: `4px solid ${t.card_color}` } : undefined}
@@ -140,7 +145,7 @@ export function TaskCard({ t, onOpen, done, draggable, onDragStart, onDragEnd, i
           <button
             type="button"
             onClick={handleRefresh}
-            className={`rounded-full p-1.5 transition-all cursor-pointer ${
+            className={`rounded-full p-1.5 transition-colors duration-120 cursor-pointer ${
               refreshing
                 ? "text-brand bg-brand/10 scale-105"
                 : "text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
@@ -267,7 +272,7 @@ export function TaskCard({ t, onOpen, done, draggable, onDragStart, onDragEnd, i
         <div className="flex items-center gap-3">
           <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#E2E8F0] dark:bg-slate-800">
             <div
-              className="h-full rounded-full bg-[#10B981] transition-all duration-300"
+              className="h-full rounded-full bg-[#10B981] transition-[width] duration-200"
               style={{ width: `${Math.min(100, Math.max(0, progressVal))}%` }}
             />
           </div>
@@ -313,7 +318,7 @@ export function TaskCard({ t, onOpen, done, draggable, onDragStart, onDragEnd, i
       </div>
     </div>
   );
-}
+});
 
 export default function Board({ tasks, onOpen, onNew, reload, onMoveTask, board, onInvite }) {
   const { statuses, t: tr } = useApp();
@@ -321,7 +326,7 @@ export default function Board({ tasks, onOpen, onNew, reload, onMoveTask, board,
   const [draggingId, setDraggingId] = useState(null);
   const dark = document.documentElement.classList.contains("dark");
 
-  const moveTaskToStatus = async (id, key) => {
+  const moveTaskToStatus = useCallback(async (id, key) => {
     const t = tasks.find((x) => x.id === id);
     if (!t || t.status === key) return;
 
@@ -367,16 +372,18 @@ export default function Board({ tasks, onOpen, onNew, reload, onMoveTask, board,
     }
 
     try {
-      await api.patch(`/tasks/${id}`, { status: key, deadline_compliance: nextCompliance });
+      const { data } = await api.patch(`/tasks/${id}`, { status: key, deadline_compliance: nextCompliance });
+      if (data && onMoveTask) {
+        onMoveTask(id, data);
+      }
       toast.success(`Dipindahkan ke ${targetStatus?.name || key}`);
-      if (reload) reload(true);
     } catch (er) {
       if (onMoveTask) {
         onMoveTask(id, { status: prevStatus });
       }
       toast.error(errMsg(er, tr("board_move_err", "Gagal memindahkan tugas")));
     }
-  };
+  }, [tasks, statuses, onMoveTask, tr]);
 
   const drop = async (e, key) => {
     e.preventDefault();
@@ -387,16 +394,16 @@ export default function Board({ tasks, onOpen, onNew, reload, onMoveTask, board,
     await moveTaskToStatus(id, key);
   };
 
-  const handleDragStart = (e, taskId) => {
+  const handleDragStart = useCallback((e, taskId) => {
     e.dataTransfer.setData("task", taskId);
     e.dataTransfer.effectAllowed = "move";
     setDraggingId(taskId);
-  };
+  }, []);
 
-  const handleDragEnd = () => {
+  const handleDragEnd = useCallback(() => {
     setDraggingId(null);
     setOver(null);
-  };
+  }, []);
 
   return (
     <div className="w-full min-w-0 space-y-4">
@@ -456,7 +463,7 @@ export default function Board({ tasks, onOpen, onNew, reload, onMoveTask, board,
               }
             }}
             onDrop={(e) => drop(e, s.key)}
-            className={`flex w-[84vw] max-w-[330px] shrink-0 snap-center md:w-auto min-w-0 flex-col rounded-2xl sm:rounded-3xl p-2.5 sm:p-3 transition-all duration-200 ease-out ${
+            className={`flex w-[84vw] max-w-[330px] shrink-0 snap-center md:w-auto min-w-0 flex-col rounded-2xl sm:rounded-3xl p-2.5 sm:p-3 transition-[transform,box-shadow] duration-150 ease-out ${
               isColumnOver
                 ? "ring-2 ring-brand/80 scale-[1.01] shadow-lg"
                 : "ring-0 scale-100 shadow-none"
@@ -488,16 +495,16 @@ export default function Board({ tasks, onOpen, onNew, reload, onMoveTask, board,
             <div className="flex min-h-[120px] flex-1 flex-col gap-3">
               {col.map((t) => (
                 <TaskCard
-                  key={`${t.id}_${t.updated_at || t.created_at || '1'}`}
+                  key={t.id}
                   t={t}
                   onOpen={onOpen}
                   done={s.is_done}
                   draggable
                   isDragging={draggingId === t.id}
-                  onDragStart={(e) => handleDragStart(e, t.id)}
+                  onDragStart={handleDragStart}
                   onDragEnd={handleDragEnd}
                   reload={reload}
-                  onQuickMove={moveTaskToStatus}
+                  onMoveTask={onMoveTask}
                 />
               ))}
 

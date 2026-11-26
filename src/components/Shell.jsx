@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   Home,
@@ -76,6 +76,7 @@ function NavItem({ item, compact, unread, onClick }) {
         onClick?.(e);
       }}
       onMouseEnter={() => preloadRoute(item.to)}
+      onPointerDown={() => preloadRoute(item.to)}
       onFocus={() => preloadRoute(item.to)}
       onTouchStart={() => preloadRoute(item.to)}
       data-testid={`sidebar-${item.id}-link`}
@@ -280,7 +281,7 @@ function Sidebar({ compact, setCompact, openSearch }) {
                   type="button"
                   onClick={() => setStatusMenuOpen((v) => !v)}
                   data-testid="sidebar-status-trigger"
-                  className={`mt-1 inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10.5px] font-semibold leading-none transition-all hover:opacity-90 ${currentStatusMeta.badgeClass}`}
+                  className={`mt-1 inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10.5px] font-semibold leading-none transition-opacity hover:opacity-90 ${currentStatusMeta.badgeClass}`}
                 >
                   <span className={`h-1.5 w-1.5 rounded-full ${currentStatusMeta.dotClass}`} />
                   <span>{t(`nav_status_${currentStatusMeta.value}`, currentStatusMeta.label)}</span>
@@ -454,7 +455,7 @@ function MobileNav({ openSearch }) {
 
       {/* Mobile Fixed Bottom Navigation Bar (56px ergonomic thumb zone) */}
       <nav
-        className="md:hidden fixed inset-x-0 bottom-0 z-40 grid w-full max-w-[100vw] grid-cols-5 items-center min-h-14 border-t border-slate-200/90 dark:border-slate-800/90 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md pb-safe select-none touch-none"
+        className="md:hidden fixed inset-x-0 bottom-0 z-40 grid w-full max-w-[100vw] grid-cols-5 items-center min-h-14 border-t border-slate-200/90 dark:border-slate-800/90 bg-white dark:bg-slate-900 pb-safe select-none touch-none"
         data-testid="mobile-bottom-nav"
       >
         {MOBILE_TABS.map((n) => (
@@ -463,6 +464,8 @@ function MobileNav({ openSearch }) {
             to={n.to}
             end={n.to === "/"}
             onClick={() => playSound("tab")}
+            onPointerDown={() => preloadRoute(n.to)}
+            onTouchStart={() => preloadRoute(n.to)}
             data-testid={`mobile-nav-${n.id}`}
             className={({ isActive }) =>
               `relative flex h-14 min-h-[44px] flex-col items-center justify-center gap-0.5 transition-colors ${
@@ -551,7 +554,7 @@ function MobileNav({ openSearch }) {
                         type="button"
                         onClick={() => handleMobileStatusSelect(opt.value)}
                         data-testid={`mobile-status-${opt.value}`}
-                        className={`flex items-center justify-center gap-1.5 rounded-xl border px-2 py-1.5 text-[11px] font-semibold transition-all ${
+                        className={`flex items-center justify-center gap-1.5 rounded-xl border px-2 py-1.5 text-[11px] font-semibold transition-colors ${
                           isActive
                             ? opt.badgeClass
                             : "border-slate-200/70 dark:border-slate-800 bg-surface text-sub hover:text-ink"
@@ -724,7 +727,9 @@ export default function Shell() {
             } print:!pb-0 print:overflow-visible`}
           >
             <div className={`${chatOpen || isMessagesRoot ? "h-full max-h-full" : "min-h-full"} w-full max-w-full min-w-0 overflow-x-hidden`}>
-              <Outlet />
+              <Suspense fallback={<div className="min-h-[40vh]" />}>
+                <Outlet />
+              </Suspense>
             </div>
           </main>
         </div>

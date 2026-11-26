@@ -101,6 +101,7 @@ async function startServer() {
     link?: string,
     access_request?: any,
     task_id?: string,
+    post_id?: string,
     conversation_id?: string,
     group_id?: string,
     requester_id?: string,
@@ -124,7 +125,9 @@ async function startServer() {
     try {
       const targetUrl =
         notif.link ||
-        (notif.conversation_id
+        (notif.post_id
+          ? `/beranda/${notif.post_id}`
+          : notif.conversation_id
           ? `/messages/${notif.conversation_id}`
           : notif.task_id
           ? `/tasks?task=${notif.task_id}`
@@ -138,10 +141,11 @@ async function startServer() {
         type: notif.type || "general",
         category: notif.category || "general",
         url: targetUrl,
+        post_id: notif.post_id || null,
         conversation_id: notif.conversation_id || null,
         task_id: notif.task_id || null,
         access_request: Boolean(notif.access_request),
-        tag: notif.conversation_id || notif.task_id || notif.id,
+        tag: notif.post_id || notif.conversation_id || notif.task_id || notif.id,
       });
     } catch {}
     return notif;
@@ -2281,12 +2285,18 @@ async function startServer() {
     const u = (db.users || []).find((x: any) => x.user_id === userId);
     if (!u) return false;
     const prev = Boolean(u.online);
-    u.online = isOnline;
-    if (!u.availability_status) u.availability_status = "online";
-    u.last_seen_at = new Date().toISOString();
+    const nowMs = Date.now();
     if (prev !== isOnline) {
+      u.online = isOnline;
+      if (!u.availability_status) u.availability_status = "online";
+      u.last_seen_at = new Date(nowMs).toISOString();
       broadcast({ type: "presence", data: { user_id: userId, online: isOnline, availability_status: u.availability_status || "online" } });
       return true;
+    }
+    if (!u.availability_status) u.availability_status = "online";
+    const lastSeenMs = u.last_seen_at ? Date.parse(u.last_seen_at) : 0;
+    if (!lastSeenMs || nowMs - lastSeenMs > 30000) {
+      u.last_seen_at = new Date(nowMs).toISOString();
     }
     return false;
   }
@@ -3471,18 +3481,32 @@ async function startServer() {
     return changed;
   }
 
-  function normalizeDbTasksSaklek(): boolean {
-    let anyChanged = false;
+  let lastSaklekNormalizedRev = -1;
+  let lastSaklekNormalizedLen = -1;
+  let lastCheckpointNotifyRev = -1;
+  let lastCheckpointNotifyLen = -1;
+
+  function normalizeDbTasksSaklek(force = false): boolean {
     if (!Array.isArray(db.tasks)) return false;
+    const curRev = Number(db.revision || 0);
+    const curLen = db.tasks.length;
+    if (!force && curRev === lastSaklekNormalizedRev && curLen === lastSaklekNormalizedLen) {
+      return false;
+    }
+    let anyChanged = false;
     for (const t of db.tasks) {
       if (enforceTaskSaklekDone(t)) {
         anyChanged = true;
       }
     }
+    lastSaklekNormalizedRev = curRev;
+    lastSaklekNormalizedLen = curLen;
     return anyChanged;
   }
 
   function applySnapshotToDb(body: any) {
+    lastSaklekNormalizedRev = -1;
+    lastCheckpointNotifyRev = -1;
     const rawData = body.data && typeof body.data === "object" ? body.data : body;
     if (!rawData || typeof rawData !== "object") return false;
 
@@ -3617,7 +3641,7 @@ async function startServer() {
     db.org_aligned_v3 = true;
     migrateSecurityAtRest();
     sanitizeConversationsAndMessages();
-    normalizeDbTasksSaklek();
+    normalizeDbTasksSaklek(true);
     serverBootedFreshSeed = false;
     saveDbToFile(true);
 
@@ -4028,7 +4052,7 @@ async function startServer() {
       } catch {}
     }
 
-    if (normalizeDbTasksSaklek()) {
+    if (normalizeDbTasksSaklek(true)) {
       anyChanged = true;
     }
 
@@ -6811,37 +6835,43 @@ async function startServer() {
       return false;
     };
 
-    // Ensure any active reached checkpoint that hasn't notified its assigned PIC yet sends its notification
-    let checkpointSynced = false;
-    (db.tasks || []).forEach((taskItem: any) => {
-      if (!taskItem || taskItem.archived || !Array.isArray(taskItem.checkpoints) || taskItem.checkpoints.length === 0) return;
-      const activeIdx = taskItem.checkpoints.findIndex((c: any) => !c.done);
-      taskItem.checkpoints.forEach((c: any, idx: number) => {
-        const isReached = !c.done && idx === activeIdx;
-        if (!isReached) {
-          if (c.notified_ready_for) {
-            c.notified_ready_for = null;
+    // Ensure any active reached checkpoint that hasn't notified its assigned PIC yet sends its notification (gated by db.revision)
+    const cpRev = Number(db.revision || 0);
+    const cpLen = Array.isArray(db.tasks) ? db.tasks.length : 0;
+    if (cpRev !== lastCheckpointNotifyRev || cpLen !== lastCheckpointNotifyLen) {
+      let checkpointSynced = false;
+      (db.tasks || []).forEach((taskItem: any) => {
+        if (!taskItem || taskItem.archived || !Array.isArray(taskItem.checkpoints) || taskItem.checkpoints.length === 0) return;
+        const activeIdx = taskItem.checkpoints.findIndex((c: any) => !c.done);
+        taskItem.checkpoints.forEach((c: any, idx: number) => {
+          const isReached = !c.done && idx === activeIdx;
+          if (!isReached) {
+            if (c.notified_ready_for) {
+              c.notified_ready_for = null;
+              checkpointSynced = true;
+            }
+          } else if (c.assignee_id && c.notified_ready_for !== c.assignee_id) {
+            c.notified_ready_for = c.assignee_id;
             checkpointSynced = true;
+            const readyMsg = `Task "${taskItem.title}" sudah siap dikerjakan, Semangat ya..`;
+            createNotification({
+              user_id: c.assignee_id,
+              title: `Checkpoint Siap Dikerjakan: ${c.title || taskItem.title}`,
+              body: readyMsg,
+              type: "checkpoint_ready",
+              category: "tasks",
+              actor_id: taskItem.created_by || CIRCLE_BOT_ID,
+              link: `/tasks?task=${taskItem.id}`,
+              task_id: taskItem.id
+            });
           }
-        } else if (c.assignee_id && c.notified_ready_for !== c.assignee_id) {
-          c.notified_ready_for = c.assignee_id;
-          checkpointSynced = true;
-          const readyMsg = `Task "${taskItem.title}" sudah siap dikerjakan, Semangat ya..`;
-          createNotification({
-            user_id: c.assignee_id,
-            title: `Checkpoint Siap Dikerjakan: ${c.title || taskItem.title}`,
-            body: readyMsg,
-            type: "checkpoint_ready",
-            category: "tasks",
-            actor_id: taskItem.created_by || CIRCLE_BOT_ID,
-            link: `/tasks?task=${taskItem.id}`,
-            task_id: taskItem.id
-          });
-        }
+        });
       });
-    });
-    if (checkpointSynced) {
-      saveDbToFile();
+      if (checkpointSynced) {
+        saveDbToFile();
+      }
+      lastCheckpointNotifyRev = Number(db.revision || 0);
+      lastCheckpointNotifyLen = cpLen;
     }
 
     if (isArchiveView) {
@@ -7259,21 +7289,46 @@ async function startServer() {
       );
       const finalReqIds = resolvedRequestors.length > 0 ? resolvedRequestors : [actorId];
 
-      const validStatuses = (db.workspace?.task_statuses || [])
+      const workspaceStatuses = Array.isArray(db.workspace?.task_statuses) ? db.workspace.task_statuses : [];
+      const validStatuses = workspaceStatuses
         .map((s: any) => (typeof s === "string" ? s : s?.key))
         .filter(Boolean);
-      const rawStatus = String(item.status || item.deadline_compliance || "").trim().toLowerCase().replace(/\s+/g, "_");
+      const rawStatusSource = item.status !== undefined && item.status !== null && String(item.status).trim() !== ""
+        ? item.status
+        : (item.progress !== undefined && Number(String(item.progress).replace(/%/g, "").trim()) >= 100 ? "done" : "");
+      const rawStatus = String(rawStatusSource || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+      const matchedWorkspaceStatus = workspaceStatuses.find((s: any) => {
+        if (!s) return false;
+        const k = String(typeof s === "string" ? s : s.key || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+        const n = String(typeof s === "string" ? s : s.name || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+        return rawStatus && (k === rawStatus || n === rawStatus);
+      });
+      const matchedWsKey = matchedWorkspaceStatus
+        ? (typeof matchedWorkspaceStatus === "string" ? matchedWorkspaceStatus : matchedWorkspaceStatus.key)
+        : "";
       const normalizedImportStatus =
-        ["done", "selesai", "completed", "complete", "on_time"].includes(rawStatus) ? "done"
-        : ["in_review", "review", "approval", "waiting_review"].includes(rawStatus) ? "in_review"
-        : ["in_progress", "on_progress", "progress", "sedang_dikerjakan", "ongoing"].includes(rawStatus) ? "in_progress"
-        : ["todo", "to_do", "open", "pending", "overdue"].includes(rawStatus) ? "todo"
-        : rawStatus;
-      const resolvedStatus = normalizedImportStatus && (validStatuses.length === 0 || validStatuses.includes(normalizedImportStatus))
-        ? normalizedImportStatus
-        : (validStatuses[0] || "todo");
+        ["done", "selesai", "completed", "complete", "finish", "finished", "approved", "on_time"].includes(rawStatus) ? "done"
+        : ["in_review", "review", "approval", "waiting_review", "waiting_approval", "menunggu_review", "menunggu_approval", "need_review", "inreview"].includes(rawStatus) ? "in_review"
+        : ["in_progress", "on_progress", "progress", "sedang_dikerjakan", "sedang_berjalan", "ongoing", "doing", "working", "wip", "inprogress"].includes(rawStatus) ? "in_progress"
+        : ["todo", "to_do", "open", "pending", "backlog"].includes(rawStatus) ? "todo"
+        : (matchedWsKey || rawStatus);
+      const standardStatusSet = new Set(["todo", "in_progress", "in_review", "done"]);
+      let resolvedStatus =
+        normalizedImportStatus && (validStatuses.length === 0 || validStatuses.includes(normalizedImportStatus) || standardStatusSet.has(normalizedImportStatus))
+          ? normalizedImportStatus
+          : (validStatuses[0] || "todo");
 
-      const rawCps = Array.isArray(item.checkpoints) ? item.checkpoints : [];
+      let rawCps: any[] = [];
+      if (Array.isArray(item.checkpoints)) {
+        rawCps = item.checkpoints;
+      } else if (typeof item.checkpoints === "string" && item.checkpoints.trim()) {
+        try {
+          const parsedCps = JSON.parse(item.checkpoints);
+          if (Array.isArray(parsedCps)) rawCps = parsedCps;
+        } catch {
+          rawCps = item.checkpoints.split(/[;\n]/).map((s: string) => s.trim()).filter(Boolean);
+        }
+      }
       const tempCps = rawCps.map((cp: any, cpIdx: number) => {
         if (typeof cp === "string") {
           return { id: `cp_imp_${Date.now()}_${idx}_${cpIdx}`, title: cp, assignee_id: null, deadline: "", done: false };
@@ -7303,15 +7358,52 @@ async function startServer() {
       );
       const collabs = Array.from(new Set([...(Array.isArray(item.collaborator_ids) ? item.collaborator_ids : []), ...cpPics]));
 
+      const rawApprovedInput =
+        (Array.isArray(item.approvals?.approved_by) && item.approvals.approved_by.length > 0 ? item.approvals.approved_by : null) ||
+        (Array.isArray(item.approval?.approved_by) && item.approval.approved_by.length > 0 ? item.approval.approved_by : null) ||
+        item.approved_by ||
+        [];
+      const resolvedApprovedBy = resolveUserIds(rawApprovedInput);
+      if (resolvedApprovedBy.length >= 2) {
+        resolvedStatus = "done";
+      }
+
+      const rawAppStatus = String(item.approvals?.status || item.approval?.status || item.approval_status || "").trim().toLowerCase();
+      const resolvedApprovalStatus =
+        resolvedApprovedBy.length >= 2 || resolvedStatus === "done"
+          ? "approved"
+          : resolvedApprovedBy.length === 1
+          ? "partial"
+          : (["pending", "partial", "approved", "revised"].includes(rawAppStatus) ? rawAppStatus : "pending");
+      const resolvedApprovals = {
+        needed: 2,
+        approved_by: resolvedApprovedBy,
+        status: resolvedApprovalStatus,
+      };
+
+      const rawProgressNum =
+        item.progress !== undefined && item.progress !== null && String(item.progress).trim() !== ""
+          ? Number(String(item.progress).replace(/%/g, "").trim())
+          : NaN;
       const doneCp = normalizedCps.filter((c: any) => c.done).length;
-      const computedProgress = normalizedCps.length > 0
-        ? Math.round((doneCp / normalizedCps.length) * 100)
-        : (item.progress ?? (resolvedStatus === "done" ? 100 : 0));
+      let computedProgress: number;
+      if (resolvedApprovedBy.length >= 2 || resolvedStatus === "done") {
+        computedProgress = 100;
+      } else if (normalizedCps.length > 0) {
+        const cpPct = Math.round((doneCp / normalizedCps.length) * 100);
+        computedProgress = doneCp > 0 ? cpPct : (Number.isFinite(rawProgressNum) ? Math.max(0, Math.min(100, Math.round(rawProgressNum))) : 0);
+      } else if (Number.isFinite(rawProgressNum)) {
+        computedProgress = Math.max(0, Math.min(100, Math.round(rawProgressNum)));
+      } else if (resolvedApprovedBy.length === 1) {
+        computedProgress = 50;
+      } else {
+        computedProgress = 0;
+      }
 
       const taskNum = item.number_str || `TSK-${String(getNextTaskNumber(db.tasks)).padStart(3, "0")}`;
       const nowIso = new Date().toISOString();
 
-      const t = {
+      const t: any = {
         id: `tsk_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 6)}`,
         number_str: taskNum,
         title: String(item.title).trim(),
@@ -7336,12 +7428,13 @@ async function startServer() {
         requestor_id: finalReqIds[0] || actorId,
         requestor_ids: finalReqIds,
         reviewer_ids: finalReqIds,
-        approvals: { needed: 2, approved_by: [], status: "pending" },
+        approvals: resolvedApprovals,
+        approval: resolvedApprovals,
         checkpoints: normalizedCps,
         progress: computedProgress,
         archived: false,
         comments: [],
-        subtasks: [],
+        subtasks: Array.isArray(item.subtasks) ? item.subtasks : [],
         attachments: [],
         activity: [{
           id: `act_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 6)}`,
@@ -7352,17 +7445,23 @@ async function startServer() {
         created_at: item.created_at || nowIso,
         updated_at: item.updated_at || nowIso,
         ...(resolvedStatus === "done"
-          ? { completed_at: item.completed_at || item.submit_date || item.updated_at || nowIso }
+          ? {
+              completed_at: item.completed_at || item.submit_date || item.updated_at || nowIso,
+              ...(item.completed_by || resolvedApprovedBy.length > 0
+                ? { completed_by: item.completed_by || resolvedApprovedBy[resolvedApprovedBy.length - 1] }
+                : {})
+            }
           : {})
       };
       const impDeadline = t.deadline ? new Date(t.deadline) : null;
       const impDlValid = impDeadline && !isNaN(impDeadline.getTime());
       if (t.status === "done") {
-        const compTime = new Date((t as any).completed_at || nowIso);
-        (t as any).deadline_compliance = impDlValid && compTime > impDeadline! ? "Overdue" : "On time";
+        const compTime = new Date(t.completed_at || nowIso);
+        t.deadline_compliance = impDlValid && compTime > impDeadline! ? "Overdue" : "On time";
       } else {
-        (t as any).deadline_compliance = impDlValid && new Date() > impDeadline! ? "Overdue" : "In Progress";
+        t.deadline_compliance = impDlValid && new Date() > impDeadline! ? "Overdue" : "In Progress";
       }
+      enforceTaskSaklekDone(t);
       db.tasks.unshift(t);
       createdList.push(t);
     });
@@ -7750,8 +7849,9 @@ async function startServer() {
     if (!user || user.role !== "super_admin") {
       return res.status(403).json({ detail: "Hanya Super Admin yang diizinkan mengekspor tugas." });
     }
-    const { board_id, assignee_id, priority, label, department, q, ids } = req.query;
-    let list = db.tasks.filter((t: any) => !t.archived && isTaskAccessible(t, user));
+    const { board_id, assignee_id, priority, label, department, q, ids, view, archived } = req.query;
+    const includeArchivedOnly = view === "archived" || archived === "true";
+    let list = db.tasks.filter((t: any) => (includeArchivedOnly ? Boolean(t.archived) : !t.archived) && isTaskAccessible(t, user));
     if (ids) {
       const idSet = new Set(String(ids).split(",").map((s) => s.trim()).filter(Boolean));
       list = list.filter((t: any) => idSet.has(t.id));
@@ -7774,12 +7874,19 @@ async function startServer() {
     }
     const getUserNames = (uIds: any[]) => (uIds || []).map((uid) => db.users.find((u: any) => u.user_id === uid)?.name || uid).filter(Boolean).join("; ");
     const esc = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const headers = "ID,Number,Department,Board,Requestor,Assignee,Brand,Item,Title,Priority,Link,Deadline,Status\n";
+    const headers = "ID,Number,Department,Board,Requestor,Assignee,Brand,Item,Title,Priority,Link,Deadline,Status,Progress,ApprovedBy,ApprovalStatus,StartDate,CompletedAt,Description,Checkpoints\n";
     const rows = list.map((t: any) => {
       const b = db.boards?.find((x: any) => x.id === t.board_id);
       const reqIds = Array.isArray(t.requestor_ids) && t.requestor_ids.length ? t.requestor_ids : (t.requestor_id ? [t.requestor_id] : (t.created_by ? [t.created_by] : []));
       const assIds = Array.isArray(t.assignee_ids) && t.assignee_ids.length ? t.assignee_ids : (t.assignee_id ? [t.assignee_id] : []);
       const brandNames = (t.label_ids || []).map((lid: string) => db.labels?.find((l: any) => l.id === lid)?.name || lid).join("; ");
+      const approvedIds = getTaskApprovedList(t);
+      const effectiveProgress =
+        approvedIds.length >= 2 || t.status === "done"
+          ? 100
+          : Number(t.progress ?? (approvedIds.length === 1 ? 50 : 0));
+      const approvalStatus = t.approvals?.status || t.approval?.status || (approvedIds.length >= 2 || t.status === "done" ? "approved" : approvedIds.length === 1 ? "partial" : "pending");
+      const checkpointsJson = Array.isArray(t.checkpoints) && t.checkpoints.length > 0 ? JSON.stringify(t.checkpoints) : "";
       return [
         t.id,
         t.number_str || "",
@@ -7793,7 +7900,14 @@ async function startServer() {
         t.priority || "medium",
         t.link_url || "",
         t.deadline || "",
-        t.status || "todo"
+        t.status || "todo",
+        effectiveProgress,
+        getUserNames(approvedIds),
+        approvalStatus,
+        t.start_date || "",
+        t.completed_at || "",
+        t.description || "",
+        checkpointsJson
       ].map(esc).join(",");
     }).join("\n");
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
@@ -10268,6 +10382,31 @@ async function startServer() {
       createdPollObj = formatPollForUser(newPoll, uid);
     }
     const cleanedTopic = topic ? String(topic).replace(/^#+/, "").trim().slice(0, 50) : null;
+    const isNotifiableHumanUser = (u: any) =>
+      Boolean(
+        u &&
+        u.user_id &&
+        u.user_id !== uid &&
+        !u.is_bot &&
+        u.role !== "assistant" &&
+        u.user_id !== CIRCLE_BOT_ID &&
+        u.status !== "suspended" &&
+        u.status !== "pending"
+      );
+    const activeHumanUsers = (db.users || []).filter(isNotifiableHumanUser);
+    const validUserIdSet = new Set(activeHumanUsers.map((u: any) => u.user_id));
+    const rawMentionIds = Array.isArray(mention_ids) ? mention_ids : [];
+    const hasAllMention =
+      /(?<![\p{L}\p{N}._])@semua(?![\p{L}\p{N}_])/iu.test(String(text || "")) ||
+      rawMentionIds.includes("semua") ||
+      rawMentionIds.includes("__all__");
+    const explicitMentionIds = Array.from(
+      new Set(rawMentionIds.filter((id: any) => typeof id === "string" && validUserIdSet.has(id)))
+    );
+    const storedMentionIds = hasAllMention
+      ? Array.from(new Set([...explicitMentionIds, "semua"]))
+      : explicitMentionIds;
+
     const newPost = {
       id: `pst_${Date.now()}`,
       author_id: uid,
@@ -10276,7 +10415,7 @@ async function startServer() {
       attachments: attachments || [],
       poll_id: createdPollObj?.id || poll?.id || null,
       poll: createdPollObj || null,
-      mention_ids: mention_ids || [],
+      mention_ids: storedMentionIds,
       parent_id: parent_id || null,
       likes: [],
       like_count: 0,
@@ -10297,33 +10436,90 @@ async function startServer() {
       }
     }
     db.posts.unshift(newPost);
-    
-    // Notify mentioned users
-    if (Array.isArray(mention_ids)) {
-      mention_ids.forEach((userId: string) => {
-        if (userId === uid) return;
+
+    const senderName = reqUser?.name || "Rekan Kerja";
+    const senderSafe = reqUser ? sanitizeUser(reqUser) : undefined;
+    const cleanedPostText = String(text || "").replace(/\s+/g, " ").trim();
+    const rawSnippet =
+      cleanedPostText ||
+      (createdPollObj?.question ? `Polling: ${createdPollObj.question}` : "") ||
+      (Array.isArray(attachments) && attachments.length > 0 ? `Mengirim ${attachments.length} foto di Beranda` : "Membuat postingan baru");
+    const postSnippet = rawSnippet.length > 110 ? `${rawSnippet.slice(0, 110)}...` : rawSnippet;
+    const targetPostId = parent_id || newPost.id;
+    const berandaLink = `/beranda/${targetPostId}`;
+    const notifiedUsers = new Set<string>([uid]);
+
+    if (parent_id) {
+      // Notify parent author if this is a reply
+      if (updatedParent && updatedParent.author_id && !notifiedUsers.has(updatedParent.author_id)) {
+        notifiedUsers.add(updatedParent.author_id);
+        createNotification({
+          user_id: updatedParent.author_id,
+          title: "Balasan baru di Beranda",
+          body: `${senderName}: ${postSnippet}`,
+          type: "post_reply",
+          category: "beranda",
+          actor_id: uid,
+          sender: senderSafe,
+          post_id: parent_id,
+          link: `/beranda/${parent_id}`
+        });
+      }
+      // Notify mentioned users or @semua in reply
+      const replyMentionTargets = hasAllMention
+        ? activeHumanUsers.map((u: any) => u.user_id)
+        : explicitMentionIds;
+      replyMentionTargets.forEach((userId: string) => {
+        if (notifiedUsers.has(userId)) return;
+        notifiedUsers.add(userId);
         createNotification({
           user_id: userId,
-          title: "Anda dimention dalam postingan",
-          body: `${reqUser?.name || "Seseorang"} menyebut Anda dalam sebuah postingan: "${text?.slice(0, 50)}${text?.length > 50 ? '...' : ''}"`,
+          title: hasAllMention && !explicitMentionIds.includes(userId)
+            ? `${senderName} menyebut @semua di balasan Beranda`
+            : `${senderName} menyebut Anda di balasan Beranda`,
+          body: `${senderName}: ${postSnippet}`,
           type: "post_mention",
-          category: "social",
+          category: "beranda",
           actor_id: uid,
-          link: `/beranda`
+          sender: senderSafe,
+          post_id: parent_id,
+          link: `/beranda/${parent_id}`
         });
       });
-    }
-
-    // Notify parent author if this is a reply
-    if (parent_id && updatedParent && updatedParent.author_id !== uid) {
-      createNotification({
-        user_id: updatedParent.author_id,
-        title: "Balasan baru pada postingan Anda",
-        body: `${reqUser?.name || "Seseorang"} membalas postingan Anda.`,
-        type: "post_reply",
-        category: "social",
-        actor_id: uid,
-        link: `/beranda/${parent_id}`
+    } else {
+      // Notify explicitly mentioned users first
+      explicitMentionIds.forEach((userId: string) => {
+        if (notifiedUsers.has(userId)) return;
+        notifiedUsers.add(userId);
+        createNotification({
+          user_id: userId,
+          title: `${senderName} menyebut Anda di Beranda`,
+          body: `${senderName}: ${postSnippet}`,
+          type: "post_mention",
+          category: "beranda",
+          actor_id: uid,
+          sender: senderSafe,
+          post_id: newPost.id,
+          link: berandaLink
+        });
+      });
+      // Notify all remaining active human workspace members of the new Beranda post
+      activeHumanUsers.forEach((u: any) => {
+        if (notifiedUsers.has(u.user_id)) return;
+        notifiedUsers.add(u.user_id);
+        createNotification({
+          user_id: u.user_id,
+          title: hasAllMention
+            ? `${senderName} menyebut @semua di Beranda`
+            : "Postingan Baru di Beranda",
+          body: `${senderName}: ${postSnippet}`,
+          type: hasAllMention ? "post_mention" : "post_new",
+          category: "beranda",
+          actor_id: uid,
+          sender: senderSafe,
+          post_id: newPost.id,
+          link: berandaLink
+        });
       });
     }
 
@@ -11814,6 +12010,34 @@ async function startServer() {
 
     const stickerObj = req.body.sticker || (req.body.sticker_id && (db.stickers || []).find((s: any) => s.id === req.body.sticker_id));
 
+    const rawMsgMentionIds = Array.isArray(req.body.mention_ids) ? req.body.mention_ids : [];
+    const hasMsgAllMention =
+      /(?<![\p{L}\p{N}._])@semua(?![\p{L}\p{N}_])/iu.test(String(req.body.text || "")) ||
+      rawMsgMentionIds.includes("semua") ||
+      rawMsgMentionIds.includes("__all__");
+    const validMemberHumanIds = mems.filter((targetUid: string) => {
+      if (!targetUid || targetUid === sender_id || targetUid === CIRCLE_BOT_ID) return false;
+      const targetU = (db.users || []).find((u: any) => u.user_id === targetUid);
+      return Boolean(
+        targetU &&
+        !targetU.is_bot &&
+        targetU.role !== "assistant" &&
+        targetU.status !== "suspended" &&
+        targetU.status !== "pending"
+      );
+    });
+    const validMemberHumanSet = new Set(validMemberHumanIds);
+    // Strictly scope mentions in chats/groups to active members of that conversation
+    const explicitMsgMentionIds = Array.from(
+      new Set(rawMsgMentionIds.filter((uidCandidate: any) => typeof uidCandidate === "string" && validMemberHumanSet.has(uidCandidate)))
+    );
+    const storedMsgMentionIds = hasMsgAllMention
+      ? Array.from(new Set([...explicitMsgMentionIds, "semua"]))
+      : explicitMsgMentionIds;
+    const notifyMentionTargets = Array.from(
+      new Set([...explicitMsgMentionIds, ...(hasMsgAllMention ? validMemberHumanIds : [])])
+    );
+
     const msg = {
       id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       conversation_id: id,
@@ -11825,7 +12049,7 @@ async function startServer() {
       sticker: stickerObj || null,
       attachments: req.body.attachments || [],
       reply_to: req.body.reply_to ? db.messages.find((x: any) => x.id === req.body.reply_to) : null,
-      mention_ids: req.body.mention_ids || [],
+      mention_ids: storedMsgMentionIds,
       created_at: new Date().toISOString()
     };
     db.messages.push(msg);
@@ -11840,29 +12064,39 @@ async function startServer() {
 
     broadcast({ type: "message:new", data: { ...msg, member_ids: mems, conversation_type: conv.type, conversation_name: conv.name } });
 
+    const senderSafe = senderUser ? sanitizeUser(senderUser) : undefined;
+    const msgPreview =
+      msg.type === "sticker"
+        ? `[Stiker] ${stickerObj?.name || ""}`
+        : (String(msg.text || "").replace(/\s+/g, " ").trim().slice(0, 90) || "Mengirim lampiran");
+    const mentionTargetSet = new Set(notifyMentionTargets);
+
     // Notify other DM participant(s)
     if (conv.type === "dm") {
       mems.forEach((targetUid: string) => {
         if (!targetUid || targetUid === sender_id || targetUid === CIRCLE_BOT_ID) return;
+        const isMentioned = mentionTargetSet.has(targetUid);
         createNotification({
           user_id: targetUid,
-          title: `Pesan baru dari ${senderUser?.name || "Rekan Kerja"}`,
-          body: msg.type === "sticker" ? `[Stiker] ${stickerObj?.name || ""}` : (msg.text?.slice(0, 80) || "Mengirim lampiran"),
-          type: "dm",
+          title: isMentioned && hasMsgAllMention
+            ? `${senderUser?.name || "Rekan Kerja"} men-tag @semua`
+            : `Pesan baru dari ${senderUser?.name || "Rekan Kerja"}`,
+          body: msgPreview,
+          type: isMentioned ? "message_mention" : "dm",
           category: "dm",
           actor_id: sender_id,
+          sender: senderSafe,
           link: `/messages/${id}`,
           conversation_id: id
         });
       });
     } else if (conv.type === "group") {
-      const mentionSet = new Set(Array.isArray(msg.mention_ids) ? msg.mention_ids : []);
       mems.forEach((targetUid: string) => {
-        if (!targetUid || targetUid === sender_id || targetUid === CIRCLE_BOT_ID || mentionSet.has(targetUid)) return;
+        if (!targetUid || targetUid === sender_id || targetUid === CIRCLE_BOT_ID || mentionTargetSet.has(targetUid)) return;
         sendWebPushToUser(targetUid, {
           id: msg.id,
           title: `${senderUser?.name || "Rekan Kerja"} di ${conv.name || "Grup"}`,
-          body: msg.type === "sticker" ? `[Stiker] ${stickerObj?.name || ""}` : (msg.text?.slice(0, 80) || "Mengirim lampiran"),
+          body: msgPreview,
           type: "message",
           category: "dm",
           url: `/messages/${id}`,
@@ -11870,19 +12104,19 @@ async function startServer() {
           tag: id,
         });
       });
-    }
-
-    // Notify mentioned users in chat
-    if (Array.isArray(msg.mention_ids)) {
-      msg.mention_ids.forEach((userId: string) => {
+      notifyMentionTargets.forEach((userId: string) => {
         if (userId === sender_id) return;
+        const isDirectExplicit = explicitMsgMentionIds.includes(userId);
         createNotification({
           user_id: userId,
-          title: "Anda disebut dalam pesan",
-          body: `${senderUser?.name || "Seseorang"} menyebut Anda dalam pesan: "${msg.text?.slice(0, 50)}${msg.text?.length > 50 ? '...' : ''}"`,
+          title: hasMsgAllMention && !isDirectExplicit
+            ? `${senderUser?.name || "Seseorang"} men-tag @semua di ${conv.name || "Grup"}`
+            : `${senderUser?.name || "Seseorang"} menyebut Anda di ${conv.name || "Grup"}`,
+          body: `${senderUser?.name || "Seseorang"}: ${msgPreview}`,
           type: "message_mention",
           category: "dm",
           actor_id: sender_id,
+          sender: senderSafe,
           link: `/messages/${id}`,
           conversation_id: id
         });

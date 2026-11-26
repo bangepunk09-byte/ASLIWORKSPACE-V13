@@ -111,15 +111,40 @@ const VAULT_PROFILE_KEYS = [
   'company',
 ] as const;
 
-export function getKnownAccountsFromVault(): VaultAccountRecord[] {
+let vaultMemoryCache: VaultAccountRecord[] | null = null;
+let vaultWriteTimer: ReturnType<typeof setTimeout> | null = null;
+
+function readVaultRaw(): VaultAccountRecord[] {
+  if (vaultMemoryCache !== null) return vaultMemoryCache;
   try {
     const raw = localStorage.getItem(VAULT_STORAGE_KEY);
-    if (!raw) return [];
+    if (!raw) {
+      vaultMemoryCache = [];
+      return vaultMemoryCache;
+    }
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter((u) => u && u.email && u.user_id) : [];
+    vaultMemoryCache = Array.isArray(parsed) ? parsed.filter((u) => u && u.email && u.user_id) : [];
+    return vaultMemoryCache;
   } catch {
-    return [];
+    vaultMemoryCache = [];
+    return vaultMemoryCache;
   }
+}
+
+function scheduleVaultFlush() {
+  if (vaultWriteTimer) return;
+  vaultWriteTimer = setTimeout(() => {
+    vaultWriteTimer = null;
+    try {
+      if (vaultMemoryCache) {
+        localStorage.setItem(VAULT_STORAGE_KEY, JSON.stringify(vaultMemoryCache));
+      }
+    } catch {}
+  }, 40);
+}
+
+export function getKnownAccountsFromVault(): VaultAccountRecord[] {
+  return [...readVaultRaw()];
 }
 
 export function pruneDeletedAccountsFromVault(
@@ -138,13 +163,18 @@ export function pruneDeletedAccountsFromVault(
         .filter(Boolean)
     );
     if (idSet.size === 0 && emailSet.size === 0) return;
-    const list = getKnownAccountsFromVault();
+    const list = readVaultRaw();
     const filtered = list.filter((u) => {
       const uid = String(u?.user_id || '').trim();
       const email = String(u?.email || '').toLowerCase().trim();
       return !idSet.has(uid) && !emailSet.has(email);
     });
     if (filtered.length !== list.length) {
+      vaultMemoryCache = filtered;
+      if (vaultWriteTimer) {
+        clearTimeout(vaultWriteTimer);
+        vaultWriteTimer = null;
+      }
       localStorage.setItem(VAULT_STORAGE_KEY, JSON.stringify(filtered));
     }
   } catch {}
@@ -473,70 +503,81 @@ export function recordDeletedEntityIds(ids: string[] = []): void {
   })();
 }
 
-export function upsertAccountInVault(account: any): void {
-  if (!account || typeof account !== 'object' || !account.email || !account.user_id) return;
+function mergeAccountIntoVaultList(list: VaultAccountRecord[], account: any): boolean {
+  if (!account || typeof account !== 'object' || !account.email || !account.user_id) return false;
   if (
     account.is_bot ||
     account.role === 'assistant' ||
     account.user_id === 'user_circle_assistant'
   ) {
-    return;
+    return false;
   }
+  const cleanEmail = String(account.email).toLowerCase().trim();
+  const idx = list.findIndex(
+    (u) =>
+      u.user_id === account.user_id ||
+      String(u.email || '').toLowerCase().trim() === cleanEmail
+  );
+  const prev: Partial<VaultAccountRecord> = idx >= 0 ? list[idx] : {};
+  const merged: VaultAccountRecord = {
+    ...prev,
+    user_id: account.user_id || prev.user_id!,
+    email: cleanEmail,
+    name: account.name || prev.name || cleanEmail.split('@')[0],
+    role: account.role || prev.role || 'employee',
+    job_title:
+      account.job_title !== undefined
+        ? account.job_title
+        : prev.job_title || 'Staff Member',
+    department:
+      account.department !== undefined
+        ? account.department
+        : prev.department || 'Marketing',
+    org_unit_id:
+      account.org_unit_id !== undefined ? account.org_unit_id : prev.org_unit_id ?? null,
+    status:
+      account.status === 'active' || (prev.status === 'active' && account.status === 'pending')
+        ? 'active'
+        : account.status || prev.status || 'active',
+    avatar: account.avatar || account.picture || prev.avatar || '',
+    picture: account.picture || account.avatar || prev.picture || '',
+    password_hash: account.password_hash || prev.password_hash || undefined,
+    password_updated_at: account.password_updated_at || prev.password_updated_at || undefined,
+    token_version: Number(account.token_version || prev.token_version || 1),
+    updated_at: account.updated_at || new Date().toISOString(),
+  };
+  for (const k of VAULT_PROFILE_KEYS) {
+    if (account[k] !== undefined) {
+      (merged as any)[k] = account[k];
+    }
+  }
+  if (idx >= 0) {
+    list[idx] = merged;
+  } else {
+    list.push(merged);
+  }
+  return true;
+}
+
+export function upsertAccountInVault(account: any): void {
   try {
-    const cleanEmail = String(account.email).toLowerCase().trim();
-    const list = getKnownAccountsFromVault();
-    const idx = list.findIndex(
-      (u) =>
-        u.user_id === account.user_id ||
-        String(u.email || '').toLowerCase().trim() === cleanEmail
-    );
-    const prev: Partial<VaultAccountRecord> = idx >= 0 ? list[idx] : {};
-    const merged: VaultAccountRecord = {
-      ...prev,
-      user_id: account.user_id || prev.user_id!,
-      email: cleanEmail,
-      name: account.name || prev.name || cleanEmail.split('@')[0],
-      role: account.role || prev.role || 'employee',
-      job_title:
-        account.job_title !== undefined
-          ? account.job_title
-          : prev.job_title || 'Staff Member',
-      department:
-        account.department !== undefined
-          ? account.department
-          : prev.department || 'Marketing',
-      org_unit_id:
-        account.org_unit_id !== undefined ? account.org_unit_id : prev.org_unit_id ?? null,
-      status:
-        account.status === 'active' || (prev.status === 'active' && account.status === 'pending')
-          ? 'active'
-          : account.status || prev.status || 'active',
-      avatar: account.avatar || account.picture || prev.avatar || '',
-      picture: account.picture || account.avatar || prev.picture || '',
-      password_hash: account.password_hash || prev.password_hash || undefined,
-      password_updated_at: account.password_updated_at || prev.password_updated_at || undefined,
-      token_version: Number(account.token_version || prev.token_version || 1),
-      updated_at: account.updated_at || new Date().toISOString(),
-    };
-    for (const k of VAULT_PROFILE_KEYS) {
-      if (account[k] !== undefined) {
-        (merged as any)[k] = account[k];
-      }
+    const list = readVaultRaw();
+    if (mergeAccountIntoVaultList(list, account)) {
+      scheduleVaultFlush();
     }
-    if (idx >= 0) {
-      list[idx] = merged;
-    } else {
-      list.push(merged);
-    }
-    localStorage.setItem(VAULT_STORAGE_KEY, JSON.stringify(list));
   } catch {}
 }
 
 export function upsertAccountsListInVault(accounts: any[]): void {
-  if (!Array.isArray(accounts)) return;
-  for (const acc of accounts) {
-    upsertAccountInVault(acc);
-  }
+  if (!Array.isArray(accounts) || accounts.length === 0) return;
+  try {
+    const list = readVaultRaw();
+    let changed = false;
+    for (const acc of accounts) {
+      if (mergeAccountIntoVaultList(list, acc)) changed = true;
+    }
+    if (changed) scheduleVaultFlush();
+  } catch {}
 }
 
 function openMirrorDb(): Promise<IDBDatabase | null> {

@@ -6,6 +6,7 @@ import { api, errMsg, downloadFrom } from "../lib/api";
 import { playSound } from "../lib/sound";
 import { useApp } from "../context/AppContext";
 import { hasCompletedInitialHydrate, recordDeletedTaskIds } from "../lib/persistentMirror";
+import { scheduleJsonStorageWrite } from "../lib/workspaceCaches";
 import { enforceTaskApprovalInvariant, mergeTasksArrayNonDestructive } from "../lib/snapshotMerge";
 import { PageHeader, AccentButton, GhostButton, PRIORITY, fmtDate } from "../components/common";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
@@ -26,7 +27,7 @@ import { tryNativePrint } from "../lib/printReport";
 
 export const SAVED_VIEWS = [["all", "Semua Tugas"], ["active", "Aktif"], ["my", "Tugas Saya"], ["requested", "Request Saya"], ["assigned", "Ditugaskan ke Saya"], ["today", "Deadline Hari Ini"], ["upcoming", "Mendatang"], ["overdue", "Overdue"], ["issues", "Ada Kendala"], ["completed", "Selesai"], ["archived", "Arsip"]];
 const VIEWS = [["board", "Board", KanbanSquare], ["list", "List", List], ["timeline", "Timeline", GanttChart], ["calendar", "Calendar", CalendarDays]];
-const sel = "h-10 rounded-full border bg-surface text-sm font-medium text-ink shadow-sm transition-all hover:bg-surface2 focus:ring-2 focus:ring-brand/20 outline-none cursor-pointer";
+const sel = "h-10 rounded-full border bg-surface text-sm font-medium text-ink shadow-sm transition-colors duration-120 hover:bg-surface2 focus:ring-2 focus:ring-brand/20 outline-none cursor-pointer";
 
 import { INITIAL_TASKS } from "../data/initialTasks";
 
@@ -124,7 +125,30 @@ export function parseCSV(text) {
       if (!val) return;
       if (["title", "nama", "tugas", "name", "judul"].includes(header)) item.title = val;
       else if (["description", "deskripsi", "desc", "catatan"].includes(header)) item.description = val;
-      else if (["status"].includes(header)) item.status = val.toLowerCase().replace(/\s+/g, "_");
+      else if (["status", "statusprogres", "statusprogress", "status_progres", "status_progress", "taskstatus", "task_status", "progressstatus", "kolom", "stage", "state"].includes(header)) {
+        item.status = val.trim().toLowerCase().replace(/[\s-]+/g, "_");
+      }
+      else if (["progress", "progres", "persentase", "percentage", "pct", "completion"].includes(header)) {
+        const num = Number(String(val).replace(/%/g, "").trim());
+        if (Number.isFinite(num)) item.progress = Math.max(0, Math.min(100, Math.round(num)));
+      }
+      else if (["approvedby", "approved_by", "approvers", "disetujuioleh", "diapproveoleh"].includes(header)) {
+        item.approved_by = val.split(/[;,]/).map((x) => x.trim()).filter(Boolean);
+      }
+      else if (["approvalstatus", "approval_status", "statusapproval"].includes(header)) {
+        item.approval_status = val.trim().toLowerCase();
+      }
+      else if (["checkpoints", "checkpoint", "checklist"].includes(header)) {
+        try {
+          const parsedCps = JSON.parse(val);
+          if (Array.isArray(parsedCps)) item.checkpoints = parsedCps;
+        } catch {
+          item.checkpoints = val.split(/[;\n]/).map((x) => x.trim()).filter(Boolean);
+        }
+      }
+      else if (["startdate", "start_date", "tanggalmulai", "mulai"].includes(header)) item.start_date = val;
+      else if (["completedat", "completed_at", "tanggalselesai", "selesai"].includes(header)) item.completed_at = val;
+      else if (["submitdate", "submit_date"].includes(header)) item.submit_date = val;
       else if (["priority", "prioritas"].includes(header)) item.priority = val.toLowerCase();
       else if (["assignee", "assignee_id", "petugas", "assignees", "pic"].includes(header)) {
         const list = val.split(/[;,]/).map((x) => x.trim()).filter(Boolean);
@@ -167,7 +191,7 @@ export function parseCSV(text) {
 let GLOBAL_TASKS_CACHE = null;
 
 export function TaskWorkspace({ projectId, compactHeader }) {
-  const { me, isAdmin, isManager, users, userMap, labels, labelMap, statuses, subscribe, prefs, savePrefs, ws, t } = useApp();
+  const { me, isAdmin, isManager, users, userMap, labels, labelMap, statuses, subscribe, prefs, savePrefs, ws, t, tasks: ctxTasks } = useApp();
   const [params, setParams] = useSearchParams();
   const [boards, setBoards] = useState(() => {
     try {
@@ -186,6 +210,10 @@ export function TaskWorkspace({ projectId, compactHeader }) {
   const [editBoard, setEditBoard] = useState(null);
   const [managingMembersBoard, setManagingMembersBoard] = useState(null);
   const [tasks, setTasks] = useState(() => {
+    if (Array.isArray(ctxTasks) && ctxTasks.length > 0) {
+      GLOBAL_TASKS_CACHE = ctxTasks;
+      return ctxTasks;
+    }
     if (GLOBAL_TASKS_CACHE && Array.isArray(GLOBAL_TASKS_CACHE)) {
       return GLOBAL_TASKS_CACHE;
     }
@@ -279,7 +307,16 @@ export function TaskWorkspace({ projectId, compactHeader }) {
     }
   };
 
-  const [projects, setProjects] = useState({});
+  const [projects, setProjects] = useState(() => {
+    try {
+      const saved = localStorage.getItem("circle_projects_cache") || localStorage.getItem("circle_cache_projects");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return Object.fromEntries(parsed.map((p) => [p.id, p]));
+      }
+    } catch {}
+    return {};
+  });
   const [saved, setSaved] = useState(params.get("view") || "all");
   const [view, setView] = useState(params.get("timeline") ? "timeline" : params.get("kanban") ? "board" : prefs.task_view || "board");
   const [f, setF] = useState({ q: "", label: params.get("label") || "", assignee_id: params.get("assignee") || "", priority: "", department: "", item_type: "" });
@@ -312,13 +349,13 @@ export function TaskWorkspace({ projectId, compactHeader }) {
     return api.get("/boards").then((r) => {
       if (Array.isArray(r.data) && r.data.length > 0) {
         setBoards(r.data);
-        try { localStorage.setItem("circle_boards_cache", JSON.stringify(r.data)); } catch {}
+        scheduleJsonStorageWrite("circle_boards_cache", r.data);
       }
     }).catch(() => {});
   }, [isSuperAdmin]);
   useEffect(() => { loadBoards(); }, [loadBoards]);
   useEffect(() => subscribe((e) => {
-    if (e.type === "tasks:changed" || e.type === "boards:changed" || e.type === "groups:changed" || e.type === "workspace:updated" || e.type === "org:changed") {
+    if (e.type === "boards:changed" || e.type === "groups:changed" || e.type === "workspace:updated" || e.type === "org:changed") {
       loadBoards();
     }
   }), [subscribe, loadBoards]);
@@ -452,41 +489,50 @@ export function TaskWorkspace({ projectId, compactHeader }) {
     setParams(params);
   };
   const newTask = (extra = {}) => setCreate({ board_id: boardId || "", project_id: projectId || "", ...extra });
-  const load = useCallback(() => {
+  const isArchiveMode = view === "archive" || saved === "archived";
+
+  useEffect(() => {
+    if (isArchiveMode) return;
+    if (Array.isArray(ctxTasks) && ctxTasks.length > 0) {
+      GLOBAL_TASKS_CACHE = ctxTasks;
+      setTasks(ctxTasks);
+    }
+  }, [ctxTasks, isArchiveMode]);
+
+  const load = useCallback((opts = {}) => {
     const seq = ++loadSeqRef.current;
-    return api.get("/tasks", { params: query() }).then((r) => {
+    const reqParams = opts.archiveOnly
+      ? { view: "archived", ...(projectId ? { project_id: projectId } : {}) }
+      : (projectId ? { project_id: projectId } : {});
+    return api.get("/tasks", { params: reqParams }).then((r) => {
       if (seq !== loadSeqRef.current) return;
       if (Array.isArray(r.data)) {
         if (r.data.length > 0 || hasCompletedInitialHydrate()) {
           const normalized = r.data.map((t) => enforceTaskApprovalInvariant(t));
           setTasks(normalized);
-          if (!Object.values(f).some(Boolean) && saved === "all" && !boardId && !projectId) {
+          if (!opts.archiveOnly && !projectId) {
             GLOBAL_TASKS_CACHE = normalized;
-            try {
-              localStorage.setItem("circle_tasks_cache", JSON.stringify(normalized));
-              localStorage.setItem("circle_cache_tasks", JSON.stringify(normalized));
-            } catch {}
+            scheduleJsonStorageWrite("circle_tasks_cache", normalized);
+            scheduleJsonStorageWrite("circle_cache_tasks", normalized);
           }
         }
       }
     }).catch(() => {});
-  }, [query, f, saved, boardId, projectId]);
+  }, [projectId]);
 
   const updateTaskLocally = useCallback((taskId, patch) => {
     setTasks((prev) => {
       const next = prev.map((t) =>
         t.id === taskId ? enforceTaskApprovalInvariant({ ...t, ...patch }) : t
       );
-      if (!Object.values(f).some(Boolean) && saved === "all" && !boardId && !projectId) {
+      if (!isArchiveMode && !projectId) {
         GLOBAL_TASKS_CACHE = next;
-        try {
-          localStorage.setItem("circle_tasks_cache", JSON.stringify(next));
-          localStorage.setItem("circle_cache_tasks", JSON.stringify(next));
-        } catch {}
+        scheduleJsonStorageWrite("circle_tasks_cache", next);
+        scheduleJsonStorageWrite("circle_cache_tasks", next);
       }
       return next;
     });
-  }, [f, saved, boardId, projectId]);
+  }, [isArchiveMode, projectId]);
 
   const upsertTaskImmediately = useCallback((taskObj) => {
     if (!taskObj?.id) return;
@@ -496,25 +542,36 @@ export function TaskWorkspace({ projectId, compactHeader }) {
       const mergedTask = existing
         ? (mergeTasksArrayNonDestructive([existing], [taskObj])[0] || enforceTaskApprovalInvariant(taskObj))
         : enforceTaskApprovalInvariant(taskObj);
-      const matches = shouldShowTask(mergedTask);
-      const next = matches
-        ? (existing
-            ? list.map((x) => (x.id === mergedTask.id ? mergedTask : x))
-            : [mergedTask, ...list])
-        : list.filter((x) => x.id !== mergedTask.id);
-      if (!Object.values(f).some(Boolean) && saved === "all" && !boardId && !projectId) {
+      const next = existing
+        ? list.map((x) => (x.id === mergedTask.id ? mergedTask : x))
+        : [mergedTask, ...list];
+      if (!isArchiveMode && !projectId) {
         GLOBAL_TASKS_CACHE = next;
-        try {
-          localStorage.setItem("circle_tasks_cache", JSON.stringify(next));
-          localStorage.setItem("circle_cache_tasks", JSON.stringify(next));
-        } catch {}
+        scheduleJsonStorageWrite("circle_tasks_cache", next);
+        scheduleJsonStorageWrite("circle_cache_tasks", next);
       }
       return next;
     });
-  }, [shouldShowTask, f, saved, boardId, projectId]);
+  }, [isArchiveMode, projectId]);
 
-  useEffect(() => { load(); }, [load]);
-  useEffect(() => { api.get("/projects").then((r) => Array.isArray(r.data) && setProjects(Object.fromEntries(r.data.map((p) => [p.id, p])))).catch(() => {}); }, []);
+  useEffect(() => {
+    if (isArchiveMode) {
+      load({ archiveOnly: true });
+    } else if (!Array.isArray(ctxTasks) || ctxTasks.length === 0 || projectId) {
+      load();
+    }
+  }, [isArchiveMode, projectId, load]);
+
+  useEffect(() => {
+    if (Object.keys(projects).length > 0) return;
+    api.get("/projects").then((r) => {
+      if (Array.isArray(r.data)) {
+        setProjects(Object.fromEntries(r.data.map((p) => [p.id, p])));
+        scheduleJsonStorageWrite("circle_projects_cache", r.data);
+      }
+    }).catch(() => {});
+  }, []);
+
   useEffect(() => subscribe((e) => {
     if (e.type === "tasks:deleted" && (e.id || Array.isArray(e.ids))) {
       const delList = e.id ? [e.id] : e.ids;
@@ -535,8 +592,8 @@ export function TaskWorkspace({ projectId, compactHeader }) {
       upsertTaskImmediately(e.task);
       return;
     }
-    load();
-  }), [subscribe, load, upsertTaskImmediately]);
+    load({ archiveOnly: isArchiveMode });
+  }), [subscribe, load, upsertTaskImmediately, isArchiveMode]);
   const open = (id) => { params.set("task", id); setParams(params); };
   const close = () => { params.delete("task"); setParams(params); };
   const switchView = (v) => {
@@ -660,7 +717,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
                 <button
                   type="button"
                   onClick={() => switchView("archive")}
-                  className={`inline-flex h-10 shrink-0 whitespace-nowrap items-center justify-center gap-2 rounded-full px-4 text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+                  className={`inline-flex h-10 shrink-0 whitespace-nowrap items-center justify-center gap-2 rounded-full px-4 text-xs sm:text-sm font-semibold transition-colors duration-120 cursor-pointer ${
                     view === "archive" || saved === "archived"
                       ? "bg-brand text-white shadow-xs"
                       : "border bg-surface text-sub hover:text-ink hover:bg-surface2"
@@ -697,7 +754,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
           <button
             type="button"
             onClick={() => switchView("archive")}
-            className={`inline-flex h-10 shrink-0 whitespace-nowrap items-center justify-center gap-2 rounded-full px-4 text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+            className={`inline-flex h-10 shrink-0 whitespace-nowrap items-center justify-center gap-2 rounded-full px-4 text-xs sm:text-sm font-semibold transition-colors duration-120 cursor-pointer ${
               view === "archive" || saved === "archived"
                 ? "bg-brand text-white shadow-xs"
                 : "border bg-surface text-sub hover:text-ink hover:bg-surface2"
@@ -719,7 +776,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
             api.get("/projects").then((r) => {
               if (Array.isArray(r.data)) {
                 setProjects(Object.fromEntries(r.data.map((p) => [p.id, p])));
-                try { localStorage.setItem("circle_projects_cache", JSON.stringify(r.data)); } catch {}
+                scheduleJsonStorageWrite("circle_projects_cache", r.data);
               }
             }).catch(() => {});
             if (b?.id && !editBoard?.id) {
@@ -792,7 +849,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
                     department: "Semua Divisi"
                   })
                 }
-                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border bg-surface text-brand shadow-xs hover:bg-brand/5 transition-all cursor-pointer"
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border bg-surface text-brand shadow-xs hover:bg-brand/5 transition-colors duration-120 cursor-pointer"
                 title={t("board_create_btn_title", "Buat Board Kolaborasi / Proyek")}
                 aria-label={t("board_create_btn_title", "Buat Board Kolaborasi / Proyek")}
                 data-testid="create-board-btn"
@@ -804,7 +861,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
                 <button
                   type="button"
                   onClick={() => setEditBoard(currentBoard)}
-                  className="inline-flex h-10 shrink-0 whitespace-nowrap items-center gap-1 rounded-full border bg-surface px-3 text-xs font-semibold text-sub hover:text-ink hover:bg-surface2 transition-all cursor-pointer"
+                  className="inline-flex h-10 shrink-0 whitespace-nowrap items-center gap-1 rounded-full border bg-surface px-3 text-xs font-semibold text-sub hover:text-ink hover:bg-surface2 transition-colors duration-120 cursor-pointer"
                   data-testid="edit-board-btn"
                 >
                   {t("board_manage_btn", "Atur Board")}
@@ -815,7 +872,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
         })()}
 
         <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 min-w-0 sm:contents">
-          <div className="relative flex h-10 min-w-[140px] flex-1 sm:flex-initial sm:w-44 xl:w-48 shrink-0 items-center rounded-full border bg-surface px-3 shadow-xs transition-all focus-within:ring-2 focus-within:ring-brand/20 focus-within:border-brand">
+          <div className="relative flex h-10 min-w-[140px] flex-1 sm:flex-initial sm:w-44 xl:w-48 shrink-0 items-center rounded-full border bg-surface px-3 shadow-xs transition-colors duration-120 focus-within:ring-2 focus-within:ring-brand/20 focus-within:border-brand">
             <Search size={14} className="text-sub mr-1.5 shrink-0" />
             <input
               value={f.q}
@@ -837,7 +894,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
               playSound("click");
               setShowFilters(!showFilters);
             }}
-            className={`inline-flex h-10 shrink-0 whitespace-nowrap items-center gap-1.5 rounded-full border px-3 text-xs font-semibold transition-all shadow-xs cursor-pointer ${
+            className={`inline-flex h-10 shrink-0 whitespace-nowrap items-center gap-1.5 rounded-full border px-3 text-xs font-semibold transition-colors duration-120 shadow-xs cursor-pointer ${
               showFilters || active > 0
                 ? "bg-brand text-white border-transparent"
                 : "bg-surface text-sub hover:text-ink hover:bg-surface2"
@@ -874,7 +931,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
                 boards[0];
               if (target) setManagingMembersBoard(target);
             }}
-            className="inline-flex h-10 shrink-0 whitespace-nowrap items-center gap-1.5 rounded-full border bg-surface px-3.5 text-xs font-semibold text-ink shadow-xs hover:bg-surface2 transition-all cursor-pointer"
+            className="inline-flex h-10 shrink-0 whitespace-nowrap items-center gap-1.5 rounded-full border bg-surface px-3.5 text-xs font-semibold text-ink shadow-xs hover:bg-surface2 transition-colors duration-120 cursor-pointer"
             title={t("board_members_btn_title", "Invite anggota ke Board atau Group Chat")}
             data-testid="board-manage-members-btn"
           >
@@ -926,7 +983,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
             <button
               key={k}
               onClick={() => switchView(k)}
-              className={`inline-flex h-8 min-w-0 shrink-0 whitespace-nowrap items-center justify-center gap-1 sm:gap-1.5 rounded-full px-1.5 sm:px-2.5 xl:px-3 text-xs font-semibold transition-all cursor-pointer ${
+              className={`inline-flex h-8 min-w-0 shrink-0 whitespace-nowrap items-center justify-center gap-1 sm:gap-1.5 rounded-full px-1.5 sm:px-2.5 xl:px-3 text-xs font-semibold transition-colors duration-120 cursor-pointer ${
                 view === k
                   ? "bg-brand text-white shadow-xs"
                   : "text-sub hover:text-ink hover:bg-surface2"
@@ -1147,7 +1204,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
             )}
             <div className="rounded-xl bg-surface2 p-3 text-xs text-sub space-y-1">
               <p className="font-semibold text-ink">{t("tasks_import_supported_cols", "Kolom yang didukung:")}</p>
-              <p>Title, Requestor, Assignee, Brand, Item, Priority, Link, Deadline, Status, Department/Board</p>
+              <p>Title, Requestor, Assignee, Brand, Item, Priority, Link, Deadline, Status, Progress, ApprovedBy, Checkpoints, Description, Department/Board</p>
               <p className="opacity-80">{t("tasks_import_supported_desc", "Mendukung pemisah koma dan titik koma dari Excel.")}</p>
             </div>
           </div>
@@ -1177,8 +1234,9 @@ export function TaskWorkspace({ projectId, compactHeader }) {
         onCreated={(newT) => {
           if (newT?.id) {
             upsertTaskImmediately(newT);
+          } else {
+            load();
           }
-          load();
         }}
       />
       <TaskDetail
@@ -1187,8 +1245,9 @@ export function TaskWorkspace({ projectId, compactHeader }) {
         onChanged={(updatedT) => {
           if (updatedT?.id) {
             upsertTaskImmediately(updatedT);
+          } else {
+            load();
           }
-          load();
         }}
       />
       <PrintPreviewDialog

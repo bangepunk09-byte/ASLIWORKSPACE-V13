@@ -34,7 +34,15 @@ export function NotificationList({ onNavigate }) {
       return { ...prev, items, unread };
     });
     api.post(`/notifications/${n.id}/read`).then(load).catch(() => {});
-    const targetLink = n.link || (n.task_id ? `/tasks?task=${n.task_id}` : null);
+    const targetLink =
+      n.link ||
+      (n.post_id
+        ? `/beranda/${n.post_id}`
+        : n.task_id
+        ? `/tasks?task=${n.task_id}`
+        : n.conversation_id
+        ? `/messages/${n.conversation_id}`
+        : null);
     if (targetLink) {
       navigate(targetLink);
       onNavigate?.();
@@ -102,13 +110,27 @@ export function NotificationList({ onNavigate }) {
       <div className="flex gap-1.5 overflow-x-auto border-b px-3 sm:px-4 py-2 no-scrollbar">{cats.filter(Boolean).map((c) => <button key={`notif-cat-${c}`} onClick={() => setCat(c)} className={`h-7 whitespace-nowrap rounded-full px-3 text-[11px] font-semibold transition-colors cursor-pointer ${cat === c ? "bg-brand text-white shadow-xs" : "bg-surface2 text-sub hover:text-ink"}`} data-testid={`notif-cat-${c}`}>{CAT_LABELS[c] || c}</button>)}</div>
       <div className="flex-1 overflow-y-auto scroll-thin">
         {data && !items.length && <div className="p-10 text-center text-sm text-sub"><Bell className="mx-auto mb-2" size={22} />{t("notif_empty", "Semua sudah terbaca")}</div>}
-        {items.map((n) => (
-          <button key={n.id} onClick={() => open(n)} className={`flex w-full items-start gap-3 border-b px-4 py-3 text-left hover:bg-surface2 ${n.read ? "" : "bg-soft-red"}`} data-testid={`notification-${n.id}`}>
-            {n.actor_id && userMap[n.actor_id] ? <Avatar user={userMap[n.actor_id]} size={32} showStatus={false} /> : <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface2"><Bell size={14} /></span>}
-            <span className="min-w-0 flex-1"><span className="block text-sm font-semibold">{n.title}</span>{n.body && <span className="block line-clamp-2 whitespace-normal break-words text-xs text-sub">{n.body}</span>}<span className="mt-0.5 block text-[10px] text-sub">{rel(n.created_at)}</span></span>
-            {!n.read && <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-brand" />}
-          </button>
-        ))}
+        {items.map((n) => {
+          const isBeranda = n.category === "beranda" || Boolean(n.post_id) || (typeof n.link === "string" && n.link.startsWith("/beranda"));
+          return (
+            <button key={n.id} onClick={() => open(n)} className={`flex w-full items-start gap-3 border-b px-4 py-3 text-left hover:bg-surface2 ${n.read ? "" : "bg-soft-red"}`} data-testid={`notification-${n.id}`}>
+              {n.actor_id && userMap[n.actor_id] ? <Avatar user={userMap[n.actor_id]} size={32} showStatus={false} /> : <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface2"><Bell size={14} /></span>}
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-semibold">{n.title}</span>
+                {n.body && <span className="block line-clamp-2 whitespace-normal break-words text-xs text-sub">{n.body}</span>}
+                <span className="mt-1 flex items-center gap-2 text-[10px] text-sub">
+                  <span>{rel(n.created_at)}</span>
+                  {isBeranda && (
+                    <span className="inline-flex items-center rounded-md bg-brand/10 px-1.5 py-0.5 font-semibold text-brand">
+                      Lihat di Beranda →
+                    </span>
+                  )}
+                </span>
+              </span>
+              {!n.read && <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-brand" />}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
