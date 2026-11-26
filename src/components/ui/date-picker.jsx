@@ -217,7 +217,7 @@ export function KVCalendarGrid({
                     selected
                       ? "bg-[var(--c-accent)] font-extrabold text-white shadow-md shadow-[#FF5364]/25"
                       : todayCell
-                      ? "bg-[var(--s-red)] font-extrabold text-[var(--c-accent)] ring-1 ring-[var(--c-accent)]/35 hover:bg-[var(--c-accent)] hover:text-white"
+                      ? "bg-[var(--s-red)] font-extrabold text-[var(--c-accent)] border border-[var(--c-accent)]/35 hover:bg-[var(--c-accent)] hover:text-white"
                       : inMonth
                       ? cn(
                           "font-semibold hover:bg-[var(--c-surface2)]",
@@ -348,7 +348,7 @@ export function DatePicker({
             compact
               ? "h-7 rounded-lg border bg-surface2 px-2 text-[11px] font-medium"
               : "h-10 w-full rounded-xl border bg-surface2 px-3 text-sm font-medium",
-            open && "border-[var(--c-accent)] bg-[var(--c-surface)] ring-2 ring-[var(--c-accent)]/15",
+            open && "border-[var(--c-accent)] bg-[var(--c-surface)]",
             !parsed && "text-[var(--c-muted)]",
             parsed && "text-[var(--c-text)]",
             className
@@ -458,7 +458,7 @@ export function DateTimePicker({
           data-testid={testId}
           className={cn(
             "group inline-flex h-10 w-full items-center justify-between gap-2 rounded-xl border bg-surface2 px-3 text-left text-sm font-medium transition-all outline-none cursor-pointer disabled:cursor-not-allowed disabled:opacity-60",
-            open && "border-[var(--c-accent)] bg-[var(--c-surface)] ring-2 ring-[var(--c-accent)]/15",
+            open && "border-[var(--c-accent)] bg-[var(--c-surface)]",
             !dateObj ? "text-[var(--c-muted)]" : "text-[var(--c-text)]",
             className
           )}
@@ -644,7 +644,7 @@ export function TimePicker({
           data-testid={testId}
           className={cn(
             "group inline-flex h-10 w-full items-center justify-between gap-1.5 rounded-xl border bg-surface2 px-3 text-left text-sm font-medium transition-all outline-none cursor-pointer disabled:cursor-not-allowed disabled:opacity-60",
-            open && "border-[var(--c-accent)] bg-[var(--c-surface)] ring-2 ring-[var(--c-accent)]/15",
+            open && "border-[var(--c-accent)] bg-[var(--c-surface)]",
             !safeVal ? "text-[var(--c-muted)]" : "text-[var(--c-text)]",
             className
           )}

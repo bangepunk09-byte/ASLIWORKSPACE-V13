@@ -71,11 +71,9 @@ function AuthCallback() {
   useEffect(() => {
     if (done.current) return;
     done.current = true;
-    const sid = new URLSearchParams(window.location.hash.slice(1)).get("session_id");
     window.history.replaceState(null, "", window.location.pathname);
-    api.post("/auth/session", { session_id: sid })
-      .then(({ data }) => { setSession(data); navigate("/", { replace: true }); })
-      .catch((e) => { setSession(null); navigate(`/login?status=${e?.response?.data?.detail || "error"}`, { replace: true }); });
+    setSession(null);
+    navigate("/login", { replace: true });
   }, [navigate, setSession]);
   return <Spinner label={t("err_signing_in", "Signing you in")} />;
 }

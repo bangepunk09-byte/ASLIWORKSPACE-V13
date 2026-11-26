@@ -153,7 +153,6 @@ api.interceptors.request.use((config) => {
           sessUser.avatar && !String(sessUser.avatar).startsWith("data:")
             ? sessUser.avatar
             : undefined,
-        password_hash: vaultMatch?.password_hash || sessUser.password_hash || undefined,
         token_version: Number(sessUser.token_version || vaultMatch?.token_version || 1),
       };
       const encoded = encodeBase64Json(compactProfile);

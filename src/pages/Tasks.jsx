@@ -27,7 +27,7 @@ import { tryNativePrint } from "../lib/printReport";
 
 export const SAVED_VIEWS = [["all", "Semua Tugas"], ["active", "Aktif"], ["my", "Tugas Saya"], ["requested", "Request Saya"], ["assigned", "Ditugaskan ke Saya"], ["today", "Deadline Hari Ini"], ["upcoming", "Mendatang"], ["overdue", "Overdue"], ["issues", "Ada Kendala"], ["completed", "Selesai"], ["archived", "Arsip"]];
 const VIEWS = [["board", "Board", KanbanSquare], ["list", "List", List], ["timeline", "Timeline", GanttChart], ["calendar", "Calendar", CalendarDays]];
-const sel = "h-10 rounded-full border bg-surface text-sm font-medium text-ink shadow-sm transition-colors duration-120 hover:bg-surface2 focus:ring-2 focus:ring-brand/20 outline-none cursor-pointer";
+const sel = "h-10 rounded-full border bg-surface text-sm font-medium text-ink shadow-sm transition-colors duration-120 hover:bg-surface2 focus:border-brand outline-none cursor-pointer";
 
 import { INITIAL_TASKS } from "../data/initialTasks";
 
@@ -705,7 +705,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
                     <DropdownMenuTrigger asChild>
                       <button
                         type="button"
-                        className="group inline-flex h-10 shrink-0 whitespace-nowrap items-center gap-2 rounded-xl border border-border bg-surface2/75 px-3.5 text-xs sm:text-sm font-semibold text-ink shadow-xs transition-colors hover:bg-surface2 focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand cursor-pointer"
+                        className="group inline-flex h-10 shrink-0 whitespace-nowrap items-center gap-2 rounded-xl border border-border bg-surface2/75 px-3.5 text-xs sm:text-sm font-semibold text-ink shadow-xs transition-colors hover:bg-surface2 focus:outline-none focus:border-brand cursor-pointer"
                         data-testid="export-menu-btn"
                       >
                         <Download size={14} className="text-sub" />
@@ -904,7 +904,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
         })()}
 
         <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 min-w-0 sm:contents">
-          <div className="relative flex h-10 min-w-[140px] flex-1 sm:flex-initial sm:w-44 xl:w-48 shrink-0 items-center rounded-full border bg-surface px-3 shadow-xs transition-colors duration-120 focus-within:ring-2 focus-within:ring-brand/20 focus-within:border-brand">
+          <div className="relative flex h-10 min-w-[140px] flex-1 sm:flex-initial sm:w-44 xl:w-48 shrink-0 items-center rounded-full border bg-surface px-3 shadow-xs transition-colors duration-120 focus-within:border-brand">
             <Search size={14} className="text-sub mr-1.5 shrink-0" />
             <input
               value={f.q}

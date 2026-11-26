@@ -463,10 +463,10 @@ const Board = memo(function Board({ tasks, onOpen, onNew, reload, onMoveTask, bo
               }
             }}
             onDrop={(e) => drop(e, s.key)}
-            className={`flex w-[84vw] max-w-[330px] shrink-0 snap-center md:w-auto min-w-0 flex-col rounded-2xl sm:rounded-3xl p-2.5 sm:p-3 transition-[transform,box-shadow] duration-150 ease-out ${
+            className={`flex w-[84vw] max-w-[330px] shrink-0 snap-center md:w-auto min-w-0 flex-col rounded-2xl sm:rounded-3xl p-2.5 sm:p-3 border transition-[transform,box-shadow,border-color] duration-150 ease-out ${
               isColumnOver
-                ? "ring-2 ring-brand/80 scale-[1.01] shadow-lg"
-                : "ring-0 scale-100 shadow-none"
+                ? "border-brand scale-[1.01] shadow-lg"
+                : "border-transparent scale-100 shadow-none"
             }`}
             style={{
               background: dark ? `${s.color}1A` : s.color

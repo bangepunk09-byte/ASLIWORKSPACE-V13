@@ -613,13 +613,13 @@ function CopywritingSettings() {
             value={newKey}
             onChange={(e) => setNewKey(e.target.value)}
             placeholder="Key baru, mis. col_brand"
-            className="h-9 flex-1 w-full rounded-xl border bg-surface px-3 text-xs font-mono outline-none focus:ring-1 focus:ring-brand"
+            className="h-9 flex-1 w-full rounded-xl border bg-surface px-3 text-xs font-mono outline-none focus:border-brand"
           />
           <input
             value={newVal}
             onChange={(e) => setNewVal(e.target.value)}
             placeholder="Teks copywriting baru"
-            className="h-9 flex-1 w-full rounded-xl border bg-surface px-3 text-xs outline-none focus:ring-1 focus:ring-brand"
+            className="h-9 flex-1 w-full rounded-xl border bg-surface px-3 text-xs outline-none focus:border-brand"
           />
           <div className="flex items-center gap-1.5 w-full sm:w-auto justify-end">
             <button
@@ -669,7 +669,7 @@ function CopywritingSettings() {
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           placeholder="Cari kata kunci atau copywriting..."
-          className="h-9 w-full rounded-xl border bg-surface2 pl-9 pr-3 text-xs outline-none focus:ring-2 focus:ring-brand"
+          className="h-9 w-full rounded-xl border bg-surface2 pl-9 pr-3 text-xs outline-none focus:border-brand"
         />
       </div>
 

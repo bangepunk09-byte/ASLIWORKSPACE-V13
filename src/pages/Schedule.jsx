@@ -225,7 +225,7 @@ export default function Schedule() {
   savedIcsUrlRef.current = savedIcsUrl;
 
   const syncFromGoogleCalendar = useCallback(async ({ silent = true, overrideIcsUrl = null } = {}) => {
-    const token = await getAccessToken();
+    const token = await getAccessToken(uid);
     const activeIcsUrl = overrideIcsUrl !== null ? overrideIcsUrl : savedIcsUrlRef.current;
 
     if (!token && !activeIcsUrl) {
@@ -555,7 +555,7 @@ export default function Schedule() {
     if (!form.title.trim()) {
       return toast.error("Judul meeting wajib diisi");
     }
-    const token = await getAccessToken();
+    const token = await getAccessToken(uid);
     if (form.sync_gcal && token) {
       // Show explicit confirmation dialog before mutating user's Google Calendar
       setCreateConfirmOpen(true);
@@ -1106,7 +1106,7 @@ export default function Schedule() {
                     value={form.title}
                     onChange={(e) => setForm({ ...form, title: e.target.value })}
                     placeholder={t("schedule_form_title_ph", "Contoh: Sprint Planning & Sync Progress")}
-                    className="mt-1 h-9 w-full rounded-xl border bg-surface2 px-3 text-xs outline-none focus:ring-2 focus:ring-brand"
+                    className="mt-1 h-9 w-full rounded-xl border bg-surface2 px-3 text-xs outline-none focus:border-brand"
                     data-testid="meeting-title-input"
                   />
                 </div>
@@ -1118,7 +1118,7 @@ export default function Schedule() {
                     value={form.description}
                     onChange={(e) => setForm({ ...form, description: e.target.value })}
                     placeholder={t("schedule_form_desc_ph", "Tuliskan poin pembahasan atau agenda rapat...")}
-                    className="mt-1 w-full rounded-xl border bg-surface2 p-2.5 text-xs outline-none focus:ring-2 focus:ring-brand resize-none"
+                    className="mt-1 w-full rounded-xl border bg-surface2 p-2.5 text-xs outline-none focus:border-brand resize-none"
                   />
                 </div>
 
@@ -1354,7 +1354,7 @@ export default function Schedule() {
                   value={icsUrlInput}
                   onChange={(e) => setIcsUrlInput(e.target.value)}
                   placeholder="https://calendar.google.com/calendar/ical/.../private-.../basic.ics"
-                  className="h-10 flex-1 rounded-xl border bg-surface px-3 text-xs outline-none focus:ring-2 focus:ring-brand font-mono"
+                  className="h-10 flex-1 rounded-xl border bg-surface px-3 text-xs outline-none focus:border-brand font-mono"
                   data-testid="ics-url-input"
                 />
                 <AccentButton

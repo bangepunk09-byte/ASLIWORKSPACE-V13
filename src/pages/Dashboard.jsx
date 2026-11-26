@@ -1088,7 +1088,7 @@ export default function Dashboard() {
                     }}
                     className={`flex flex-col items-center justify-center rounded-2xl border p-3 text-center transition-colors duration-120 ${
                       active
-                        ? "border-rose-500 bg-rose-50/50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 ring-2 ring-rose-500/20"
+                        ? "border-rose-500 bg-rose-50/50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300"
                         : "border-slate-200 dark:border-slate-800 bg-surface2/50 hover:bg-surface2 text-sub"
                     }`}
                   >
@@ -1122,7 +1122,7 @@ export default function Dashboard() {
                     }}
                     className={`flex flex-col items-center justify-center rounded-2xl border p-3 text-center transition-colors duration-120 ${
                       active
-                        ? "border-rose-500 bg-rose-50/50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 ring-2 ring-rose-500/20"
+                        ? "border-rose-500 bg-rose-50/50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300"
                         : "border-slate-200 dark:border-slate-800 bg-surface2/50 hover:bg-surface2 text-sub"
                     }`}
                   >

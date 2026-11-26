@@ -544,6 +544,8 @@ export function PeopleAccess() {
                   u.department
                 ].filter(Boolean))
               );
+              const targetIsSuperAdmin = u.role === "super_admin";
+              const canManageTarget = me?.role === "super_admin" || !targetIsSuperAdmin;
               return (
                 <div key={u.user_id} className="flex flex-col sm:flex-row sm:flex-nowrap sm:items-center sm:justify-between gap-2 py-2.5" data-testid={`admin-user-${u.user_id}`}>
                   <div className="flex items-center gap-2.5 min-w-0 flex-1">
@@ -554,6 +556,7 @@ export function PeopleAccess() {
                     <Select
                       value={u.department || "Management"}
                       onValueChange={(val) => upd(u.user_id, { department: val })}
+                      disabled={!canManageTarget}
                     >
                       <SelectTrigger className="h-8 w-auto min-w-[120px] shrink-0 rounded-xl bg-surface2 border-slate-200 dark:border-slate-800 px-3 text-xs font-medium" data-testid={`dept-select-${u.user_id}`}>
                         <SelectValue />
@@ -568,6 +571,7 @@ export function PeopleAccess() {
                     <Select
                       value={u.role || "employee"}
                       onValueChange={(val) => upd(u.user_id, { role: val })}
+                      disabled={!canManageTarget}
                     >
                       <SelectTrigger className="h-8 w-auto min-w-[144px] shrink-0 rounded-xl bg-surface2 border-slate-200 dark:border-slate-800 px-3 text-xs font-medium" data-testid={`role-select-${u.user_id}`}>
                         <SelectValue />
@@ -576,16 +580,18 @@ export function PeopleAccess() {
                         {u.role && !ROLE_NAMES[u.role] && (
                           <SelectItem value={u.role}>{u.role}</SelectItem>
                         )}
-                        {Object.entries(ROLE_NAMES).map(([k, l]) => (
-                          <SelectItem key={k} value={k}>{l}</SelectItem>
-                        ))}
+                        {Object.entries(ROLE_NAMES)
+                          .filter(([k]) => k !== "super_admin" || me?.role === "super_admin" || u.role === "super_admin")
+                          .map(([k, l]) => (
+                            <SelectItem key={k} value={k}>{l}</SelectItem>
+                          ))}
                       </SelectContent>
                     </Select>
 
                     <Select
                       value={u.status || "active"}
                       onValueChange={(val) => upd(u.user_id, { status: val })}
-                      disabled={u.user_id === me?.user_id}
+                      disabled={u.user_id === me?.user_id || !canManageTarget}
                     >
                       <SelectTrigger className="h-8 w-auto min-w-[98px] shrink-0 rounded-xl bg-surface2 border-slate-200 dark:border-slate-800 px-3 text-xs font-medium" data-testid={`status-select-${u.user_id}`}>
                         <SelectValue />
@@ -599,9 +605,10 @@ export function PeopleAccess() {
 
                     <button
                       type="button"
-                      onClick={() => openResetPwModal(u)}
-                      className="h-8 px-2.5 shrink-0 whitespace-nowrap rounded-xl flex items-center gap-1 text-xs font-semibold text-sub hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 border border-transparent hover:border-indigo-200 dark:hover:border-indigo-900/50 transition-all cursor-pointer"
-                      title={`Reset password untuk ${u.name}`}
+                      disabled={!canManageTarget}
+                      onClick={() => canManageTarget && openResetPwModal(u)}
+                      className="h-8 px-2.5 shrink-0 whitespace-nowrap rounded-xl flex items-center gap-1 text-xs font-semibold text-sub hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 border border-transparent hover:border-indigo-200 dark:hover:border-indigo-900/50 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                      title={canManageTarget ? `Reset password untuk ${u.name}` : "Hanya Super Admin yang dapat mengelola akun Super Admin"}
                       data-testid={`reset-pw-user-${u.user_id}`}
                     >
                       <KeyRound size={14} />
@@ -610,13 +617,20 @@ export function PeopleAccess() {
 
                     <button
                       type="button"
-                      onClick={() => handleDeleteClick(u)}
-                      className={`h-8 w-8 shrink-0 rounded-xl flex items-center justify-center transition-all cursor-pointer ${
-                        u.user_id === me?.user_id
+                      disabled={u.user_id === me?.user_id || !canManageTarget}
+                      onClick={() => canManageTarget && handleDeleteClick(u)}
+                      className={`h-8 w-8 shrink-0 rounded-xl flex items-center justify-center transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+                        u.user_id === me?.user_id || !canManageTarget
                           ? "text-slate-300 dark:text-slate-600 hover:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
                           : "text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-transparent hover:border-rose-200 dark:hover:border-rose-900/50"
                       }`}
-                      title={u.user_id === me?.user_id ? "Tidak dapat menghapus akun sendiri" : `Hapus ${u.name} (perlu approval Manajer Divisi)`}
+                      title={
+                        u.user_id === me?.user_id
+                          ? "Tidak dapat menghapus akun sendiri"
+                          : !canManageTarget
+                          ? "Hanya Super Admin yang dapat mengelola akun Super Admin"
+                          : `Hapus ${u.name} (perlu approval Manajer Divisi)`
+                      }
                       data-testid={`delete-user-${u.user_id}`}
                     >
                       <Trash2 size={15} />

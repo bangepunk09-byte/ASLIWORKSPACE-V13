@@ -193,7 +193,7 @@ export default function BoardMembersModal({ board, boards = [], onSwitchBoard, o
                   onClick={() => setInviteScope("board_only")}
                   className={`flex items-start gap-2.5 rounded-xl border p-3 text-left transition-colors duration-100 cursor-pointer ${
                     inviteScope === "board_only"
-                      ? "border-brand bg-brand/5 ring-2 ring-brand/15"
+                      ? "border-brand bg-brand/5"
                       : "border-border bg-surface hover:bg-surface2/60"
                   }`}
                   data-testid="invite-scope-board-only"
@@ -230,7 +230,7 @@ export default function BoardMembersModal({ board, boards = [], onSwitchBoard, o
                   onClick={() => setInviteScope("board_and_chat")}
                   className={`flex items-start gap-2.5 rounded-xl border p-3 text-left transition-colors duration-100 cursor-pointer ${
                     inviteScope === "board_and_chat"
-                      ? "border-brand bg-brand/5 ring-2 ring-brand/15"
+                      ? "border-brand bg-brand/5"
                       : "border-border bg-surface hover:bg-surface2/60"
                   }`}
                   data-testid="invite-scope-board-and-chat"

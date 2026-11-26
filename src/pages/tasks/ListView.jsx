@@ -23,7 +23,7 @@ export const COLS = [
   ["updated_at", "Diperbarui", 9]
 ];
 export const DEFAULT_HIDDEN = ["number", "completed_at", "updated_at"];
-const ci = "h-7 w-full min-w-0 rounded-md bg-transparent px-1.5 text-xs outline-none hover:bg-surface2 focus:bg-surface focus:ring-2 focus:ring-sky-400";
+const ci = "h-7 w-full min-w-0 rounded-md bg-transparent px-1.5 text-xs outline-none hover:bg-surface2 focus:bg-surface focus:border focus:border-brand";
 
 function getReqIds(taskItem) {
   if (!taskItem) return [];
@@ -204,7 +204,7 @@ const Cell = memo(function Cell({ k, row, projects, assigneeScope, scopedAssignU
           <PopoverTrigger asChild>
             <button
               type="button"
-              className="flex h-7 w-full min-w-0 items-center justify-between gap-1.5 rounded-full bg-surface2 px-2.5 text-left text-xs hover:ring-1 hover:ring-brand/40 transition-colors duration-100 cursor-pointer outline-none focus:outline-none"
+              className="flex h-7 w-full min-w-0 items-center justify-between gap-1.5 rounded-full border border-transparent bg-surface2 px-2.5 text-left text-xs hover:border-brand/40 transition-colors duration-100 cursor-pointer outline-none focus:outline-none"
               data-testid={`sheet-requestor-${taskItem.id}`}
             >
               <div className="flex items-center gap-1.5 min-w-0 flex-1">
@@ -261,7 +261,7 @@ const Cell = memo(function Cell({ k, row, projects, assigneeScope, scopedAssignU
             <PopoverTrigger asChild>
               <button
                 type="button"
-                className="flex h-7 w-full min-w-0 items-center justify-between gap-1.5 rounded-full bg-surface2 px-2.5 text-left text-xs hover:ring-1 hover:ring-brand/40 transition-colors duration-100 cursor-pointer outline-none focus:outline-none"
+                className="flex h-7 w-full min-w-0 items-center justify-between gap-1.5 rounded-full border border-transparent bg-surface2 px-2.5 text-left text-xs hover:border-brand/40 transition-colors duration-100 cursor-pointer outline-none focus:outline-none"
                 title={`PIC Tahap ${row.cpIndex + 1}: ${cp.title}${isInherited ? " · Otomatis dari Assignee" : ""}`}
                 data-testid={`sheet-name-${row.rowKey}`}
               >
@@ -348,7 +348,7 @@ const Cell = memo(function Cell({ k, row, projects, assigneeScope, scopedAssignU
           <PopoverTrigger asChild>
             <button
               type="button"
-              className="flex h-7 w-full min-w-0 items-center justify-between gap-1.5 rounded-full bg-surface2 px-2.5 text-left text-xs hover:ring-1 hover:ring-brand/40 transition-colors duration-100 cursor-pointer outline-none focus:outline-none focus:ring-0"
+              className="flex h-7 w-full min-w-0 items-center justify-between gap-1.5 rounded-full border border-transparent bg-surface2 px-2.5 text-left text-xs hover:border-brand/40 transition-colors duration-100 cursor-pointer outline-none focus:outline-none focus:ring-0"
               data-testid={`sheet-name-${taskItem.id}`}
             >
               <div className="flex items-center gap-1.5 min-w-0 flex-1">
@@ -709,7 +709,7 @@ export function ColumnMenu({ cols, cfg, save }) {
   const toggle = (k) => save({ ...cfg, hidden: (cfg.hidden || []).includes(k) ? cfg.hidden.filter((x) => x !== k) : [...(cfg.hidden || []), k] });
   const add = async () => { try { await api.put("/settings/task-config", { task_fields: [...(ws.task_fields || []), { name }] }); setName(""); reloadWs(); toast.success(t("table_custom_col_added", "Kolom berhasil ditambahkan")); } catch (e) { toast.error(errMsg(e)); } };
   return (
-    <Popover><PopoverTrigger asChild><button className="inline-flex h-10 shrink-0 whitespace-nowrap items-center gap-1.5 rounded-xl border border-border bg-surface2/75 px-3.5 text-xs sm:text-sm font-semibold transition-colors shadow-xs text-ink hover:bg-surface2 outline-none focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand cursor-pointer" data-testid="list-columns-btn"><Columns3 size={14} className="text-sub" /><span>{t("table_columns_btn", "Kolom")}</span></button></PopoverTrigger>
+    <Popover><PopoverTrigger asChild><button className="inline-flex h-10 shrink-0 whitespace-nowrap items-center gap-1.5 rounded-xl border border-border bg-surface2/75 px-3.5 text-xs sm:text-sm font-semibold transition-colors shadow-xs text-ink hover:bg-surface2 outline-none focus:outline-none focus:border-brand cursor-pointer" data-testid="list-columns-btn"><Columns3 size={14} className="text-sub" /><span>{t("table_columns_btn", "Kolom")}</span></button></PopoverTrigger>
       <PopoverContent className="w-72 bg-surface p-2 shadow-xl rounded-2xl border outline-none focus:outline-none" align="end">
         <div className="max-h-72 overflow-y-auto">{cols.map(([k, l], i) => (
           <div key={`col_${k}`} className="flex items-center gap-1 rounded-xl px-2 py-1 text-sm hover:bg-surface2"><span className={`flex-1 ${(cfg.hidden || []).includes(k) ? "text-sub line-through" : ""}`}>{getColLabel(t, k, l)}</span>

@@ -106,7 +106,7 @@ export function MultiUserSelect({
       <button
         type="button"
         onClick={() => setOpen((prev) => !prev)}
-        className="flex min-h-[42px] w-full flex-wrap items-center gap-1.5 rounded-xl border bg-surface2 px-2.5 py-1.5 text-left text-sm transition-colors hover:border-brand/40 focus:outline-none focus:ring-2 focus:ring-brand/20 cursor-pointer"
+        className="flex min-h-[42px] w-full flex-wrap items-center gap-1.5 rounded-xl border bg-surface2 px-2.5 py-1.5 text-left text-sm transition-colors hover:border-brand/40 focus:outline-none focus:border-brand cursor-pointer"
         data-testid={testid}
       >
         {selectedIds.length > 0 ? (
@@ -485,7 +485,7 @@ export function ItemPicker({ value, onChange, testid = "item-picker", trigger })
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={onKey}
             placeholder={tr("task_field_item_search_ph", "Cari atau ketik item baru...")}
-            className="h-9 w-full rounded-xl border bg-surface2 px-3 text-xs outline-none transition-colors focus:border-brand focus:ring-1 focus:ring-brand/20"
+            className="h-9 w-full rounded-xl border bg-surface2 px-3 text-xs outline-none transition-colors focus:border-brand"
             data-testid={`${testid}-search`}
           />
           {q && (

@@ -204,7 +204,7 @@ function CheckpointCreator({ checkpoints = [], onChange, members, emptyMessage, 
             }
           }}
           placeholder={tr("cp_add_ph", "Tambah checkpoint baru…")}
-          className="h-9 min-w-0 w-full flex-1 basis-full sm:basis-0 rounded-xl border bg-surface px-3 text-xs outline-none focus:ring-1 focus:ring-brand"
+          className="h-9 min-w-0 w-full flex-1 basis-full sm:basis-0 rounded-xl border bg-surface px-3 text-xs outline-none focus:border-brand"
           data-testid="task-create-checkpoint-input"
         />
         <DatePicker

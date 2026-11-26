@@ -1211,8 +1211,8 @@ const PostCard = memo(function PostCard({ p, onChange, onDelete, reply }) {
               onClick={toggleComments}
               className={`flex h-8 items-center gap-1.5 rounded-full px-2.5 text-sm transition-all duration-150 ${
                 showComments
-                  ? "bg-brand/10 text-brand font-semibold ring-1 ring-brand/25"
-                  : "text-sub hover:bg-surface2/60 hover:text-ink"
+                  ? "bg-brand/10 text-brand font-semibold border border-brand/30"
+                  : "border border-transparent text-sub hover:bg-surface2/60 hover:text-ink"
               }`}
               data-testid={`post-reply-btn-${p.id}`}
               title={showComments ? "Tutup kolom balasan" : "Balas postingan"}
@@ -1410,7 +1410,7 @@ function Trending({ compact }) {
               <li key={item.tag}>
                 <div
                   className={`group flex items-center gap-2.5 rounded-xl px-2.5 py-2 transition-colors hover:bg-surface2 ${
-                    isActive ? "bg-brand/10 ring-1 ring-brand/20" : ""
+                    isActive ? "bg-brand/10" : ""
                   }`}
                 >
                   <span className="w-4 text-xs font-bold text-sub">{i + 1}</span>

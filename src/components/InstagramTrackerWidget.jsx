@@ -658,7 +658,7 @@ export default function InstagramTrackerWidget() {
                 placeholder="https://www.instagram.com/bank.abdi/"
                 disabled={submittingAdd}
                 data-testid="ig-quick-link-input"
-                className="h-10 w-full rounded-xl border border-border bg-surface2/75 px-3.5 text-sm text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/20"
+                className="h-10 w-full rounded-xl border border-border bg-surface2/75 px-3.5 text-sm text-ink outline-none focus:border-brand"
               />
             </div>
             <DialogFooter className="pt-2">
@@ -703,7 +703,7 @@ export default function InstagramTrackerWidget() {
                 value={editUsername}
                 onChange={(e) => setEditUsername(e.target.value)}
                 placeholder="https://www.instagram.com/bank.abdi/"
-                className="h-10 w-full rounded-xl border border-border bg-surface2/75 px-3.5 text-sm text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/20"
+                className="h-10 w-full rounded-xl border border-border bg-surface2/75 px-3.5 text-sm text-ink outline-none focus:border-brand"
               />
             </div>
 
@@ -727,7 +727,7 @@ export default function InstagramTrackerWidget() {
                 value={editPostUrl}
                 onChange={(e) => setEditPostUrl(e.target.value)}
                 placeholder="Kosongkan untuk ambil postingan terakhir otomatis"
-                className="h-10 w-full rounded-xl border border-border bg-surface2/75 px-3.5 text-sm text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/20"
+                className="h-10 w-full rounded-xl border border-border bg-surface2/75 px-3.5 text-sm text-ink outline-none focus:border-brand"
               />
             </div>
 

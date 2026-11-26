@@ -1,4 +1,6 @@
 import crypto from 'crypto';
+import dns from 'dns';
+import net from 'net';
 import express from 'express';
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -2278,7 +2280,15 @@ async function startServer() {
     next();
   });
 
-  let currentSessionUser: any = (db.session_user_id && db.users.find((u: any) => u.user_id === db.session_user_id)) || null;
+  const ALLOWED_ROLES = new Set([
+    "super_admin",
+    "workspace_admin",
+    "department_manager",
+    "project_manager",
+    "employee",
+    "guest",
+  ]);
+  const isValidWorkspaceRole = (role: any): boolean => ALLOWED_ROLES.has(String(role || ""));
 
   function setUserOnlineStatus(userId: string | undefined | null, isOnline: boolean): boolean {
     if (!userId || userId === CIRCLE_BOT_ID) return false;
@@ -2486,52 +2496,27 @@ async function startServer() {
 
   function verifyAuthenticatedUserFromToken(token: string | null, req?: any): any {
     const payload = verifySessionToken(token, MASTER_KEY);
+    if (!payload?.uid) return null;
+
     const headerProfile = req ? decodeUserProfileHeader(req) : null;
-
-    if (payload?.uid) {
-      let found = (db.users || []).find((u: any) => u.user_id === payload.uid);
-      if (!found && headerProfile && headerProfile.user_id === payload.uid) {
-        mergeKnownAccountsIntoDb([headerProfile], payload.uid);
-        found = (db.users || []).find((u: any) => u.user_id === payload.uid);
-      }
-      if (!found || found.is_bot) return null;
-      if (found.status === "inactive" || found.status === "rejected") return null;
-      if (found.status === "pending") {
-        found.status = "active";
-        saveDbToFile(true);
-      }
-      const currentTv = Number(found.token_version || 1);
-      if (Number(payload.tv || 1) !== currentTv) {
-        found.token_version = Number(payload.tv || 1);
-      }
-      return found;
+    let found = (db.users || []).find((u: any) => u.user_id === payload.uid);
+    if (!found && headerProfile && headerProfile.user_id === payload.uid && !isUserExplicitlyDeleted(payload.uid, headerProfile.email)) {
+      mergeKnownAccountsIntoDb([headerProfile], payload.uid);
+      found = (db.users || []).find((u: any) => u.user_id === payload.uid);
     }
-
-    // Fallback self-healing when container restarted and client sends authenticated x-user-profile
-    if (headerProfile?.user_id && headerProfile?.email) {
-      const uid = String(headerProfile.user_id);
-      const email = String(headerProfile.email).toLowerCase().trim();
-      if (!isUserExplicitlyDeleted(uid, email)) {
-        let found = (db.users || []).find(
-          (u: any) => u.user_id === uid || (u.email && String(u.email).toLowerCase().trim() === email)
-        );
-        if (!found && token) {
-          mergeKnownAccountsIntoDb([headerProfile], uid);
-          found = (db.users || []).find(
-            (u: any) => u.user_id === uid || (u.email && String(u.email).toLowerCase().trim() === email)
-          );
-        }
-        if (found && !found.is_bot && found.status !== "inactive" && found.status !== "rejected") {
-          if (found.status === "pending") {
-            found.status = "active";
-            saveDbToFile(true);
-          }
-          return found;
-        }
-      }
+    if (!found || found.is_bot) return null;
+    if (found.status === "inactive" || found.status === "rejected" || isUserExplicitlyDeleted(found.user_id, found.email)) {
+      return null;
     }
-
-    return null;
+    if (found.status === "pending") {
+      found.status = "active";
+      saveDbToFile(true);
+    }
+    const currentTv = Number(found.token_version || 1);
+    if (Number(payload.tv || 1) !== currentTv) {
+      return null;
+    }
+    return found;
   }
 
   function setSessionCookie(req: any, res: any, token: string) {
@@ -2540,15 +2525,30 @@ async function startServer() {
       `circle_session=${encodeURIComponent(token)}`,
       "Path=/",
       "HttpOnly",
-      "SameSite=Lax",
+      isHttps ? "SameSite=None" : "SameSite=Lax",
       `Max-Age=${7 * 24 * 60 * 60}`
     ];
-    if (isHttps) parts.push("Secure");
+    if (isHttps) {
+      parts.push("Secure");
+      parts.push("Partitioned");
+    }
     res.setHeader("Set-Cookie", parts.join("; "));
   }
 
-  function clearSessionCookie(res: any) {
-    res.setHeader("Set-Cookie", "circle_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0");
+  function clearSessionCookie(res: any, req?: any) {
+    const isHttps = Boolean(req?.secure || req?.headers?.["x-forwarded-proto"] === "https");
+    const parts = [
+      "circle_session=",
+      "Path=/",
+      "HttpOnly",
+      isHttps ? "SameSite=None" : "SameSite=Lax",
+      "Max-Age=0"
+    ];
+    if (isHttps) {
+      parts.push("Secure");
+      parts.push("Partitioned");
+    }
+    res.setHeader("Set-Cookie", parts.join("; "));
   }
 
   function issueUserSession(req: any, res: any, user: any) {
@@ -2557,7 +2557,6 @@ async function startServer() {
     }
     const token = signSessionToken(user.user_id, user.token_version, MASTER_KEY);
     setSessionCookie(req, res, token);
-    currentSessionUser = user;
     db.session_user_id = user.user_id;
     return token;
   }
@@ -2573,7 +2572,6 @@ async function startServer() {
   app.use((req, _res, next) => {
     const verified = getReqUser(req);
     if (verified) {
-      currentSessionUser = verified;
       if (!verified.online && req.path !== "/api/auth/logout" && req.path !== "/api/presence/offline") {
         setUserOnlineStatus(verified.user_id, true);
       }
@@ -4250,27 +4248,33 @@ async function startServer() {
     });
   });
 
-  // Self-healing session recovery endpoint for seamless survival across container restarts
+  // Self-healing session recovery endpoint for seamless survival across container restarts (requires valid signed token)
   app.post("/api/auth/session-recover", (req, res) => {
-    const { user, known_accounts } = req.body || {};
-    if (Array.isArray(known_accounts) && known_accounts.length > 0) {
-      mergeKnownAccountsIntoDb(known_accounts, user?.user_id);
-    }
-    if (user && typeof user === "object" && user.user_id && user.email) {
-      mergeKnownAccountsIntoDb([user], user.user_id);
+    const { token: bodyToken, user, known_accounts } = req.body || {};
+    const candidateToken = (typeof bodyToken === "string" && bodyToken.trim()) || extractAuthToken(req);
+    const tokenPayload = verifySessionToken(candidateToken, MASTER_KEY);
+    if (!tokenPayload?.uid) {
+      return res.status(401).json({ detail: "Token sesi tidak valid atau sudah kedaluwarsa." });
     }
 
-    const reqUser =
-      getReqUser(req) ||
-      (user?.user_id &&
-        (db.users || []).find(
-          (u: any) =>
-            u.user_id === user.user_id ||
-            (user.email && String(u.email || "").toLowerCase().trim() === String(user.email).toLowerCase().trim())
-        ));
+    let reqUser = (db.users || []).find((u: any) => u.user_id === tokenPayload.uid);
+    if (!reqUser && Array.isArray(known_accounts) && known_accounts.length > 0) {
+      const matchingKnown = known_accounts.filter((a: any) => a && a.user_id === tokenPayload.uid);
+      if (matchingKnown.length > 0) {
+        mergeKnownAccountsIntoDb(matchingKnown, tokenPayload.uid);
+        reqUser = (db.users || []).find((u: any) => u.user_id === tokenPayload.uid);
+      }
+    }
+    if (!reqUser && user && typeof user === "object" && user.user_id === tokenPayload.uid && user.email) {
+      mergeKnownAccountsIntoDb([user], tokenPayload.uid);
+      reqUser = (db.users || []).find((u: any) => u.user_id === tokenPayload.uid);
+    }
 
     if (!reqUser || reqUser.is_bot) {
       return res.status(401).json({ detail: "Sesi tidak dapat dipulihkan." });
+    }
+    if (Number(tokenPayload.tv || 1) !== Number(reqUser.token_version || 1)) {
+      return res.status(401).json({ revoked: true, detail: "Sesi telah dicabut." });
     }
     if (reqUser.status === "inactive" || reqUser.status === "rejected" || isUserExplicitlyDeleted(reqUser.user_id, reqUser.email)) {
       return res.status(401).json({ revoked: true, detail: "Akun telah dinonaktifkan." });
@@ -5742,9 +5746,8 @@ async function startServer() {
     if (keepCurrent) {
       newToken = issueUserSession(req, res, user);
     } else {
-      clearSessionCookie(res);
+      clearSessionCookie(res, req);
       setUserOnlineStatus(user.user_id, false);
-      currentSessionUser = null;
     }
 
     if (!Array.isArray(db.audit_logs)) db.audit_logs = [];
@@ -5907,6 +5910,17 @@ async function startServer() {
       return res.status(403).json({ detail: "Hanya Admin / Manajer yang dapat meng-approve permintaan akses." });
     }
     const { role, department } = req.body || {};
+    if (role !== undefined) {
+      if (!isValidWorkspaceRole(role)) {
+        return res.status(400).json({ detail: "Role tidak valid." });
+      }
+      if (role === "super_admin" && reqUser.role !== "super_admin") {
+        return res.status(403).json({ detail: "Hanya Super Admin yang dapat menetapkan role Super Admin." });
+      }
+      if (role === "workspace_admin" && !["super_admin", "workspace_admin"].includes(reqUser.role)) {
+        return res.status(403).json({ detail: "Hanya Admin yang dapat menetapkan role Workspace Admin." });
+      }
+    }
     const accessReq = (db.access_requests || []).find((r: any) => r.id === req.params.id);
     if (!accessReq) return res.status(404).json({ detail: "Permintaan akses tidak ditemukan." });
 
@@ -6139,16 +6153,16 @@ async function startServer() {
     if (reqUser?.user_id) {
       setUserOnlineStatus(reqUser.user_id, false);
     }
-    clearSessionCookie(res);
-    currentSessionUser = null;
+    clearSessionCookie(res, req);
     saveDbToFile();
     res.json({ success: true });
   });
 
   app.post("/api/presence/online", (req, res) => {
     const reqUser = getReqUser(req);
-    const uid = req.body?.user_id || reqUser?.user_id;
-    if (uid && setUserOnlineStatus(uid, true)) {
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    const uid = reqUser.user_id;
+    if (setUserOnlineStatus(uid, true)) {
       saveDbToFile(false);
     }
     res.json({ success: true, user_id: uid, online: true });
@@ -6156,8 +6170,9 @@ async function startServer() {
 
   app.post("/api/presence/offline", (req, res) => {
     const reqUser = getReqUser(req);
-    const uid = req.body?.user_id || reqUser?.user_id;
-    if (uid && setUserOnlineStatus(uid, false)) {
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    const uid = reqUser.user_id;
+    if (setUserOnlineStatus(uid, false)) {
       saveDbToFile(false);
     }
     res.json({ success: true, user_id: uid, online: false });
@@ -6165,14 +6180,18 @@ async function startServer() {
 
   app.post("/api/presence/status", (req, res) => {
     const reqUser = getReqUser(req);
-    const uid = req.body?.user_id || reqUser?.user_id;
+    if (!reqUser?.user_id) {
+      return res.status(401).json({ detail: "Silakan login terlebih dahulu." });
+    }
+    const requestedUid = req.body?.user_id;
+    const isAdmin = ["super_admin", "workspace_admin"].includes(reqUser.role);
+    if (requestedUid && requestedUid !== reqUser.user_id && !isAdmin) {
+      return res.status(403).json({ detail: "Tidak diizinkan mengubah status kehadiran pengguna lain." });
+    }
+    const uid = requestedUid || reqUser.user_id;
     const rawStatus = String(req.body?.availability_status || "").toLowerCase().trim();
     const validStatuses = ["online", "sick_leave", "cuti", "busy"];
     const nextStatus = validStatuses.includes(rawStatus) ? rawStatus : "online";
-
-    if (!uid) {
-      return res.status(401).json({ detail: "Silakan login terlebih dahulu." });
-    }
 
     const user = (db.users || []).find((u: any) => u.user_id === uid);
     if (!user) {
@@ -6182,9 +6201,6 @@ async function startServer() {
     user.availability_status = nextStatus;
     user.online = true;
     user.last_seen_at = new Date().toISOString();
-    if (currentSessionUser?.user_id === user.user_id) {
-      currentSessionUser = { ...currentSessionUser, ...user };
-    }
     saveDbToFile();
 
     broadcast({
@@ -6267,8 +6283,34 @@ async function startServer() {
     if (user.user_id !== reqUser.user_id && !isAdminOrMgr) {
       return res.status(403).json({ detail: "Tidak diizinkan mengubah profil pengguna lain." });
     }
-    const { password: _ignorePw, password_hash: _ignorePwh, token_version: _ignoreTv, has_password: _ignoreHasPw, role: _ignoreRole, ...safeBody } = req.body || {};
-    if (isAdminOrMgr && req.body?.role) safeBody.role = req.body.role;
+    const {
+      password: _ignorePw,
+      password_hash: _ignorePwh,
+      token_version: _ignoreTv,
+      has_password: _ignoreHasPw,
+      role: _ignoreRole,
+      status: _ignoreStatus,
+      is_verified: _ignoreVerified,
+      verified_at: _ignoreVerifiedAt,
+      ...safeBody
+    } = req.body || {};
+    if (isAdminOrMgr) {
+      if (req.body?.role !== undefined) {
+        if (!isValidWorkspaceRole(req.body.role)) {
+          return res.status(400).json({ detail: "Role tidak valid." });
+        }
+        if ((req.body.role === "super_admin" || user.role === "super_admin") && reqUser.role !== "super_admin") {
+          return res.status(403).json({ detail: "Hanya Super Admin yang dapat mengelola akun atau role Super Admin." });
+        }
+        safeBody.role = req.body.role;
+      }
+      if (req.body?.status !== undefined) {
+        if (user.role === "super_admin" && reqUser.role !== "super_admin") {
+          return res.status(403).json({ detail: "Hanya Super Admin yang dapat mengubah status akun Super Admin." });
+        }
+        safeBody.status = req.body.status;
+      }
+    }
     if (safeBody.avatar && !safeBody.picture) safeBody.picture = safeBody.avatar;
     if (safeBody.picture && !safeBody.avatar) safeBody.avatar = safeBody.picture;
     if (safeBody.custom && !safeBody.custom_fields) safeBody.custom_fields = safeBody.custom;
@@ -6291,9 +6333,6 @@ async function startServer() {
         actor_id: CIRCLE_BOT_ID,
       });
     }
-    if (currentSessionUser?.user_id === user.user_id) {
-      currentSessionUser = { ...currentSessionUser, ...user };
-    }
     saveDbToFile(true);
     broadcast({ type: "users:changed", user: sanitizeUser(user) });
     broadcast({ type: "org:changed", units: db.org_units });
@@ -6309,7 +6348,41 @@ async function startServer() {
     }
     const user = db.users.find((u: any) => u.user_id === req.params.id);
     if (!user) return res.status(404).json({ detail: "User not found" });
-    const { password: _ignorePw, password_hash: _ignorePwh, token_version: _ignoreTv, has_password: _ignoreHasPw, ...safeBody } = req.body || {};
+
+    if (reqUser.role === "department_manager") {
+      if (["super_admin", "workspace_admin"].includes(user.role)) {
+        return res.status(403).json({ detail: "Manajer Divisi tidak dapat mengubah akun Admin." });
+      }
+      if (reqUser.department !== "General" && user.department !== reqUser.department) {
+        return res.status(403).json({ detail: "Manajer hanya dapat mengelola anggota divisinya sendiri." });
+      }
+    }
+
+    const {
+      password: _ignorePw,
+      password_hash: _ignorePwh,
+      token_version: _ignoreTv,
+      has_password: _ignoreHasPw,
+      is_verified: _ignoreVerified,
+      verified_at: _ignoreVerifiedAt,
+      ...safeBody
+    } = req.body || {};
+
+    if (safeBody.role !== undefined) {
+      if (!isValidWorkspaceRole(safeBody.role)) {
+        return res.status(400).json({ detail: "Role tidak valid." });
+      }
+      if ((safeBody.role === "super_admin" || user.role === "super_admin") && reqUser.role !== "super_admin") {
+        return res.status(403).json({ detail: "Hanya Super Admin yang dapat menetapkan atau mengubah role Super Admin." });
+      }
+      if (reqUser.role === "department_manager" && ["super_admin", "workspace_admin"].includes(safeBody.role)) {
+        return res.status(403).json({ detail: "Manajer Divisi tidak dapat memberikan role Admin." });
+      }
+    }
+    if (safeBody.status !== undefined && user.role === "super_admin" && reqUser.role !== "super_admin") {
+      return res.status(403).json({ detail: "Hanya Super Admin yang dapat mengubah status akun Super Admin." });
+    }
+
     const wasVerifiedBefore = computeProfileCompletion(user).isVerified;
     Object.assign(user, safeBody);
     syncUserOrgAndDepartment(user, safeBody);
@@ -6327,9 +6400,6 @@ async function startServer() {
         link: `/people/${user.user_id}`,
         actor_id: CIRCLE_BOT_ID,
       });
-    }
-    if (currentSessionUser?.user_id === user.user_id) {
-      currentSessionUser = { ...currentSessionUser, ...user };
     }
     saveDbToFile(true);
     broadcast({ type: "users:changed", user: sanitizeUser(user) });
@@ -6372,9 +6442,6 @@ async function startServer() {
     targetUser.password_updated_at = new Date().toISOString();
     targetUser.token_version = Number(targetUser.token_version || 1) + 1;
     delete targetUser.password;
-    if (currentSessionUser?.user_id === targetUser.user_id) {
-      currentSessionUser = targetUser;
-    }
 
     // Resolve any pending password_reset requests for this user
     (db.access_requests || []).forEach((r: any) => {
@@ -6547,7 +6614,7 @@ async function startServer() {
         conversation_id: conv.id,
         sender_id: CIRCLE_BOT_ID,
         user_id: CIRCLE_BOT_ID,
-        text: `Halo ${manager.name.split(' ')[0]}! Ada permohonan penghapusan karyawan **${targetUser.name}** (${targetUser.department || "General"}) dari ${currentSessionUser?.name || "Admin"}. Silakan tinjau card approval di bawah ini:`,
+        text: `Halo ${manager.name.split(' ')[0]}! Ada permohonan penghapusan karyawan **${targetUser.name}** (${targetUser.department || "General"}) dari ${reqUser.name || "Admin"}. Silakan tinjau card approval di bawah ini:`,
         type: "access_request_card",
         access_request: accessReq,
         created_at: new Date().toISOString()
@@ -6562,18 +6629,27 @@ async function startServer() {
   });
 
   app.post("/api/me/onboarding", (req, res) => {
-    const actor = getReqUser(req) || currentSessionUser;
-    if (actor) {
-      const wasFirstTime = !actor.onboarded;
-      Object.assign(actor, req.body, { onboarded: true });
-      const u = db.users.find((x: any) => x.user_id === actor.user_id);
-      if (u) {
-        Object.assign(u, req.body, { onboarded: true });
-        syncUserOrgAndDepartment(u, req.body);
-      }
-      if (currentSessionUser && currentSessionUser.user_id === actor.user_id) {
-        Object.assign(currentSessionUser, req.body, { onboarded: true });
-      }
+    const actor = getReqUser(req);
+    if (!actor?.user_id) {
+      return res.status(401).json({ detail: "Not authenticated" });
+    }
+    const {
+      password: _igPw,
+      password_hash: _igPwh,
+      token_version: _igTv,
+      role: _igRole,
+      status: _igStatus,
+      is_verified: _igVer,
+      verified_at: _igVerAt,
+      ...safeOnbBody
+    } = req.body || {};
+    const wasFirstTime = !actor.onboarded;
+    Object.assign(actor, safeOnbBody, { onboarded: true });
+    const u = db.users.find((x: any) => x.user_id === actor.user_id);
+    if (u) {
+      Object.assign(u, safeOnbBody, { onboarded: true });
+      syncUserOrgAndDepartment(u, safeOnbBody);
+    }
 
       if (wasFirstTime) {
         const botId = "user_circle_assistant";
@@ -6622,8 +6698,6 @@ async function startServer() {
       saveDbToFile(true);
       broadcast({ type: "users:changed", user: sanitizeUser(u || actor) });
       return res.json(sanitizeUser(u || actor));
-    }
-    res.status(401).json({ detail: "Not authenticated" });
   });
 
   app.get("/api/labels", (req, res) => {
@@ -6631,6 +6705,8 @@ async function startServer() {
   });
 
   app.post("/api/labels", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const { name, color, description } = req.body;
     const lbl = { id: `lbl_${Date.now()}`, name, color, description };
     db.labels.push(lbl);
@@ -6639,6 +6715,8 @@ async function startServer() {
   });
 
   app.patch("/api/labels/:id", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const l = db.labels.find((x: any) => x.id === req.params.id);
     if (l) Object.assign(l, req.body);
     saveDbToFile();
@@ -6646,6 +6724,8 @@ async function startServer() {
   });
 
   app.delete("/api/labels/:id", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     db.labels = db.labels.filter((l: any) => l.id !== req.params.id);
     recordServerDeletedIds([req.params.id]);
     saveDbToFile();
@@ -6653,9 +6733,10 @@ async function startServer() {
   });
 
   app.get("/api/notifications", (req, res) => {
-    const user = getReqUser(req) || currentSessionUser;
+    const user = getReqUser(req);
+    if (!user?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const list = db.notifications || [];
-    const myNotifs = list.filter((n: any) => n.user_id === user?.user_id);
+    const myNotifs = list.filter((n: any) => n.user_id === user.user_id);
     res.json({
       items: myNotifs,
       unread: myNotifs.filter((n: any) => !n.read).length
@@ -6663,16 +6744,19 @@ async function startServer() {
   });
 
   app.post("/api/notifications/:id/read", (req, res) => {
-    const n = (db.notifications || []).find((x: any) => x.id === req.params.id);
+    const user = getReqUser(req);
+    if (!user?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    const n = (db.notifications || []).find((x: any) => x.id === req.params.id && x.user_id === user.user_id);
     if (n) n.read = true;
     saveDbToFile();
     res.json({ success: true });
   });
 
   app.post("/api/notifications/read-all", (req, res) => {
-    const user = getReqUser(req) || currentSessionUser;
+    const user = getReqUser(req);
+    if (!user?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     (db.notifications || []).forEach((n: any) => {
-      if (n.user_id === user?.user_id) n.read = true;
+      if (n.user_id === user.user_id) n.read = true;
     });
     saveDbToFile();
     res.json({ success: true });
@@ -6720,7 +6804,8 @@ async function startServer() {
 
   app.post("/api/notifications/test", (req, res) => {
     const reqUser = getReqUser(req);
-    const userId = reqUser?.user_id || currentSessionUser?.user_id || "user_admin1";
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    const userId = reqUser.user_id;
     const mode = req.body?.mode || "access_request"; // access_request, message, task
 
     let notif: any;
@@ -6820,7 +6905,8 @@ async function startServer() {
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
     const healedOnRead = normalizeDbTasksSaklek();
     if (autoArchiveCheck() > 0 || healedOnRead) saveDbToFile();
-    const user = getReqUser(req) || currentSessionUser;
+    const user = getReqUser(req);
+    if (!user?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     let list = [...db.tasks];
     const { view, project_id, board_id, assignee_id, priority, label, department, item_type, q, month, archived } = req.query;
 
@@ -6976,9 +7062,10 @@ async function startServer() {
   });
 
   app.post("/api/tasks", (req, res) => {
-    const curUser = getReqUser(req) || currentSessionUser;
-    const creatorId = curUser?.user_id || "user_admin1";
-    const creatorName = curUser?.name || "Seseorang";
+    const curUser = getReqUser(req);
+    if (!curUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    const creatorId = curUser.user_id;
+    const creatorName = curUser.name || "Seseorang";
     const nextTaskNum = getNextTaskNumber(db.tasks);
     const taskNum = `TSK-${String(nextTaskNum).padStart(3, '0')}`;
     const reqIds = req.body.requestor_ids || [creatorId];
@@ -7179,7 +7266,7 @@ async function startServer() {
       return res.status(403).json({ detail: "Hanya Super Admin yang diizinkan mengimpor tugas." });
     }
     syncDivisionsToBoards();
-    const actorId = reqUser.user_id || "user_admin1";
+    const actorId = reqUser.user_id;
     const actorName = reqUser.name || "Super Admin";
 
     let items = req.body;
@@ -7484,6 +7571,11 @@ async function startServer() {
 
   // Manual Trigger or Periodic Auto-Archive endpoint
   app.post("/api/tasks/auto-archive", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    if (!["super_admin", "workspace_admin", "department_manager", "project_manager"].includes(reqUser.role)) {
+      return res.status(403).json({ detail: "Hanya Admin / Manajer yang dapat menjalankan auto-archive." });
+    }
     const now = new Date();
     let archivedCount = 0;
     db.tasks.forEach((t: any) => {
@@ -7536,7 +7628,7 @@ async function startServer() {
 
   // Multiple-select delete of archived tasks (or single delete via /api/tasks/:id)
   app.post("/api/tasks/archive/bulk-delete", (req, res) => {
-    const reqUser = getReqUser(req) || currentSessionUser;
+    const reqUser = getReqUser(req);
     if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const rawIds = Array.isArray(req.body?.ids) ? req.body.ids : [];
     const targetIds = new Set(rawIds.map((x: any) => String(x)).filter(Boolean));
@@ -7575,7 +7667,7 @@ async function startServer() {
   });
 
   app.get("/api/tasks/archive/delete-requests", (req, res) => {
-    const reqUser = getReqUser(req) || currentSessionUser;
+    const reqUser = getReqUser(req);
     if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const active = (db.archive_delete_requests || [])
       .filter((r: any) => r && (r.status === "pending" || r.status === "partial"))
@@ -7585,7 +7677,7 @@ async function startServer() {
 
   // Request deleting an entire month folder of archived tasks (requires >= 2 distinct approvals)
   app.post("/api/tasks/archive/delete-month", (req, res) => {
-    const reqUser = getReqUser(req) || currentSessionUser;
+    const reqUser = getReqUser(req);
     if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
 
     const month = String(req.body?.month || "").trim();
@@ -7669,7 +7761,7 @@ async function startServer() {
   });
 
   app.post("/api/tasks/archive/delete-requests/:id/decision", (req, res) => {
-    const reqUser = getReqUser(req) || currentSessionUser;
+    const reqUser = getReqUser(req);
     if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
 
     db.archive_delete_requests = Array.isArray(db.archive_delete_requests) ? db.archive_delete_requests : [];
@@ -7801,12 +7893,14 @@ async function startServer() {
   });
 
   app.post("/api/tasks/bulk", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const { ids, patch } = req.body || {};
     let updated = 0;
     if (Array.isArray(ids) && patch && typeof patch === "object") {
       ids.forEach((id: string) => {
         const t = db.tasks.find((x: any) => x.id === id);
-        if (t) {
+        if (t && isTaskAccessible(t, reqUser)) {
           enforceTaskSaklekDone(t);
           const isLocked = getTaskApprovedList(t).length >= 2;
           const safePatch: any = { ...patch };
@@ -7916,9 +8010,10 @@ async function startServer() {
   });
 
   app.get("/api/tasks/:id", (req, res) => {
+    const user = getReqUser(req);
+    if (!user?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const t = db.tasks.find((x: any) => x.id === req.params.id);
     if (!t) return res.status(404).json({ detail: "Task not found" });
-    const user = getReqUser(req) || currentSessionUser;
     if (!isTaskAccessible(t, user)) {
       return res.status(403).json({ detail: "Akses ditolak. Tugas ini hanya dapat diakses oleh divisi terkait atau anggota terundang." });
     }
@@ -7953,9 +8048,10 @@ async function startServer() {
   });
 
   app.patch("/api/tasks/:id", (req, res) => {
+    const user = getReqUser(req);
+    if (!user?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const t = db.tasks.find((x: any) => x.id === req.params.id);
     if (!t) return res.status(404).json({ detail: "Task not found" });
-    const user = getReqUser(req) || currentSessionUser;
     if (!isTaskAccessible(t, user)) {
       return res.status(403).json({ detail: "Akses ditolak. Anda tidak memiliki izin untuk mengedit tugas divisi lain." });
     }
@@ -7967,8 +8063,8 @@ async function startServer() {
       });
     }
 
-    const actorId = user?.user_id || "user_admin1";
-    const actorName = user?.name || "Anggota Tim";
+    const actorId = user.user_id;
+    const actorName = user.name || "Anggota Tim";
     const getUserName = (uid: string | null | undefined) => {
       if (!uid) return "Belum ditentukan";
       const found = db.users.find((u: any) => u.user_id === uid || u.email === uid);
@@ -8696,13 +8792,17 @@ async function startServer() {
   });
 
   app.post("/api/tasks/:id/checkpoints/:cpId/notify", (req, res) => {
+    const actor = getReqUser(req);
+    if (!actor?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const t = db.tasks.find((x: any) => x.id === req.params.id);
     if (!t) return res.status(404).json({ detail: "Task not found" });
+    if (!isTaskAccessible(t, actor)) {
+      return res.status(403).json({ detail: "Akses ditolak." });
+    }
     const cp = (t.checkpoints || []).find((c: any) => c.id === req.params.cpId);
     if (!cp || !cp.assignee_id) return res.status(400).json({ detail: "Checkpoint belum memiliki PIC" });
 
-    const actor = getReqUser(req) || currentSessionUser;
-    const actorId = actor?.user_id || "user_admin1";
+    const actorId = actor.user_id;
     const readyMsg = `Task "${t.title}" sudah siap dikerjakan, Semangat ya..`;
     cp.notified_ready_for = cp.assignee_id;
 
@@ -8722,9 +8822,10 @@ async function startServer() {
   });
 
   app.delete("/api/tasks/:id", (req, res) => {
+    const user = getReqUser(req);
+    if (!user?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const t = db.tasks.find((x: any) => x.id === req.params.id);
     if (!t) return res.status(404).json({ detail: "Task not found" });
-    const user = getReqUser(req) || currentSessionUser;
     if (!isTaskAccessible(t, user)) {
       return res.status(403).json({ detail: "Akses ditolak. Anda tidak memiliki izin untuk menghapus tugas divisi lain." });
     }
@@ -8743,11 +8844,15 @@ async function startServer() {
   });
 
   app.post("/api/tasks/:id/comments", (req, res) => {
+    const actor = getReqUser(req);
+    if (!actor?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const t = db.tasks.find((x: any) => x.id === req.params.id);
     if (!t) return res.status(404).json({ detail: "Task not found" });
+    if (!isTaskAccessible(t, actor)) {
+      return res.status(403).json({ detail: "Akses ditolak." });
+    }
     t.comments = t.comments || [];
-    const actor = getReqUser(req) || currentSessionUser;
-    const actorId = actor?.user_id || "user_admin1";
+    const actorId = actor.user_id;
 
     const rawText = String(req.body?.text || "");
     const explicitMentions = Array.isArray(req.body?.mention_ids)
@@ -8852,13 +8957,15 @@ async function startServer() {
   });
 
   app.patch("/api/tasks/:id/comments/:commentId", (req, res) => {
+    const actor = getReqUser(req);
+    if (!actor?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const t = db.tasks.find((x: any) => x.id === req.params.id);
     if (!t) return res.status(404).json({ detail: "Task not found" });
+    if (!isTaskAccessible(t, actor)) return res.status(403).json({ detail: "Akses ditolak." });
     const c = (t.comments || []).find((x: any) => x.id === req.params.commentId);
     if (!c) return res.status(404).json({ detail: "Comment not found" });
 
-    const actor = getReqUser(req) || currentSessionUser;
-    const actorId = actor?.user_id || "user_admin1";
+    const actorId = actor.user_id;
     Object.assign(c, req.body);
 
     const cp = c.checkpoint_id ? (t.checkpoints || []).find((x: any) => x.id === c.checkpoint_id) : null;
@@ -8935,8 +9042,9 @@ async function startServer() {
   });
 
   app.post("/api/projects", (req, res) => {
-    const actor = getReqUser(req) || currentSessionUser;
-    const actorUid = actor?.user_id || "user_admin1";
+    const actor = getReqUser(req);
+    if (!actor?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    const actorUid = actor.user_id;
     const nowIso = new Date().toISOString();
     const p: any = {
       id: `prj_${Date.now()}`,
@@ -8973,6 +9081,8 @@ async function startServer() {
   });
 
   app.patch("/api/projects/:id", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const p = db.projects.find((x: any) => x.id === req.params.id);
     if (!p) return res.status(404).json({ detail: "Project not found" });
     Object.assign(p, req.body);
@@ -8995,6 +9105,8 @@ async function startServer() {
   });
 
   app.delete("/api/projects/:id", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const target = db.projects.find((x: any) => x.id === req.params.id);
     db.projects = db.projects.filter((x: any) => x.id !== req.params.id);
     if (target) {
@@ -9010,8 +9122,8 @@ async function startServer() {
 
   app.get("/api/boards", (req, res) => {
     syncDivisionsToBoards();
-    const user = getReqUser(req) || currentSessionUser;
-    if (!user) return res.json(db.boards);
+    const user = getReqUser(req);
+    if (!user?.user_id) return res.status(401).json({ detail: "Unauthorized" });
 
     const counts: Record<string, number> = {};
     (db.tasks || []).forEach((t: any) => {
@@ -9135,7 +9247,7 @@ async function startServer() {
         is_verified: isSpecificDept,
         board_id: b.id,
         type: "group",
-        created_by: actorId || "user_admin1",
+        created_by: actorId || null,
         created_at: new Date().toISOString(),
         member_ids: baseMembers,
         members: baseMembers,
@@ -9162,6 +9274,8 @@ async function startServer() {
   }
 
   app.get("/api/boards/:id/members", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const b = db.boards.find((x: any) => x.id === req.params.id);
     if (!b) return res.status(404).json({ detail: "Board not found" });
 
@@ -9187,9 +9301,10 @@ async function startServer() {
     ]);
 
     const humanList = (db.users || []).filter((u: any) => !u.is_bot && u.role !== "assistant" && u.user_id !== CIRCLE_BOT_ID);
-    const deptUsers = isCollab && b.all_workspace_members !== false
+    const deptUsers = (isCollab && b.all_workspace_members !== false
       ? humanList
-      : humanList.filter((u: any) => String(u.department || "").trim().toLowerCase() === cleanDept);
+      : humanList.filter((u: any) => String(u.department || "").trim().toLowerCase() === cleanDept)
+    ).map((u: any) => sanitizeUser(u));
 
     const invitedIds = Array.isArray(b.invited_member_ids) ? b.invited_member_ids : [];
     const collabExplicitIds = isCollab && Array.isArray(b.member_ids) ? b.member_ids : [];
@@ -9197,7 +9312,7 @@ async function startServer() {
     const invitedUsers = humanList
       .filter((u: any) => extraIds.includes(u.user_id))
       .map((u: any) => ({
-        ...u,
+        ...sanitizeUser(u),
         in_group_chat: groupMemIds.has(u.user_id),
         invite_scope: groupMemIds.has(u.user_id) ? "board_and_chat" : "board_only",
       }));
@@ -9219,11 +9334,12 @@ async function startServer() {
   });
 
   app.post("/api/boards", (req, res) => {
-    const user = getReqUser(req) || currentSessionUser;
+    const user = getReqUser(req);
+    if (!user?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const nowIso = new Date().toISOString();
     const memberIds = Array.isArray(req.body.member_ids) && req.body.member_ids.length > 0
       ? req.body.member_ids
-      : (user ? [user.user_id] : []);
+      : [user.user_id];
     const b: any = {
       id: `brd_${Date.now()}`,
       ...req.body,
@@ -9233,7 +9349,7 @@ async function startServer() {
       all_workspace_members: req.body.all_workspace_members !== false,
       invited_member_ids: req.body.invited_member_ids || memberIds,
       member_ids: memberIds,
-      created_by: user?.user_id || "user_admin1",
+      created_by: user.user_id,
       created_at: nowIso
     };
 
@@ -9251,7 +9367,7 @@ async function startServer() {
         color: b.color || "#60A5FA",
         status: "active",
         progress: 0,
-        owner_id: user?.user_id || "user_admin1",
+        owner_id: user.user_id,
         member_ids: memberIds,
         label_ids: [],
         department: "Semua Divisi",
@@ -9276,6 +9392,8 @@ async function startServer() {
   });
 
   app.patch("/api/boards/:id", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const b = db.boards.find((x: any) => x.id === req.params.id);
     if (!b) return res.status(404).json({ detail: "Board not found" });
     const isOfficialDiv = String(b.id || "").startsWith("brd_div_");
@@ -9302,6 +9420,8 @@ async function startServer() {
   });
 
   app.post("/api/boards/:id/invite", (req, res) => {
+    const actor = getReqUser(req);
+    if (!actor?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const b = db.boards.find((x: any) => x.id === req.params.id);
     if (!b) return res.status(404).json({ detail: "Board not found" });
 
@@ -9318,7 +9438,6 @@ async function startServer() {
     b.member_ids = Array.from(new Set([...(Array.isArray(b.member_ids) ? b.member_ids : []), ...b.invited_member_ids]));
     b.chat_invited_member_ids = Array.isArray(b.chat_invited_member_ids) ? b.chat_invited_member_ids : [];
 
-    const actor = getReqUser(req) || currentSessionUser;
     let joinedGroupName = "";
 
     if (alsoAddGroupChat) {
@@ -9387,6 +9506,8 @@ async function startServer() {
   });
 
   app.post("/api/boards/:id/remove-member", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const b = db.boards.find((x: any) => x.id === req.params.id);
     if (!b) return res.status(404).json({ detail: "Board not found" });
 
@@ -9427,6 +9548,8 @@ async function startServer() {
   });
 
   app.delete("/api/boards/:id", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const target = db.boards.find((b: any) => b.id === req.params.id);
     db.boards = db.boards.filter((b: any) => b.id !== req.params.id);
     if (target && !String(target.id || "").startsWith("brd_div_")) {
@@ -9460,7 +9583,7 @@ async function startServer() {
   };
 
   function buildGroupsBrowseList(reqUser: any) {
-    const userId = reqUser?.user_id || currentSessionUser?.user_id;
+    const userId = reqUser?.user_id;
     const convById = new Map<string, any>();
     for (const c of db.conversations || []) {
       if (c?.id) convById.set(c.id, c);
@@ -9502,11 +9625,12 @@ async function startServer() {
 
   app.get("/api/groups/browse", (req, res) => {
     const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     res.json(buildGroupsBrowseList(reqUser));
   });
 
   app.post("/api/groups", (req, res) => {
-    const reqUser = getReqUser(req) || currentSessionUser;
+    const reqUser = getReqUser(req);
     if (!reqUser?.user_id) {
       return res.status(401).json({ detail: "Autentikasi diperlukan untuk membuat grup." });
     }
@@ -9886,7 +10010,8 @@ async function startServer() {
   }
 
   app.get("/api/stats/team", (req, res) => {
-    const reqUser = getReqUser(req) || currentSessionUser;
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     res.json(
       computeTeamStatsForUser(reqUser, {
         range: (req.query.range as string) || "7d",
@@ -9899,22 +10024,29 @@ async function startServer() {
 
   // Activity & Reminders Endpoints for Dashboard
   app.get("/api/activity", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     res.json(db.activity);
   });
 
   app.get("/api/reminders", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     res.json(db.reminders);
   });
 
   app.post("/api/reminders", (req, res) => {
-    const actor = getReqUser(req) || currentSessionUser;
-    const r = { id: `rem_${Date.now()}`, user_id: actor?.user_id || null, done: false, ...req.body };
+    const actor = getReqUser(req);
+    if (!actor?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    const r = { id: `rem_${Date.now()}`, user_id: actor.user_id, done: false, ...req.body };
     db.reminders.push(r);
     saveDbToFile();
     res.json(r);
   });
 
   app.patch("/api/reminders/:id", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const r = db.reminders.find((x: any) => x.id === req.params.id);
     if (r) Object.assign(r, req.body);
     saveDbToFile();
@@ -9922,6 +10054,8 @@ async function startServer() {
   });
 
   app.delete("/api/reminders/:id", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     db.reminders = db.reminders.filter((r: any) => r.id !== req.params.id);
     recordServerDeletedIds([req.params.id]);
     saveDbToFile();
@@ -9930,11 +10064,18 @@ async function startServer() {
 
   // Org Endpoints
   app.get("/api/org/units", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const sorted = [...(db.org_units || [])].sort((a: any, b: any) => (a.order ?? 999) - (b.order ?? 999));
     res.json(sorted);
   });
 
   app.post("/api/org/units", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    if (!["super_admin", "workspace_admin"].includes(reqUser.role)) {
+      return res.status(403).json({ detail: "Hanya Super Admin / Workspace Admin yang dapat menambah unit organisasi." });
+    }
     db.org_units = Array.isArray(db.org_units) ? db.org_units : [];
     const { member_ids, sync_division = true, ...rest } = req.body || {};
     const name = String(rest.name || "").trim();
@@ -9981,6 +10122,11 @@ async function startServer() {
   });
 
   app.patch("/api/org/units/:id", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    if (!["super_admin", "workspace_admin"].includes(reqUser.role)) {
+      return res.status(403).json({ detail: "Hanya Super Admin / Workspace Admin yang dapat mengubah unit organisasi." });
+    }
     const u = (db.org_units || []).find((x: any) => x.id === req.params.id);
     if (!u) return res.status(404).json({ detail: "Unit tidak ditemukan" });
     const oldDivision = u.division || u.name;
@@ -10038,6 +10184,11 @@ async function startServer() {
   });
 
   app.post("/api/org/units/reorder", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    if (!["super_admin", "workspace_admin"].includes(reqUser.role)) {
+      return res.status(403).json({ detail: "Hanya Super Admin / Workspace Admin yang dapat mengatur urutan unit." });
+    }
     const { unit_id, direction, ordered_ids } = req.body || {};
     db.org_units = Array.isArray(db.org_units) ? db.org_units : [];
 
@@ -10070,6 +10221,11 @@ async function startServer() {
   });
 
   app.post("/api/org/sync-divisions", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    if (!["super_admin", "workspace_admin"].includes(reqUser.role)) {
+      return res.status(403).json({ detail: "Hanya Super Admin / Workspace Admin yang dapat menyinkronkan divisi." });
+    }
     const targetDivs = Array.isArray(req.body?.divisions)
       ? req.body.divisions
       : (db.workspace.divisions || DEFAULT_ALIGNED_DIVISIONS);
@@ -10101,6 +10257,11 @@ async function startServer() {
   });
 
   app.delete("/api/org/units/:id", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    if (!["super_admin", "workspace_admin"].includes(reqUser.role)) {
+      return res.status(403).json({ detail: "Hanya Super Admin / Workspace Admin yang dapat menghapus unit organisasi." });
+    }
     const targetId = req.params.id;
     const reassignTo = req.query.reassign_to ? String(req.query.reassign_to) : null;
     const deletedUnit = (db.org_units || []).find((u: any) => u.id === targetId);
@@ -10151,20 +10312,37 @@ async function startServer() {
   });
 
   app.patch("/api/org/members/:uid", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    if (!["super_admin", "workspace_admin", "department_manager", "project_manager"].includes(reqUser.role)) {
+      return res.status(403).json({ detail: "Hanya Admin / Manajer yang dapat mengubah struktur anggota." });
+    }
     const m = db.users.find((u: any) => u.user_id === req.params.uid);
     if (!m) return res.status(404).json({ detail: "Anggota tidak ditemukan" });
-    Object.assign(m, req.body);
-    syncUserOrgAndDepartment(m, req.body);
-    if (currentSessionUser?.user_id === m.user_id) {
-      currentSessionUser = { ...currentSessionUser, ...m };
-    }
+    const rawPatch = { ...(req.body || {}) };
+    delete rawPatch.role;
+    delete rawPatch.status;
+    delete rawPatch.password;
+    delete rawPatch.password_hash;
+    delete rawPatch.token_version;
+    delete rawPatch.has_password;
+    delete rawPatch.is_verified;
+    delete rawPatch.verified_at;
+    delete rawPatch.user_id;
+    Object.assign(m, rawPatch);
+    syncUserOrgAndDepartment(m, rawPatch);
     saveDbToFile();
-    broadcast({ type: "users:changed", user: m });
+    broadcast({ type: "users:changed", user: sanitizeUser(m) });
     broadcast({ type: "org:changed", units: db.org_units });
-    res.json(m);
+    res.json(sanitizeUser(m));
   });
 
   app.get("/api/org/export", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    if (!["super_admin", "workspace_admin", "department_manager", "project_manager"].includes(reqUser.role)) {
+      return res.status(403).json({ detail: "Hanya Admin / Manajer yang dapat mengekspor struktur organisasi." });
+    }
     const rows = [["Unit ID", "Unit Name", "Division", "Level", "Parent Unit ID", "Head Name", "Members Count"]];
     (db.org_units || []).forEach((u: any) => {
       const head = (db.users || []).find((x: any) => x.user_id === u.head_id);
@@ -10186,6 +10364,11 @@ async function startServer() {
   });
 
   app.post("/api/org/import", upload.single("file"), (req: any, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    if (!["super_admin", "workspace_admin"].includes(reqUser.role)) {
+      return res.status(403).json({ detail: "Hanya Super Admin / Workspace Admin yang dapat mengimpor struktur organisasi." });
+    }
     try {
       const raw = req.file ? req.file.buffer.toString("utf-8") : String(req.body?.csv || "");
       const lines = raw.split(/\r?\n/).map((l: string) => l.trim()).filter(Boolean);
@@ -10332,7 +10515,8 @@ async function startServer() {
   // Post / Feed Endpoints
   app.get("/api/posts", (req, res) => {
     const reqUser = getReqUser(req);
-    const uid = reqUser?.user_id || currentSessionUser?.user_id || "user_admin1";
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    const uid = reqUser.user_id;
     let list = [...(db.posts || [])].filter((p: any) => !p.parent_id);
     const { tag, before } = req.query;
     if (tag) {
@@ -10357,7 +10541,8 @@ async function startServer() {
   app.post("/api/posts", (req, res) => {
     const { text, topic, poll, parent_id, attachments, mention_ids } = req.body;
     const reqUser = getReqUser(req);
-    const uid = reqUser?.user_id || currentSessionUser?.user_id || "user_admin1";
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    const uid = reqUser.user_id;
     let createdPollObj: any = null;
     if (poll && poll.question) {
       db.polls = db.polls || [];
@@ -10540,7 +10725,8 @@ async function startServer() {
 
   app.get("/api/posts/:id", (req, res) => {
     const reqUser = getReqUser(req);
-    const uid = reqUser?.user_id || currentSessionUser?.user_id || "user_admin1";
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    const uid = reqUser.user_id;
     const p = db.posts.find((x: any) => x.id === req.params.id);
     if (!p) return res.status(404).json({ detail: "Post not found" });
     const replies = db.posts
@@ -10552,7 +10738,8 @@ async function startServer() {
 
   app.patch("/api/posts/:id", (req, res) => {
     const reqUser = getReqUser(req);
-    const uid = reqUser?.user_id || currentSessionUser?.user_id || "user_admin1";
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    const uid = reqUser.user_id;
     const p = db.posts.find((x: any) => x.id === req.params.id);
     if (!p) return res.status(404).json({ detail: "Post not found" });
 
@@ -10600,9 +10787,15 @@ async function startServer() {
 
   app.delete("/api/posts/:id", (req, res) => {
     const reqUser = getReqUser(req);
-    const uid = reqUser?.user_id || currentSessionUser?.user_id || "user_admin1";
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    const uid = reqUser.user_id;
     const target = db.posts.find((p: any) => p.id === req.params.id);
-    const parentId = target?.parent_id || null;
+    if (!target) return res.status(404).json({ detail: "Post not found" });
+    const isAdminUser = ["super_admin", "workspace_admin"].includes(reqUser.role);
+    if (target.author_id !== uid && !isAdminUser) {
+      return res.status(403).json({ detail: "Anda tidak memiliki izin untuk menghapus postingan ini." });
+    }
+    const parentId = target.parent_id || null;
     const removedPostIds = (db.posts || [])
       .filter((p: any) => p && (p.id === req.params.id || p.parent_id === req.params.id))
       .map((p: any) => p.id)
@@ -10631,10 +10824,11 @@ async function startServer() {
   });
 
   app.post("/api/posts/:id/like", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const p = db.posts.find((x: any) => x.id === req.params.id);
     if (!p) return res.status(404).json({ detail: "Post not found" });
-    const reqUser = getReqUser(req);
-    const uid = reqUser?.user_id || currentSessionUser?.user_id || "user_admin1";
+    const uid = reqUser.user_id;
     p.likes = p.likes || [];
     if (p.likes.includes(uid)) {
       p.likes = p.likes.filter((id: string) => id !== uid);
@@ -10651,11 +10845,12 @@ async function startServer() {
   });
 
   app.post("/api/posts/:id/react", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const p = db.posts.find((x: any) => x.id === req.params.id);
     if (!p) return res.status(404).json({ detail: "Post not found" });
     const { emoji } = req.body;
-    const reqUser = getReqUser(req);
-    const uid = reqUser?.user_id || currentSessionUser?.user_id || "user_admin1";
+    const uid = reqUser.user_id;
     p.reactions = p.reactions || {};
     p.reactions[emoji] = p.reactions[emoji] || [];
     if (p.reactions[emoji].includes(uid)) {
@@ -10671,6 +10866,8 @@ async function startServer() {
   });
 
   app.post("/api/upload", upload.single("file"), async (req: any, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     if (!req.file) {
       const fileId = `file_${Date.now()}`;
       return res.json({ id: fileId, name: "upload.png", url: `/api/files/${fileId}` });
@@ -10886,8 +11083,11 @@ async function startServer() {
 
   // Meetings & Schedule API (Integrated with Google Calendar, Isolated Per User Account)
   app.get("/api/meetings", (req, res) => {
-    const reqUser = getReqUser(req) || currentSessionUser;
-    const requestedUid = String(req.query.user_id || reqUser?.user_id || "").trim();
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    const rawRequestedUid = String(req.query.user_id || "").trim();
+    const isAdminUser = ["super_admin", "workspace_admin"].includes(reqUser.role);
+    const requestedUid = rawRequestedUid && isAdminUser ? rawRequestedUid : reqUser.user_id;
     const targetUserObj =
       (db.users || []).find((u: any) => u && u.user_id === requestedUid) || reqUser;
     const targetEmail = String(targetUserObj?.email || "").toLowerCase().trim();
@@ -10897,8 +11097,9 @@ async function startServer() {
 
   app.post("/api/meetings/connect-gcal", (req, res) => {
     const reqUser = getReqUser(req);
-    const uid = reqUser?.user_id || currentSessionUser?.user_id || "user_admin1";
-    const email = String(req.body?.email || reqUser?.email || currentSessionUser?.email || "be.creativestudio21@gmail.com").trim();
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    const uid = reqUser.user_id;
+    const email = String(req.body?.email || reqUser.email || "").trim();
     db.meetings = Array.isArray(db.meetings) ? db.meetings : [];
     db.deleted_meeting_ids = Array.isArray(db.deleted_meeting_ids) ? db.deleted_meeting_ids : [];
     db.deleted_gcal_ids = Array.isArray(db.deleted_gcal_ids) ? db.deleted_gcal_ids : [];
@@ -10988,8 +11189,9 @@ async function startServer() {
 
   app.post("/api/meetings/sync-gcal", (req, res) => {
     const reqUser = getReqUser(req);
-    const uid = reqUser?.user_id || currentSessionUser?.user_id || "user_admin1";
-    const userEmail = String(reqUser?.email || currentSessionUser?.email || "").toLowerCase().trim();
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    const uid = reqUser.user_id;
+    const userEmail = String(reqUser.email || "").toLowerCase().trim();
     const incoming = Array.isArray(req.body?.events) ? req.body.events : [];
     db.meetings = Array.isArray(db.meetings) ? db.meetings : [];
     db.deleted_meeting_ids = Array.isArray(db.deleted_meeting_ids) ? db.deleted_meeting_ids : [];
@@ -11210,9 +11412,74 @@ async function startServer() {
     return events;
   }
 
+  function isPrivateOrLocalIp(ip: string): boolean {
+    const clean = String(ip || "").trim().toLowerCase();
+    if (!clean) return true;
+    if (clean.startsWith("::ffff:")) {
+      return isPrivateOrLocalIp(clean.slice(7));
+    }
+    if (net.isIPv4(clean)) {
+      const parts = clean.split(".").map(Number);
+      if (parts.length !== 4 || parts.some((n) => isNaN(n))) return true;
+      const [a, b] = parts;
+      if (a === 0 || a === 10 || a === 127) return true;
+      if (a === 169 && b === 254) return true;
+      if (a === 172 && b >= 16 && b <= 31) return true;
+      if (a === 192 && b === 168) return true;
+      if (a === 100 && b >= 64 && b <= 127) return true;
+      if (a >= 224) return true;
+      return false;
+    }
+    if (net.isIPv6(clean)) {
+      if (clean === "::" || clean === "::1") return true;
+      if (clean.startsWith("fe80:") || clean.startsWith("fec0:")) return true;
+      if (clean.startsWith("fc") || clean.startsWith("fd")) return true;
+      return false;
+    }
+    return true;
+  }
+
+  async function assertSafeExternalUrl(rawUrl: string): Promise<URL> {
+    let parsed: URL;
+    try {
+      parsed = new URL(rawUrl);
+    } catch {
+      throw new Error("URL tidak valid.");
+    }
+    if (!["https:", "http:"].includes(parsed.protocol)) {
+      throw new Error("Hanya protokol HTTP/HTTPS yang diizinkan.");
+    }
+    if (parsed.username || parsed.password) {
+      throw new Error("URL tidak boleh mengandung kredensial.");
+    }
+    const host = parsed.hostname.toLowerCase();
+    if (
+      !host ||
+      host === "localhost" ||
+      host.endsWith(".localhost") ||
+      host.endsWith(".local") ||
+      host.endsWith(".internal") ||
+      host === "metadata.google.internal"
+    ) {
+      throw new Error("Host internal atau localhost tidak diizinkan.");
+    }
+    if (net.isIP(host)) {
+      if (isPrivateOrLocalIp(host)) {
+        throw new Error("Alamat IP lokal/privat tidak diizinkan.");
+      }
+      return parsed;
+    }
+    const resolved = await dns.promises.lookup(host, { all: true }).catch(() => []);
+    if (!resolved.length || resolved.some((r) => isPrivateOrLocalIp(r.address))) {
+      throw new Error("Tujuan URL mengarah ke jaringan privat/internal dan diblokir demi keamanan.");
+    }
+    return parsed;
+  }
+
   app.get("/api/meetings/ics-config", (req, res) => {
     const reqUser = getReqUser(req);
-    const uid = reqUser?.user_id || currentSessionUser?.user_id || "user_admin1";
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    const uid = reqUser.user_id;
     const prefs = (db.user_preferences && db.user_preferences[uid]) || {};
     res.json({
       ics_url: prefs.gcal_ics_url || "",
@@ -11262,7 +11529,8 @@ async function startServer() {
   app.post("/api/meetings/import-ics", async (req, res) => {
     try {
       const reqUser = getReqUser(req);
-      const uid = reqUser?.user_id || currentSessionUser?.user_id || "user_admin1";
+      if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+      const uid = reqUser.user_id;
       let { ics_url, ics_text } = req.body || {};
 
       if (ics_url && typeof ics_url === "string") {
@@ -11272,7 +11540,9 @@ async function startServer() {
             detail: "Format Link / Email tidak valid. Masukkan 'Secret address in iCal format' (https://calendar.google.com/calendar/ical/.../basic.ics) dari Google Calendar Settings."
           });
         }
+        await assertSafeExternalUrl(targetUrl);
         const resp = await fetch(targetUrl, {
+          redirect: "error",
           headers: { "User-Agent": "ASLI-Workspace-Calendar-Sync/1.0" }
         });
         if (!resp.ok) {
@@ -11307,7 +11577,7 @@ async function startServer() {
       const deletedIds = new Set([...db.deleted_meeting_ids, ...(db.deleted_entity_ids || [])]);
       const deletedSet = new Set(db.deleted_gcal_ids);
       const deletedKeys = new Set(db.deleted_meeting_keys);
-      const userEmail = String(reqUser?.email || currentSessionUser?.email || "").toLowerCase().trim();
+      const userEmail = String(reqUser.email || "").toLowerCase().trim();
 
       const emailToUserId = new Map<string, string>();
       (db.users || []).forEach((u: any) => {
@@ -11399,7 +11669,8 @@ async function startServer() {
 
   app.post("/api/meetings", (req, res) => {
     const reqUser = getReqUser(req);
-    const uid = reqUser?.user_id || currentSessionUser?.user_id || "user_admin1";
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    const uid = reqUser.user_id;
     const { id: clientId, title, description, date, start_time, end_time, location, meet_link, attendee_ids, gcal_synced, gcal_event_id } = req.body;
     const m = {
       id: clientId || `mtg_${Date.now()}`,
@@ -11451,6 +11722,8 @@ async function startServer() {
   });
 
   app.delete("/api/meetings/:id", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const paramId = req.params.id;
     const qGcal = req.query.gcal_event_id ? String(req.query.gcal_event_id) : "";
     const qTitle = req.query.title ? String(req.query.title) : "";
@@ -11509,6 +11782,8 @@ async function startServer() {
   });
 
   app.patch("/api/meetings/:id", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const m = (db.meetings || []).find((x: any) => x.id === req.params.id);
     if (!m) return res.status(404).json({ detail: "Meeting not found" });
     Object.assign(m, req.body);
@@ -12062,7 +12337,23 @@ async function startServer() {
     }
     saveDbToFile(true);
 
-    broadcast({ type: "message:new", data: { ...msg, member_ids: mems, conversation_type: conv.type, conversation_name: conv.name } });
+    const notifiedUserIds =
+      conv.type === "dm"
+        ? mems.filter((targetUid: string) => Boolean(targetUid) && targetUid !== sender_id && targetUid !== CIRCLE_BOT_ID)
+        : conv.type === "group"
+        ? notifyMentionTargets.filter((uid: string) => uid && uid !== sender_id)
+        : [];
+
+    broadcast({
+      type: "message:new",
+      data: {
+        ...msg,
+        member_ids: mems,
+        conversation_type: conv.type,
+        conversation_name: conv.name,
+        notified_user_ids: notifiedUserIds,
+      },
+    });
 
     const senderSafe = senderUser ? sanitizeUser(senderUser) : undefined;
     const msgPreview =
@@ -12221,13 +12512,14 @@ async function startServer() {
   });
 
   app.post("/api/conversations/:id/read", (req, res) => {
-    const reqUser = getReqUser(req) || currentSessionUser;
-    const userId = reqUser?.user_id || "user_admin1";
+    const reqUser = getReqUser(req);
+    const userId = reqUser?.user_id;
+    if (!userId) return res.status(401).json({ detail: "Unauthorized" });
     const conv = db.conversations.find((x: any) => x.id === req.params.id);
     if (conv) {
       conv.reads = conv.reads || {};
       conv.reads[userId] = Date.now();
-      conv.unread = 0;
+      if (conv.type === "dm") conv.unread = 0;
       saveDbToFile();
     }
     broadcast({ type: "read", data: { conversation_id: req.params.id, user_id: userId, at: Date.now() } });
@@ -12235,15 +12527,18 @@ async function startServer() {
   });
 
   app.post("/api/conversations/:id/mute", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     res.json({ success: true });
   });
 
   app.post("/api/messages/:id/react", (req, res) => {
+    const reqUser = getReqUser(req);
+    const userId = reqUser?.user_id;
+    if (!userId) return res.status(401).json({ detail: "Unauthorized" });
     const msg = db.messages.find((m: any) => m.id === req.params.id);
     if (!msg) return res.status(404).json({ detail: "Message not found" });
     const { emoji } = req.body;
-    const reqUser = getReqUser(req) || currentSessionUser;
-    const userId = reqUser?.user_id || "user_admin1";
     msg.reactions = msg.reactions || {};
     msg.reactions[emoji] = msg.reactions[emoji] || [];
     if (msg.reactions[emoji].includes(userId)) {
@@ -12258,6 +12553,8 @@ async function startServer() {
   });
 
   app.post("/api/messages/:id/pin", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const msg = db.messages.find((m: any) => m.id === req.params.id);
     if (!msg) return res.status(404).json({ detail: "Message not found" });
     msg.pinned = !msg.pinned;
@@ -12267,8 +12564,14 @@ async function startServer() {
   });
 
   app.patch("/api/messages/:id", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const msg = db.messages.find((m: any) => m.id === req.params.id);
     if (!msg) return res.status(404).json({ detail: "Message not found" });
+    const ownerId = msg.sender_id || msg.user_id;
+    if (ownerId !== reqUser.user_id) {
+      return res.status(403).json({ detail: "Anda hanya dapat mengedit pesan milik Anda sendiri." });
+    }
     if (req.body.text !== undefined) {
       msg.text = req.body.text;
       msg.edited = true;
@@ -12279,8 +12582,15 @@ async function startServer() {
   });
 
   app.delete("/api/messages/:id", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const msg = db.messages.find((m: any) => m.id === req.params.id);
     if (!msg) return res.status(404).json({ detail: "Message not found" });
+    const ownerId = msg.sender_id || msg.user_id;
+    const isAdminUser = ["super_admin", "workspace_admin"].includes(reqUser.role);
+    if (ownerId !== reqUser.user_id && !isAdminUser) {
+      return res.status(403).json({ detail: "Anda tidak memiliki izin untuk menghapus pesan ini." });
+    }
     msg.deleted = true;
     msg.text = "";
     saveDbToFile();
@@ -12389,7 +12699,7 @@ async function startServer() {
   });
 
   app.post("/api/groups/:id/join", (req, res) => {
-    const reqUser = getReqUser(req) || currentSessionUser;
+    const reqUser = getReqUser(req);
     const userId = reqUser?.user_id;
     if (!userId) return res.status(401).json({ detail: "Unauthorized" });
 
@@ -12538,7 +12848,7 @@ async function startServer() {
 
   // Group Invitations (required for Division/Department groups, also usable for Private/Project groups)
   app.post("/api/groups/:id/invite", (req, res) => {
-    const reqUser = getReqUser(req) || currentSessionUser;
+    const reqUser = getReqUser(req);
     if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
 
     const primary = (db.groups || []).find((x: any) => x.id === req.params.id) || (db.conversations || []).find((x: any) => x.id === req.params.id);
@@ -12614,7 +12924,7 @@ async function startServer() {
   });
 
   app.post("/api/groups/:id/accept-invite", (req, res) => {
-    const reqUser = getReqUser(req) || currentSessionUser;
+    const reqUser = getReqUser(req);
     const userId = reqUser?.user_id;
     if (!userId) return res.status(401).json({ detail: "Unauthorized" });
 
@@ -12678,7 +12988,7 @@ async function startServer() {
   });
 
   app.post("/api/groups/:id/decline-invite", (req, res) => {
-    const reqUser = getReqUser(req) || currentSessionUser;
+    const reqUser = getReqUser(req);
     const userId = reqUser?.user_id;
     if (!userId) return res.status(401).json({ detail: "Unauthorized" });
 
@@ -12699,7 +13009,8 @@ async function startServer() {
   });
 
   app.delete("/api/groups/:id/invitations/:userId", (req, res) => {
-    const reqUser = getReqUser(req) || currentSessionUser;
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const primary = (db.groups || []).find((x: any) => x.id === req.params.id) || (db.conversations || []).find((x: any) => x.id === req.params.id);
     if (!primary) return res.status(404).json({ detail: "Grup tidak ditemukan." });
     if (!isGroupAdmin(primary, reqUser)) {
@@ -12722,7 +13033,7 @@ async function startServer() {
   });
 
   app.post("/api/groups/:id/join-requests/:userId/approve", (req, res) => {
-    const reqUser = getReqUser(req) || currentSessionUser;
+    const reqUser = getReqUser(req);
     if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
 
     const targetUid = req.params.userId;
@@ -12773,7 +13084,7 @@ async function startServer() {
   });
 
   app.post("/api/groups/:id/join-requests/:userId/reject", (req, res) => {
-    const reqUser = getReqUser(req) || currentSessionUser;
+    const reqUser = getReqUser(req);
     if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
 
     const targetUid = req.params.userId;
@@ -12811,7 +13122,8 @@ async function startServer() {
   });
 
   app.post("/api/groups/:id/members", (req, res) => {
-    const reqUser = getReqUser(req) || currentSessionUser;
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const primary = (db.groups || []).find((x: any) => x.id === req.params.id) || (db.conversations || []).find((x: any) => x.id === req.params.id);
     if (!primary) return res.status(404).json({ detail: "Grup tidak ditemukan." });
     if (!isGroupAdmin(primary, reqUser)) {
@@ -12875,7 +13187,7 @@ async function startServer() {
   });
 
   app.post("/api/groups/:id/leave", (req, res) => {
-    const reqUser = getReqUser(req) || currentSessionUser;
+    const reqUser = getReqUser(req);
     const userId = reqUser?.user_id;
     if (!userId) return res.status(401).json({ detail: "Unauthorized" });
 
@@ -12913,7 +13225,8 @@ async function startServer() {
   });
 
   app.patch("/api/groups/:id", (req, res) => {
-    const reqUser = getReqUser(req) || currentSessionUser;
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const primary = (db.groups || []).find((x: any) => x.id === req.params.id) || (db.conversations || []).find((x: any) => x.id === req.params.id);
     if (!primary) return res.status(404).json({ detail: "Grup tidak ditemukan." });
     if (!isGroupAdmin(primary, reqUser)) {
@@ -12950,7 +13263,8 @@ async function startServer() {
   });
 
   app.delete("/api/groups/:id", (req, res) => {
-    const reqUser = getReqUser(req) || currentSessionUser;
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const targetGroup = (db.groups || []).find((x: any) => x.id === req.params.id) || (db.conversations || []).find((x: any) => x.id === req.params.id);
     if (targetGroup) {
       const isOfficialDept = String(targetGroup.id || "").startsWith("group_official_") || Boolean(targetGroup.is_verified);
@@ -13163,25 +13477,11 @@ async function startServer() {
   app.get("/api/polls/:id", (req, res) => {
     db.polls = db.polls || [];
     const reqUser = getReqUser(req);
-    const uid = reqUser?.user_id || currentSessionUser?.user_id || "user_admin1";
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    const uid = reqUser.user_id;
     const found = db.polls.find((p: any) => p.id === req.params.id);
     if (!found) {
-      return res.json({
-        id: req.params.id,
-        question: "Polling Tim",
-        status: "open",
-        multiple: false,
-        anonymous: false,
-        allow_change: true,
-        options: [
-          { id: "opt_1", text: "Setuju" },
-          { id: "opt_2", text: "Perlu Diskusi" }
-        ],
-        counts: { opt_1: 1, opt_2: 0 },
-        voters: { opt_1: [uid], opt_2: [] },
-        my_vote: [],
-        total_votes: 1
-      });
+      return res.status(404).json({ detail: "Poll tidak ditemukan" });
     }
     res.json(formatPollForUser(found, uid));
   });
@@ -13189,7 +13489,8 @@ async function startServer() {
   app.post("/api/polls/:id/vote", (req, res) => {
     db.polls = db.polls || [];
     const reqUser = getReqUser(req);
-    const uid = reqUser?.user_id || currentSessionUser?.user_id || "user_admin1";
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    const uid = reqUser.user_id;
     const found = db.polls.find((p: any) => p.id === req.params.id);
     if (!found) return res.status(404).json({ detail: "Poll tidak ditemukan" });
     found.votes_by_user = found.votes_by_user || {};
@@ -13215,9 +13516,24 @@ async function startServer() {
   app.post("/api/conversations/:id/polls", (req, res) => {
     db.polls = db.polls || [];
     const reqUser = getReqUser(req);
-    const uid = reqUser?.user_id || currentSessionUser?.user_id || "user_admin1";
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    const uid = reqUser.user_id;
     const body = req.body || {};
     const rawOpts = Array.isArray(body.options) ? body.options.filter((x: any) => String(x || "").trim()) : [];
+    let conv = db.conversations.find((c: any) => c.id === req.params.id);
+    if (!conv) {
+      const grp = (db.groups || []).find((g: any) => g.id === req.params.id);
+      if (grp) {
+        conv = { ...grp, type: "group" };
+        db.conversations.push(conv);
+      }
+    }
+    if (!conv) return res.status(404).json({ detail: "Percakapan tidak ditemukan" });
+    const mems = Array.isArray(conv?.member_ids) ? conv.member_ids : (Array.isArray(conv?.members) ? conv.members : []);
+    const isAdmin = ["super_admin", "workspace_admin"].includes(reqUser.role);
+    if (!isAdmin && mems.length > 0 && !mems.includes(uid)) {
+      return res.status(403).json({ detail: "Anda bukan anggota percakapan ini." });
+    }
     const newPoll = {
       id: `poll_${Date.now()}`,
       conversation_id: req.params.id,
@@ -13236,15 +13552,7 @@ async function startServer() {
     };
     db.polls.push(newPoll);
     const formatted = formatPollForUser(newPoll, uid);
-    let conv = db.conversations.find((c: any) => c.id === req.params.id);
-    if (!conv) {
-      const grp = (db.groups || []).find((g: any) => g.id === req.params.id);
-      if (grp) {
-        conv = { ...grp, type: "group" };
-        db.conversations.push(conv);
-      }
-    }
-    const mems = Array.isArray(conv?.member_ids) ? conv.member_ids : (Array.isArray(conv?.members) ? conv.members : [uid]);
+    const targetMems = mems.length > 0 ? mems : [uid];
     const msg = {
       id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       conversation_id: req.params.id,
@@ -13258,24 +13566,24 @@ async function startServer() {
       created_at: new Date().toISOString()
     };
     db.messages.push(msg);
-    if (conv) {
-      conv.last_message_preview = msg.text;
-      conv.last_message_at = msg.created_at;
-      conv.reads = conv.reads || {};
-      conv.reads[uid] = Date.now();
-    }
+    conv.last_message_preview = msg.text;
+    conv.last_message_at = msg.created_at;
+    conv.reads = conv.reads || {};
+    conv.reads[uid] = Date.now();
     saveDbToFile();
-    broadcast({ type: "message:new", data: { ...msg, member_ids: mems } });
+    broadcast({ type: "message:new", data: { ...msg, member_ids: targetMems } });
     res.json({ ...formatted, poll: formatted, message: msg });
   });
 
   app.post("/api/tasks/:id/share", (req, res) => {
+    const actor = getReqUser(req);
+    if (!actor?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const task = db.tasks.find((t: any) => t.id === req.params.id);
     if (!task) return res.status(404).json({ detail: "Task not found" });
+    if (!isTaskAccessible(task, actor)) return res.status(403).json({ detail: "Anda tidak memiliki akses ke tugas ini." });
     const { conversation_id } = req.body;
-    const actor = getReqUser(req) || currentSessionUser;
-    const actorId = actor?.user_id || "user_admin1";
-    const actorName = actor?.name || "User";
+    const actorId = actor.user_id;
+    const actorName = actor.name || "User";
     
     enforceTaskSaklekDone(task);
     const existingApproved = getTaskApprovedList(task);
@@ -13348,12 +13656,14 @@ async function startServer() {
 
   // Approval endpoint: Requires 2 distinct approvals to reach 100% and move to done
   app.post("/api/tasks/:id/approval", (req, res) => {
+    const actor = getReqUser(req);
+    if (!actor?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const task = db.tasks.find((t: any) => t.id === req.params.id);
     if (!task) return res.status(404).json({ detail: "Task not found" });
+    if (!isTaskAccessible(task, actor)) return res.status(403).json({ detail: "Anda tidak memiliki akses ke tugas ini." });
     const { decision, note } = req.body;
-    const actor = getReqUser(req) || currentSessionUser;
-    const userId = actor?.user_id || "user_admin1";
-    const actorName = actor?.name || "User";
+    const userId = actor.user_id;
+    const actorName = actor.name || "User";
 
     enforceTaskSaklekDone(task);
     const prevApproved = getTaskApprovedList(task);
@@ -13495,11 +13805,17 @@ async function startServer() {
 
   // Task Automations CRUD & Run
   app.get("/api/task-automations", (req, res) => {
+    const actor = getReqUser(req);
+    if (!actor?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     res.json(db.task_automations || []);
   });
 
   app.post("/api/task-automations", (req, res) => {
-    const actor = getReqUser(req) || currentSessionUser;
+    const actor = getReqUser(req);
+    if (!actor?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    if (!["super_admin", "workspace_admin", "department_manager", "project_manager"].includes(actor.role)) {
+      return res.status(403).json({ detail: "Hanya Admin / Manajer yang dapat mengelola otomatisasi tugas." });
+    }
     const {
       name,
       day,
@@ -13549,7 +13865,7 @@ async function startServer() {
       prefix: resolvedPrefix,
       count: Math.max(1, Number(count) || 3),
       board_id: resolvedBoardId,
-      assignee_id: assignee_id || actor?.user_id || "user_admin1",
+      assignee_id: assignee_id || actor.user_id,
       priority: priority || "medium",
       checkpoints: normalizedCheckpoints,
       active: req.body.active !== false,
@@ -13562,6 +13878,11 @@ async function startServer() {
   });
 
   app.delete("/api/task-automations/:id", (req, res) => {
+    const actor = getReqUser(req);
+    if (!actor?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    if (!["super_admin", "workspace_admin", "department_manager", "project_manager"].includes(actor.role)) {
+      return res.status(403).json({ detail: "Hanya Admin / Manajer yang dapat menghapus otomatisasi tugas." });
+    }
     db.task_automations = (db.task_automations || []).filter((a: any) => a.id !== req.params.id);
     recordServerDeletedIds([req.params.id]);
     saveDbToFile();
@@ -13569,7 +13890,8 @@ async function startServer() {
   });
 
   app.post("/api/task-automations/:id/run", (req, res) => {
-    const actor = getReqUser(req) || currentSessionUser;
+    const actor = getReqUser(req);
+    if (!actor?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const rule = (db.task_automations || []).find((a: any) => a.id === req.params.id);
     if (!rule) return res.status(404).json({ detail: "Aturan otomatisasi tidak ditemukan" });
 
@@ -13587,7 +13909,7 @@ async function startServer() {
         (brandDisplay && String(l.name || "").trim().toLowerCase() === brandDisplay.toLowerCase())
     );
     const resolvedLabelId = matchedLabel?.id || rule.brand_label_id || db.labels?.[0]?.id || "lbl_asliri";
-    const resolvedAssignee = rule.assignee_id || actor?.user_id || "user_admin1";
+    const resolvedAssignee = rule.assignee_id || actor.user_id;
     const checkpointTitles =
       Array.isArray(rule.checkpoints) && rule.checkpoints.length > 0
         ? rule.checkpoints
@@ -13610,8 +13932,8 @@ async function startServer() {
         project_id: db.projects?.[0]?.id || null,
         label_ids: [resolvedLabelId].filter(Boolean),
         deadline: new Date(Date.now() + 86400000 * 4).toISOString(),
-        requestor_ids: [actor?.user_id || "user_admin1"],
-        reviewer_ids: [actor?.user_id || "user_admin1"],
+        requestor_ids: [actor.user_id],
+        reviewer_ids: [actor.user_id],
         approvals: { needed: 2, approved_by: [], status: "pending" },
         checkpoints: checkpointTitles.map((cpTitle: any, cpIdx: number) => ({
           id: `cp_${Date.now()}_${i}_${cpIdx + 1}`,
@@ -13634,8 +13956,8 @@ async function startServer() {
 
     db.audit_logs.unshift({
       id: `log_${Date.now()}`,
-      actor_id: actor?.user_id || "user_admin1",
-      actor_name: actor?.name || "User",
+      actor_id: actor.user_id,
+      actor_name: actor.name || "User",
       action: `menjalankan otomatisasi kartu: membuat ${createdList.length} kartu template "${rule.name}"`,
       created_at: new Date().toISOString()
     });
@@ -13730,6 +14052,11 @@ async function startServer() {
   });
 
   const handleTaskConfig = (req: any, res: any) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    if (!["super_admin", "workspace_admin"].includes(reqUser.role)) {
+      return res.status(403).json({ detail: "Hanya Super Admin / Workspace Admin yang dapat mengubah konfigurasi tugas." });
+    }
     if (req.body.task_statuses) db.workspace.task_statuses = req.body.task_statuses;
     if (req.body.task_fields) db.workspace.task_fields = req.body.task_fields;
     saveDbToFile();
@@ -13740,6 +14067,11 @@ async function startServer() {
   app.patch("/api/settings/task-config", handleTaskConfig);
 
   const handleProfileFields = (req: any, res: any) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    if (!["super_admin", "workspace_admin"].includes(reqUser.role)) {
+      return res.status(403).json({ detail: "Hanya Super Admin / Workspace Admin yang dapat mengubah konfigurasi profil." });
+    }
     if (req.body.fields) db.workspace.profile_fields = req.body.fields;
     if (req.body.field_visibility) db.workspace.field_visibility = req.body.field_visibility;
     saveDbToFile();
@@ -13751,6 +14083,10 @@ async function startServer() {
 
   app.post("/api/reports/weekly/test", async (req, res) => {
     const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    if (!["super_admin", "workspace_admin", "department_manager", "project_manager"].includes(reqUser.role)) {
+      return res.status(403).json({ detail: "Hanya Admin / Manajer yang dapat mengirim laporan mingguan." });
+    }
     const {
       recipient_ids,
       recipient_roles,
@@ -13860,7 +14196,7 @@ async function startServer() {
       ])
     );
     const realEmailTargets = allRecipients.filter((em) => !em.endsWith(".local"));
-    const fallbackEmail = reqUser?.email || currentSessionUser?.email || "be.creativestudio21@gmail.com";
+    const fallbackEmail = reqUser.email || "be.creativestudio21@gmail.com";
     const finalEmailRecipients = realEmailTargets.length > 0 ? realEmailTargets : [fallbackEmail];
 
     const boardRowsHtml = (db.boards || [])
@@ -14055,7 +14391,7 @@ async function startServer() {
     const progress = total > 0 ? Math.round((doneCount / total) * 100) : (n?.completed ? 100 : 0);
     return {
       id: String(n?.id || `note_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`),
-      user_id: String(n?.user_id || "user_admin1"),
+      user_id: String(n?.user_id || ""),
       created_by_name: String(n?.created_by_name || ""),
       title: String(n?.title || "Catatan").trim() || "Catatan",
       content: typeof n?.content === "string" ? n.content : items.map((i: any) => i.text).join("\n"),
@@ -14767,6 +15103,8 @@ async function startServer() {
   });
 
   app.post("/api/item-types", (req, res) => {
+    const actor = getReqUser(req);
+    if (!actor?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     db.workspace.item_types = db.workspace.item_types || [];
     const name = (req.body.name || "").trim();
     if (!name) return res.status(400).json({ error: "Nama item tidak boleh kosong" });
@@ -14790,15 +15128,16 @@ async function startServer() {
   });
 
   const handlePrefsUpdate = (req: any, res: any) => {
-    const actor = getReqUser(req) || currentSessionUser;
-    const uid = actor?.user_id || "default";
-    if (req.body?.custom_copywriting !== undefined && (!actor || actor.role !== "super_admin")) {
+    const actor = getReqUser(req);
+    if (!actor?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    const uid = actor.user_id;
+    if (req.body?.custom_copywriting !== undefined && actor.role !== "super_admin") {
       return res.status(403).json({
         detail: "Hanya Super Admin yang dapat mengubah copywriting aplikasi.",
       });
     }
     db.prefs[uid] = { ...(db.prefs[uid] || {}), ...req.body };
-    if (req.body?.custom_copywriting !== undefined && actor?.role === "super_admin") {
+    if (req.body?.custom_copywriting !== undefined && actor.role === "super_admin") {
       db.workspace.custom_copywriting = req.body.custom_copywriting;
       broadcast({ type: "workspace:changed" });
     }
@@ -14824,14 +15163,17 @@ async function startServer() {
 
   // Google Drive Folder Shortcuts Directory CRUD
   app.get("/api/drive-shortcuts", (req, res) => {
+    const actor = getReqUser(req);
+    if (!actor?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     if (!Array.isArray(db.drive_shortcuts)) db.drive_shortcuts = [...INITIAL_DRIVE_SHORTCUTS];
     res.json(db.drive_shortcuts);
   });
 
   app.post("/api/drive-shortcuts", (req, res) => {
+    const actor = getReqUser(req);
+    if (!actor?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     if (!Array.isArray(db.drive_shortcuts)) db.drive_shortcuts = [...INITIAL_DRIVE_SHORTCUTS];
-    const actor = getReqUser(req) || currentSessionUser;
-    const actorId = actor?.user_id || "user_admin1";
+    const actorId = actor.user_id;
     const body = req.body || {};
     const now = new Date().toISOString();
     const item = {
@@ -14851,7 +15193,7 @@ async function startServer() {
       allowed_user_ids: Array.isArray(body.allowed_user_ids)
         ? body.allowed_user_ids
         : [actorId],
-      created_by: body.created_by || actorId,
+      created_by: actorId,
       created_at: body.created_at || now,
       updated_at: now
     };
@@ -14873,9 +15215,10 @@ async function startServer() {
   });
 
   app.patch("/api/drive-shortcuts/:id", (req, res) => {
+    const actor = getReqUser(req);
+    if (!actor?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     if (!Array.isArray(db.drive_shortcuts)) db.drive_shortcuts = [...INITIAL_DRIVE_SHORTCUTS];
-    const actor = getReqUser(req) || currentSessionUser;
-    const actorId = actor?.user_id || "user_admin1";
+    const actorId = actor.user_id;
     const idx = db.drive_shortcuts.findIndex((s: any) => s.id === req.params.id);
     if (idx === -1) return res.status(404).json({ detail: "Shortcut tidak ditemukan" });
     const prev = db.drive_shortcuts[idx];
@@ -14898,9 +15241,10 @@ async function startServer() {
   });
 
   app.delete("/api/drive-shortcuts/:id", (req, res) => {
+    const actor = getReqUser(req);
+    if (!actor?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     if (!Array.isArray(db.drive_shortcuts)) db.drive_shortcuts = [...INITIAL_DRIVE_SHORTCUTS];
-    const actor = getReqUser(req) || currentSessionUser;
-    const actorId = actor?.user_id || "user_admin1";
+    const actorId = actor.user_id;
     const target = db.drive_shortcuts.find((s: any) => s.id === req.params.id);
     db.drive_shortcuts = db.drive_shortcuts.filter((s: any) => s.id !== req.params.id);
     recordServerDeletedIds([req.params.id]);
@@ -15678,6 +16022,8 @@ async function startServer() {
   });
 
   app.get("/api/instagram-tracker", async (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const accounts = ensureInstagramTrackedAccounts();
     const forceRefresh = req.query.refresh === "1" || req.query.force === "1";
     const now = Date.now();
@@ -15721,7 +16067,9 @@ async function startServer() {
     res.json({ accounts: hydrateIgAccountsWithCacheMeta(accounts) });
   });
 
-  app.post("/api/instagram-tracker/refresh-all", async (_req, res) => {
+  app.post("/api/instagram-tracker/refresh-all", async (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const accounts = ensureInstagramTrackedAccounts();
     const now = Date.now();
     const nowIso = new Date().toISOString();
@@ -15746,7 +16094,8 @@ async function startServer() {
   });
 
   app.post("/api/instagram-tracker", async (req, res) => {
-    const reqUser = getReqUser(req) || currentSessionUser;
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const accounts = ensureInstagramTrackedAccounts();
     const {
       username: rawUser,
@@ -15830,6 +16179,8 @@ async function startServer() {
   });
 
   app.patch("/api/instagram-tracker/reorder", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const accounts = ensureInstagramTrackedAccounts();
     const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : [];
     if (ids.length === 0) {
@@ -15855,7 +16206,8 @@ async function startServer() {
   });
 
   app.patch("/api/instagram-tracker/:id", async (req, res) => {
-    const reqUser = getReqUser(req) || currentSessionUser;
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const accounts = ensureInstagramTrackedAccounts();
     const {
       username,
@@ -15996,6 +16348,8 @@ async function startServer() {
   });
 
   app.post("/api/instagram-tracker/:id/refresh", async (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const accounts = ensureInstagramTrackedAccounts();
     const rawUser = String(req.body?.username || req.body?.profile_url || "").trim();
     const parsed = rawUser ? parseInstagramInput(rawUser) : { username: "", shortcode: "", postUrl: "" };
@@ -16032,7 +16386,7 @@ async function startServer() {
         latest_posted_at: meta.latest_posted_at || "",
         is_live_today: Boolean(meta.latest_shortcode),
         last_checked_at: nowIso,
-        updated_by_name: "Member",
+        updated_by_name: reqUser.name || "Member",
         notes: "",
       };
       db.workspace.deleted_instagram_account_ids = (db.workspace.deleted_instagram_account_ids || []).filter(
@@ -16053,6 +16407,7 @@ async function startServer() {
     });
     const nowIso = new Date().toISOString();
     applyInstagramMetaToAccount(target, meta, nowIso, { forcePostUpdate: false });
+    target.updated_by_name = reqUser.name || target.updated_by_name || "Member";
     igHydrationAttempts.set(target.id, Date.now());
 
     saveDbToFile(true);
@@ -16063,6 +16418,8 @@ async function startServer() {
   });
 
   app.delete("/api/instagram-tracker/:id", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const accounts = ensureInstagramTrackedAccounts();
     const delId = String(req.params.id || "").trim();
     db.workspace.instagram_accounts = accounts.filter((a: any) => a && a.id !== delId);
@@ -16082,6 +16439,10 @@ async function startServer() {
 
   // Global Workspace Search Endpoint
   app.get("/api/search", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    const uid = reqUser.user_id;
+    const isAdmin = ["super_admin", "workspace_admin"].includes(reqUser.role);
     const q = String(req.query.q || "").trim().toLowerCase();
     if (!q) {
       return res.json({
@@ -16095,27 +16456,49 @@ async function startServer() {
         marketplace_listings: []
       });
     }
+
+    const canSeeConv = (c: any) => {
+      if (!c || !c.id) return false;
+      const cid = String(c.id);
+      if (cid.startsWith("conv_circle_")) return cid === `conv_circle_${uid}`;
+      const mems = Array.isArray(c.member_ids) ? c.member_ids : (Array.isArray(c.members) ? c.members : []);
+      if (c.type === "dm") return mems.includes(uid);
+      if (c.type === "group") {
+        const gType = String(c.group_type || c.visibility || "public").toLowerCase();
+        if (gType === "private" || gType === "department") {
+          return isAdmin || mems.includes(uid);
+        }
+        return true;
+      }
+      return isAdmin || mems.includes(uid);
+    };
+
+    const visibleConvIds = new Set(
+      (db.conversations || []).filter(canSeeConv).map((c: any) => String(c.id))
+    );
+
     res.json({
       drive_shortcuts: (db.drive_shortcuts || [])
         .filter((d: any) => `${d.name} ${d.description || ""} ${d.category || ""}`.toLowerCase().includes(q))
         .slice(0, 6),
       employees: (db.users || [])
         .filter((u: any) => !u.is_bot && u.role !== "assistant" && `${u.name} ${u.job_title || ""} ${u.department || ""}`.toLowerCase().includes(q))
-        .slice(0, 6),
+        .slice(0, 6)
+        .map((u: any) => sanitizeUser(u)),
       tasks: (db.tasks || [])
-        .filter((t: any) => `${t.title} ${t.number_str || ""}`.toLowerCase().includes(q))
+        .filter((t: any) => isTaskAccessible(t, reqUser) && `${t.title} ${t.number_str || ""}`.toLowerCase().includes(q))
         .slice(0, 6),
       groups: (db.conversations || [])
-        .filter((c: any) => c.type === "group" && (c.name || "").toLowerCase().includes(q))
+        .filter((c: any) => c.type === "group" && canSeeConv(c) && (c.name || "").toLowerCase().includes(q))
         .slice(0, 6),
       messages: (db.messages || [])
-        .filter((m: any) => (m.text || "").toLowerCase().includes(q))
+        .filter((m: any) => !m.deleted && visibleConvIds.has(String(m.conversation_id || "")) && (m.text || "").toLowerCase().includes(q))
         .slice(0, 6),
       projects: (db.projects || [])
         .filter((p: any) => (p.name || "").toLowerCase().includes(q))
         .slice(0, 6),
       polls: (db.polls || [])
-        .filter((p: any) => (p.question || "").toLowerCase().includes(q))
+        .filter((p: any) => (!p.conversation_id || visibleConvIds.has(String(p.conversation_id))) && (p.question || "").toLowerCase().includes(q))
         .slice(0, 6),
       marketplace_listings:
         db.workspace?.marketplace_enabled !== false

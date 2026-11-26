@@ -448,7 +448,7 @@ function Node({ unit, siblingsIndex, siblingsCount, tree, members, depth, ctx })
         onDragOver={(e) => ctx.canMove && e.preventDefault()}
         onDrop={drop}
         className={`group my-2 flex min-w-0 flex-wrap sm:flex-nowrap items-center gap-2 sm:gap-2.5 overflow-hidden rounded-2xl border bg-surface p-3 sm:p-3.5 shadow-xs transition-all hover:shadow-sm ${
-          hit ? "ring-2 ring-[var(--c-accent)]" : ""
+          hit ? "border-[var(--c-accent)] bg-brand/5" : ""
         }`}
         data-testid={`org-unit-${unit.id}`}
       >
@@ -565,7 +565,7 @@ function Node({ unit, siblingsIndex, siblingsCount, tree, members, depth, ctx })
                   }}
                   onClick={() => navigate(`/people/${u.user_id}`)}
                   className={`flex items-center gap-2.5 rounded-full border bg-surface py-2 pl-2 pr-4 text-left shadow-2xs hover:border-brand transition-colors ${
-                    ctx.q && u.name.toLowerCase().includes(ctx.q) ? "ring-2 ring-[var(--c-accent)]" : ""
+                    ctx.q && u.name.toLowerCase().includes(ctx.q) ? "border-[var(--c-accent)] bg-brand/5" : ""
                   }`}
                   data-testid={`org-member-${u.user_id}`}
                 >

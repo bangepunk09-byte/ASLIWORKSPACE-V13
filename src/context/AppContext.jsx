@@ -76,9 +76,20 @@ export function AppProvider({ children }) {
 
       if (prevUid !== nextUid) {
         clearChatCache();
+        lastBootstrapEtagRef.current = null;
+        lastLoadAllAtRef.current = 0;
         try {
-          localStorage.removeItem("circle_convs_cache");
-          localStorage.removeItem("circle_cache_conversations");
+          [
+            "circle_convs_cache",
+            "circle_cache_conversations",
+            "circle_tasks_cache",
+            "circle_cache_tasks",
+            "circle_admin_stats",
+            "circle_admin_audit",
+            "circle_admin_users",
+            "circle_admin_invites",
+            "circle_admin_access_reqs",
+          ].forEach((k) => localStorage.removeItem(k));
         } catch {}
       }
 
@@ -141,9 +152,12 @@ export function AppProvider({ children }) {
   });
   const subs = useRef(new Set());
   const sock = useRef(null);
+  /** @type {import("react").MutableRefObject<((force?: boolean) => Promise<void>) | null>} */
   const loadAllRef = useRef(null);
   const loadAllInFlightRef = useRef(null);
   const lastLoadAllAtRef = useRef(0);
+  const lastBootstrapEtagRef = useRef(null);
+  const lastMsgSoundAtRef = useRef(0);
 
   const me = session?.user;
   const ws = session?.workspace;
@@ -165,7 +179,7 @@ export function AppProvider({ children }) {
       rehydrateIfServerRestarted(api).then((restored) => {
         if (restored) {
           api.get("/tasks").then((r) => {
-            if (Array.isArray(r.data) && r.data.length > 0) {
+            if (Array.isArray(r.data)) {
               const normalized = r.data.map((t) => enforceTaskApprovalInvariant(t));
               setTasks(normalized);
               scheduleJsonStorageWrite("circle_tasks_cache", normalized);
@@ -173,6 +187,11 @@ export function AppProvider({ children }) {
               subs.current.forEach((fn) => fn({ type: "tasks:changed", silentSync: true }));
             }
           }).catch(() => {});
+        } else {
+          setTasks([]);
+          scheduleJsonStorageWrite("circle_tasks_cache", []);
+          scheduleJsonStorageWrite("circle_cache_tasks", []);
+          subs.current.forEach((fn) => fn({ type: "tasks:changed", silentSync: true }));
         }
       }).catch(() => {});
       return false;
@@ -277,8 +296,6 @@ export function AppProvider({ children }) {
   const hasDeadlineToday = useCallback((userId) => {
     return Boolean(userId && userDeadlinesToday.has(userId));
   }, [userDeadlinesToday]);
-
-  const lastBootstrapEtagRef = useRef(null);
 
   const loadAll = useCallback(async (force = false) => {
     if (!me?.user_id) return;
@@ -840,39 +857,55 @@ export function AppProvider({ children }) {
             });
           }
         }
+        const playMsgSoundOnce = () => {
+          const nowMs = Date.now();
+          if (nowMs - lastMsgSoundAtRef.current > 450) {
+            lastMsgSoundAtRef.current = nowMs;
+            playSound("message_notif");
+          }
+        };
         if (evt.type === "notification") {
           if (evt.data?.user_id && me?.user_id && evt.data.user_id !== me.user_id) return;
-          setUnread((x) => x + 1);
-          const nextNotif = {
-            id: evt.data.id || `notif_${Date.now()}`,
-            title: evt.data.title,
-            body: evt.data.body,
-            type: evt.data.type,
-            category: evt.data.category,
-            link: evt.data.link,
-            access_request: evt.data.access_request,
-            group_id: evt.data.group_id,
-            requester_id: evt.data.requester_id,
-            conversation_id: evt.data.conversation_id,
-            task_id: evt.data.task_id,
-            post_id: evt.data.post_id,
-            sender: evt.data.sender
-          };
-          if (hasTopNotifQuickAction(nextNotif)) setTopQuickActionNotifActive(true);
-          setTopNotif(nextNotif);
-          const isMsgNotif =
-            evt.data?.category === "messages" ||
-            evt.data?.category === "dm" ||
-            ["dm", "message", "group_message"].includes(evt.data?.type) ||
-            Boolean(evt.data?.conversation_id);
-          playSound(isMsgNotif ? "message_notif" : "notification");
-          const curPrefs = prefsRef.current || prefs;
-          const catKey = evt.data?.category === "dm" ? "messages" : evt.data?.category;
-          const catEnabled = !catKey || curPrefs?.notifications?.[catKey] !== false;
-          if (catEnabled) {
-            showSystemNotification(evt.data, {
-              alwaysWhenVisible: Boolean(curPrefs?.notifications?.system_always_in_pwa)
-            });
+          const isViewingThisChat = Boolean(
+            evt.data?.conversation_id && window.location.pathname === `/messages/${evt.data.conversation_id}`
+          );
+          if (!isViewingThisChat) {
+            setUnread((x) => x + 1);
+            const nextNotif = {
+              id: evt.data.id || `notif_${Date.now()}`,
+              title: evt.data.title,
+              body: evt.data.body,
+              type: evt.data.type,
+              category: evt.data.category,
+              link: evt.data.link,
+              access_request: evt.data.access_request,
+              group_id: evt.data.group_id,
+              requester_id: evt.data.requester_id,
+              conversation_id: evt.data.conversation_id,
+              task_id: evt.data.task_id,
+              post_id: evt.data.post_id,
+              sender: evt.data.sender
+            };
+            if (hasTopNotifQuickAction(nextNotif)) setTopQuickActionNotifActive(true);
+            setTopNotif(nextNotif);
+            const isMsgNotif =
+              evt.data?.category === "messages" ||
+              evt.data?.category === "dm" ||
+              ["dm", "message", "group_message"].includes(evt.data?.type) ||
+              Boolean(evt.data?.conversation_id);
+            if (isMsgNotif) {
+              playMsgSoundOnce();
+            } else {
+              playSound("notification");
+            }
+            const curPrefs = prefsRef.current || prefs;
+            const catKey = evt.data?.category === "dm" ? "messages" : evt.data?.category;
+            const catEnabled = !catKey || curPrefs?.notifications?.[catKey] !== false;
+            if (catEnabled) {
+              showSystemNotification(evt.data, {
+                alwaysWhenVisible: Boolean(curPrefs?.notifications?.system_always_in_pwa)
+              });
+            }
           }
         }
         if (evt.type === "message:new" && evt.data) {
@@ -885,7 +918,11 @@ export function AppProvider({ children }) {
           }
           // Always cache incoming messages immediately in memory & localStorage so opening any chat has 0ms delay
           appendMessageToCache(evt.data);
-          if (evt.data.sender_id !== me?.user_id && !evt.data.silent_popup) {
+          const alreadyNotifiedViaEvent =
+            Array.isArray(evt.data.notified_user_ids) &&
+            Boolean(me?.user_id) &&
+            evt.data.notified_user_ids.includes(me.user_id);
+          if (evt.data.sender_id !== me?.user_id && !evt.data.silent_popup && !alreadyNotifiedViaEvent) {
             const isCurrentlyInThisChat = window.location.pathname === `/messages/${evt.data.conversation_id}`;
             if (!isCurrentlyInThisChat) {
               const curUsers = usersRef.current || users;
@@ -910,7 +947,7 @@ export function AppProvider({ children }) {
               setTopNotif(nextNotif);
               const isMutedConv = (curPrefs?.muted_conversations || []).includes(evt.data.conversation_id);
               if (!isMutedConv && curPrefs?.notifications?.messages !== false) {
-                playSound("message_notif");
+                playMsgSoundOnce();
               }
               // For group chats (which don't emit a separate notification event), trigger OS/PWA notification too
               if (evt.data.conversation_type === "group" && !isMutedConv && curPrefs?.notifications?.messages !== false) {
@@ -1047,11 +1084,14 @@ export function AppProvider({ children }) {
         if (evt.type === "users:changed") {
           api.get("/users").then((r) => {
             if (Array.isArray(r.data)) {
-              setUsers(r.data);
-              scheduleJsonStorageWrite("circle_users_cache", r.data);
+              const curUid = meRef.current?.user_id;
+              const synced = r.data.map((u) => (u.user_id === curUid ? { ...u, online: true } : u));
+              setUsers(synced);
+              setOnline(new Set([...synced.filter((x) => x.online).map((x) => x.user_id), ...(curUid ? [curUid] : [])]));
+              scheduleJsonStorageWrite("circle_users_cache", synced);
               setSession((s) => {
                 if (!s?.user) return s;
-                const updatedMe = r.data.find((u) => u.user_id === s.user.user_id);
+                const updatedMe = synced.find((u) => u.user_id === s.user.user_id);
                 if (!updatedMe) return s;
                 const next = { ...s, user: updatedMe };
                 scheduleJsonStorageWrite("circle_session_cache", next);
@@ -1261,11 +1301,14 @@ export function AppProvider({ children }) {
 
   const reloadUsers = useCallback(() => api.get("/users").then((r) => {
     if (Array.isArray(r.data)) {
-      setUsers(r.data);
-      scheduleJsonStorageWrite("circle_users_cache", r.data);
+      const curUid = meRef.current?.user_id;
+      const synced = r.data.map((u) => (u.user_id === curUid ? { ...u, online: true } : u));
+      setUsers(synced);
+      setOnline(new Set([...synced.filter((x) => x.online).map((x) => x.user_id), ...(curUid ? [curUid] : [])]));
+      scheduleJsonStorageWrite("circle_users_cache", synced);
       setSession((s) => {
         if (!s?.user) return s;
-        const updatedMe = r.data.find((u) => u.user_id === s.user.user_id);
+        const updatedMe = synced.find((u) => u.user_id === s.user.user_id);
         if (!updatedMe) return s;
         const next = { ...s, user: updatedMe };
         scheduleJsonStorageWrite("circle_session_cache", next);

@@ -59,7 +59,7 @@ export function CommentMentionInput({
   placeholder,
   testid = "task-comment-input",
   rightSlot = null,
-  textareaClassName = "min-h-[44px] flex-1 rounded-xl border bg-surface2 p-2.5 text-sm outline-none focus:ring-1 focus:ring-brand",
+  textareaClassName = "min-h-[44px] flex-1 rounded-xl border bg-surface2 p-2.5 text-sm outline-none focus:border-brand",
 }) {
   const { users, userMap, t: tr } = useApp();
   const resolvedPlaceholder = placeholder ?? tr("task_comment_ph", "Tulis komentar… ketik @Nama untuk menyebut rekan");
@@ -751,7 +751,7 @@ export function CheckpointPresetBar({ onApply, currentCheckpoints = [], testidPr
             key={p.id || p.label}
             className={`inline-flex max-w-full items-center rounded-xl border bg-surface hover:border-brand transition-colors shadow-2xs ${
               editingTpl && (editingTpl.id === p.id || editingTpl.label === p.label)
-                ? "border-brand ring-1 ring-brand/30"
+                ? "border-brand bg-brand/5"
                 : "border-slate-200 dark:border-slate-700"
             }`}
           >
@@ -988,7 +988,7 @@ function Thread({ t, cp, reload }) {
         onSubmit={send}
         placeholder={issue ? tr("cp_thread_issue_ph", "Ceritakan kendalanya… ketik @Nama untuk tag rekan") : tr("cp_thread_normal_ph", "Tulis progres atau diskusi… ketik @Nama untuk tag rekan")}
         testid={`checkpoint-comment-input-${cp.id}`}
-        textareaClassName="min-h-[60px] w-full rounded-xl border bg-surface p-2.5 text-sm outline-none focus:ring-1 focus:ring-brand"
+        textareaClassName="min-h-[60px] w-full rounded-xl border bg-surface p-2.5 text-sm outline-none focus:border-brand"
       />
       <div className="mt-2 flex items-center justify-between gap-2">
         <button
@@ -1340,7 +1340,7 @@ export default function Checkpoints({ t, ro, patch, reload, members, emptyMessag
             onChange={(e) => setTitle(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), add())}
             placeholder={tr("cp_add_ph", "Tambah checkpoint baru…")}
-            className="h-9 min-w-0 w-full flex-1 basis-full sm:basis-0 rounded-xl border bg-surface2 px-3 text-xs outline-none focus:ring-1 focus:ring-brand"
+            className="h-9 min-w-0 w-full flex-1 basis-full sm:basis-0 rounded-xl border bg-surface2 px-3 text-xs outline-none focus:border-brand"
             data-testid="checkpoint-new-title"
           />
           <DatePicker

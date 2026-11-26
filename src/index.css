@@ -2,6 +2,13 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  *, ::before, ::after {
+    --tw-ring-color: transparent;
+    --tw-ring-offset-color: transparent;
+  }
+}
+
 :root {
   --c-bg: #F5F7FB; --c-surface: #FFFFFF; --c-surface2: #F0F4FA; --c-sidebar: #FFFFFF; --c-text: #20283B; --c-muted: #778198;
   --c-border: #E6EAF1; --c-accent: #FF5364; --c-accent-hover: #F04456; --c-accent2: #6C8CFF;
@@ -58,7 +65,7 @@ button, a, select, input, textarea, [role="button"], label {
 *, *::before, *::after {
   -webkit-tap-highlight-color: transparent;
 }
-:focus, :focus-visible,
+:focus, :focus-visible, :focus-within,
 button:focus, button:focus-visible,
 a:focus, a:focus-visible,
 [role="button"]:focus, [role="button"]:focus-visible,
@@ -68,6 +75,8 @@ a:focus, a:focus-visible,
   --tw-ring-color: transparent !important;
   --tw-ring-offset-color: transparent !important;
   --tw-ring-offset-width: 0px !important;
+  --tw-ring-shadow: 0 0 #0000 !important;
+  --tw-ring-offset-shadow: 0 0 #0000 !important;
 }
 
 input, textarea, select, [contenteditable] {
@@ -81,6 +90,8 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, [contentedita
   box-shadow: none !important;
   --tw-ring-color: transparent !important;
   --tw-ring-offset-color: transparent !important;
+  --tw-ring-shadow: 0 0 #0000 !important;
+  --tw-ring-offset-shadow: 0 0 #0000 !important;
 }
 
 /* UNIFIED SHAPE SYSTEM: Apply --input-radius ONLY to boxed/bordered inputs & selects so borderless/transparent inline inputs never clip the caret or text on the left */

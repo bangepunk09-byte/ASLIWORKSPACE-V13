@@ -956,7 +956,7 @@ export default function Login() {
                         type="button"
                         onClick={() => setSignupForm({ ...signupForm, avatar: avUrl })}
                         className={`h-8 w-8 sm:h-9 sm:w-9 rounded-full overflow-hidden border-2 transition-transform hover:scale-110 cursor-pointer ${
-                          signupForm.avatar === avUrl ? "border-brand ring-2 ring-brand/30 scale-105" : "border-transparent opacity-80 hover:opacity-100"
+                          signupForm.avatar === avUrl ? "border-brand scale-105" : "border-transparent opacity-80 hover:opacity-100"
                         }`}
                         data-testid={`signup-avatar-option-${idx}`}
                       >
@@ -1321,7 +1321,7 @@ export default function Login() {
                         type="button"
                         onClick={() => setGoogleForm({ ...googleForm, avatar: avUrl })}
                         className={`h-8 w-8 rounded-full overflow-hidden border-2 transition-transform hover:scale-110 cursor-pointer ${
-                          googleForm.avatar === avUrl ? "border-brand ring-2 ring-brand/30 scale-105" : "border-transparent opacity-80 hover:opacity-100"
+                          googleForm.avatar === avUrl ? "border-brand scale-105" : "border-transparent opacity-80 hover:opacity-100"
                         }`}
                       >
                         <img src={avUrl} alt={`Avatar ${idx + 1}`} className="h-full w-full object-cover" />

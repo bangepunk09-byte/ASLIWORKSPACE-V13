@@ -1162,17 +1162,20 @@ export function registerMarketplaceRoutes(app: Express, deps: MarketplaceDeps) {
       return res.status(400).json({ detail: "Metode pembayaran ini sedang dinonaktifkan oleh Super Admin." });
     }
 
-    // Validate stock & collect resolved line items
+    // Validate stock (aggregating duplicate listing_id rows across variants) & collect resolved line items
+    const requestedQtyByListing = new Map<string, number>();
     const resolvedItems: any[] = [];
     for (const rawItem of items) {
       const listing = db.marketplace_listings.find((l: any) => l.id === rawItem.listing_id);
       if (!listing) return res.status(404).json({ detail: "Salah satu produk tidak lagi tersedia." });
       const qty = Math.max(1, Math.round(Number(rawItem.qty || 1)));
-      if (Number(listing.stock || 0) < qty) {
+      const nextTotalQty = (requestedQtyByListing.get(listing.id) || 0) + qty;
+      if (Number(listing.stock || 0) < nextTotalQty) {
         return res.status(400).json({
           detail: `Stok "${listing.title}" tersisa ${listing.stock} unit.`,
         });
       }
+      requestedQtyByListing.set(listing.id, nextTotalQty);
       resolvedItems.push({
         listing,
         qty,
@@ -1360,6 +1363,9 @@ export function registerMarketplaceRoutes(app: Express, deps: MarketplaceDeps) {
 
     const order = db.marketplace_orders.find((o: any) => o.id === req.params.id || o.order_number === req.params.id);
     if (!order) return res.status(404).json({ detail: "Pesanan tidak ditemukan." });
+    if (order.buyer_id !== reqUser.user_id && reqUser.role !== "super_admin") {
+      return res.status(403).json({ detail: "Anda tidak memiliki akses untuk memperbarui token pembayaran pesanan ini." });
+    }
 
     const cfg = getMarketplaceConfig(db);
     const refreshedInfo = buildPaymentInstruction(
@@ -1400,15 +1406,20 @@ export function registerMarketplaceRoutes(app: Express, deps: MarketplaceDeps) {
       payload?.transaction_id || `${sourceLabel}-wh-${Date.now().toString().slice(-6)}`
     );
 
-    // Optional SHA-512 signature verification for Midtrans when MIDTRANS_SERVER_KEY is present
+    // SHA-512 signature verification for Midtrans when MIDTRANS_SERVER_KEY is present
     const serverKey = (process.env.MIDTRANS_SERVER_KEY || "").trim();
     let signatureVerified = true;
-    if (serverKey && !skipSignatureCheck && payload?.signature_key) {
-      const expectedSig = crypto
-        .createHash("sha512")
-        .update(`${orderIdOrNumber}${statusCode}${grossAmountRaw}${serverKey}`)
-        .digest("hex");
-      signatureVerified = expectedSig === String(payload.signature_key).toLowerCase();
+    if (serverKey && !skipSignatureCheck) {
+      const providedSig = String(payload?.signature_key || "").trim().toLowerCase();
+      if (!providedSig) {
+        signatureVerified = false;
+      } else {
+        const expectedSig = crypto
+          .createHash("sha512")
+          .update(`${orderIdOrNumber}${statusCode}${grossAmountRaw}${serverKey}`)
+          .digest("hex");
+        signatureVerified = expectedSig === providedSig;
+      }
     }
 
     const order = (db.marketplace_orders || []).find(
@@ -1525,6 +1536,13 @@ export function registerMarketplaceRoutes(app: Express, deps: MarketplaceDeps) {
   app.post("/api/marketplace/webhooks/payment", (req, res) => {
     const provider = String(req.body?.provider || req.query?.provider || "midtrans").toLowerCase();
     const result = processGatewayWebhook(req.body || {}, provider, false);
+    if (!result.signatureVerified) {
+      return res.status(403).json({
+        status_code: "403",
+        status_message: "Invalid signature_key",
+        log: result.logEntry,
+      });
+    }
     res.status(200).json({
       status_code: "200",
       status_message: "OK",
@@ -1536,6 +1554,9 @@ export function registerMarketplaceRoutes(app: Express, deps: MarketplaceDeps) {
   app.post("/api/marketplace/payment-gateway/simulate-webhook", (req, res) => {
     const reqUser = getReqUser(req);
     if (!reqUser) return res.status(401).json({ detail: "Autentikasi diperlukan." });
+    if (reqUser.role !== "super_admin") {
+      return res.status(403).json({ detail: "Hanya Super Admin yang dapat menjalankan simulasi webhook." });
+    }
     ensureMarketplaceData(db);
 
     const cfg = getMarketplaceConfig(db);

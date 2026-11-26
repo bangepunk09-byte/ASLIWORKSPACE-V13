@@ -651,7 +651,7 @@ function BoardScopeDropdown({ scopeLabel, boardColor, activeMode, availableScope
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className="group inline-flex h-9 items-center gap-2 rounded-xl border border-border bg-surface2/75 px-3 text-xs sm:text-sm font-semibold text-ink hover:bg-surface2 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/20 focus-visible:border-brand transition-[background-color,border-color,color] duration-150 whitespace-nowrap cursor-pointer shadow-xs"
+          className="group inline-flex h-9 items-center gap-2 rounded-xl border border-border bg-surface2/75 px-3 text-xs sm:text-sm font-semibold text-ink hover:bg-surface2 focus:outline-none focus-visible:border-brand transition-[background-color,border-color,color] duration-150 whitespace-nowrap cursor-pointer shadow-xs"
           data-testid={testId}
         >
           <span

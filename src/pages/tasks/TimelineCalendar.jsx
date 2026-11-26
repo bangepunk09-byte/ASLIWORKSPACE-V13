@@ -514,7 +514,7 @@ export const Timeline = memo(function Timeline({ tasks, onOpen, onPatchTask, rel
                           left: clampedLeftDay * W + 3,
                           width: Math.max(stages.length * 28, clampedDays * W - 6),
                         }}
-                        className="absolute top-2.5 z-[5] flex h-7 items-stretch gap-[2px] overflow-hidden rounded-full bg-surface/80 p-[1px] shadow-xs ring-1 ring-border/70 cursor-pointer hover:ring-brand/50 transition-all"
+                        className="absolute top-2.5 z-[5] flex h-7 items-stretch gap-[2px] overflow-hidden rounded-full bg-surface/80 p-[1px] shadow-xs border border-border/70 cursor-pointer hover:border-brand/60 transition-all"
                         data-testid={`timeline-bar-${t.id}`}
                       >
                         {stages.map((st, idx) => {

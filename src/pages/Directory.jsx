@@ -522,7 +522,7 @@ export function DriveShortcutDialog({
                     onClick={() => setAccessType(m.id)}
                     className={`flex flex-col items-start rounded-xl border p-3 text-left transition-all ${
                       active
-                        ? "border-brand bg-brand/5 ring-2 ring-brand/20"
+                        ? "border-brand bg-brand/5"
                         : "bg-surface hover:bg-surface2/60"
                     }`}
                     data-testid={`access-mode-${m.id}`}

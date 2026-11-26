@@ -140,7 +140,7 @@ export function StickerMaker({ onCreated, onClose }) {
               onChange={(e) => setName(e.target.value)}
               placeholder={tr("chat_sticker_text_ph", "mis. SIAP MANDAN, REVISI, APPROVED")}
               maxLength={20}
-              className="h-9 w-full rounded-xl border bg-surface px-3 text-xs outline-none focus:ring-1 focus:ring-brand font-semibold"
+              className="h-9 w-full rounded-xl border bg-surface px-3 text-xs outline-none focus:border-brand font-semibold"
               data-testid="sticker-name-input"
             />
           </div>
@@ -153,7 +153,7 @@ export function StickerMaker({ onCreated, onClose }) {
                   type="button"
                   key={em}
                   onClick={() => setEmoji(em)}
-                  className={`h-8 w-8 rounded-lg text-base transition-transform hover:scale-110 ${emoji === em ? "bg-brand/10 ring-2 ring-brand" : "hover:bg-surface2"}`}
+                  className={`h-8 w-8 rounded-lg text-base transition-transform hover:scale-110 ${emoji === em ? "bg-brand/10 border border-brand" : "hover:bg-surface2"}`}
                 >
                   {em}
                 </button>

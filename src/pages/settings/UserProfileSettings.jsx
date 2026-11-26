@@ -262,7 +262,7 @@ export function UserProfileSettings() {
                   type="button"
                   onClick={() => handleSelectPresetAvatar(avUrl)}
                   className={`relative h-10 w-10 rounded-full overflow-hidden border-2 transition-transform hover:scale-110 cursor-pointer ${
-                    f.avatar === avUrl ? "border-brand ring-2 ring-brand/30 scale-105" : "border-transparent opacity-80 hover:opacity-100"
+                    f.avatar === avUrl ? "border-brand scale-105" : "border-transparent opacity-80 hover:opacity-100"
                   }`}
                   data-testid={`profile-avatar-option-${idx}`}
                 >

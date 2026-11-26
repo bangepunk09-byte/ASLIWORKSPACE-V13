@@ -375,7 +375,7 @@ function CustomizeCoverDialog({ open, onOpenChange, p, onSaved }) {
                   data-testid={`cover-preset-${preset.id}`}
                   className={`group relative flex flex-col overflow-hidden rounded-xl border text-left transition-all cursor-pointer ${
                     active
-                      ? "border-[var(--c-accent)] ring-2 ring-[var(--c-accent)]/25"
+                      ? "border-[var(--c-accent)] bg-brand/5"
                       : "border-slate-200/80 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700"
                   }`}
                 >
