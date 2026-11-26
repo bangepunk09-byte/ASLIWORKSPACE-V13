@@ -1,11 +1,21 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import DOMPurify from "dompurify";
 import { Bold, Italic, Heading2, Heading3, List, ListOrdered, ListChecks, Link2, Image as ImageIcon, Paperclip, ExternalLink, Copy, Check, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { fileUrl, uploadFile, errMsg } from "../lib/api";
 import { useApp } from "../context/AppContext";
 
-export const sanitize = (html) => DOMPurify.sanitize(html || "", { ADD_ATTR: ["target", "rel", "style"] });
+const SANITIZE_CACHE = new Map();
+
+export const sanitize = (html) => {
+  const raw = html || "";
+  if (!raw) return "";
+  if (SANITIZE_CACHE.has(raw)) return SANITIZE_CACHE.get(raw);
+  const clean = DOMPurify.sanitize(raw, { ADD_ATTR: ["target", "rel", "style"] });
+  if (SANITIZE_CACHE.size > 250) SANITIZE_CACHE.clear();
+  SANITIZE_CACHE.set(raw, clean);
+  return clean;
+};
 
 const IMAGE_PRESETS = [
   { label: "23%", value: 23.5, hint: "Kecil (4 sejajar)" },
@@ -71,9 +81,16 @@ export default function RichEditor({ value, onChange, onBlur, placeholder, testi
   const [copiedLink, setCopiedLink] = useState(false);
   const [imgOverlay, setImgOverlay] = useState(null);
 
-  useEffect(() => {
-    if (ref.current && ref.current.innerHTML !== (value || "")) {
-      ref.current.innerHTML = sanitize(value);
+  const lastAppliedValueRef = useRef(null);
+
+  useLayoutEffect(() => {
+    const nextVal = value || "";
+    if (ref.current && lastAppliedValueRef.current !== nextVal) {
+      const cleaned = nextVal ? sanitize(nextVal) : "";
+      if (ref.current.innerHTML !== cleaned) {
+        ref.current.innerHTML = cleaned;
+      }
+      lastAppliedValueRef.current = nextVal;
     }
     setLinkPopover(null);
     activeAnchorRef.current = null;
@@ -207,7 +224,11 @@ export default function RichEditor({ value, onChange, onBlur, placeholder, testi
     };
   }, [linkPopover, imgOverlay, syncImgOverlay]);
 
-  const emit = () => onChange?.(sanitize(ref.current.innerHTML));
+  const emit = () => {
+    const clean = sanitize(ref.current.innerHTML);
+    lastAppliedValueRef.current = clean;
+    onChange?.(clean);
+  };
   const handleBlur = (e) => {
     if (!ref.current) return;
     if (popoverRef.current && e?.relatedTarget && popoverRef.current.contains(e.relatedTarget)) {
@@ -217,6 +238,7 @@ export default function RichEditor({ value, onChange, onBlur, placeholder, testi
       return;
     }
     const clean = sanitize(ref.current.innerHTML);
+    lastAppliedValueRef.current = clean;
     onChange?.(clean);
     onBlur?.(clean);
   };

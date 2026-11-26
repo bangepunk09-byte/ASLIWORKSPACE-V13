@@ -142,6 +142,12 @@ export default function Dashboard() {
   const [layoutOpen, setLayoutOpen] = useState(false);
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState(null);
+  const selectedTaskObj = useMemo(() => {
+    if (!selectedTaskId) return null;
+    const pool = Array.isArray(tasks) && tasks.length > 0 ? tasks : ctxTasks;
+    return (Array.isArray(pool) ? pool.find((x) => x.id === selectedTaskId) : null) || null;
+  }, [selectedTaskId, tasks, ctxTasks]);
+  const handleCloseTask = useCallback(() => setSelectedTaskId(null), []);
   const navigate = useNavigate();
 
   // Widget Layout Configuration
@@ -1318,9 +1324,12 @@ export default function Dashboard() {
 
       {/* Task Creation & Detail Sheets */}
       <TaskCreate open={newTaskOpen} onOpenChange={setNewTaskOpen} onCreated={() => loadData(true)} />
-      {selectedTaskId && (
-        <TaskDetail id={selectedTaskId} onClose={() => setSelectedTaskId(null)} onChanged={() => loadData(true)} />
-      )}
+      <TaskDetail
+        id={selectedTaskId}
+        initialTask={selectedTaskObj}
+        onClose={handleCloseTask}
+        onChanged={() => loadData(true)}
+      />
 
       {/* Drive Shortcut Customize & Member Access Dialogs */}
       <DriveShortcutDialog

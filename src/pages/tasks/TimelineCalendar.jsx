@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useCallback } from "react";
+import { memo, useMemo, useState, useEffect, useCallback } from "react";
 import { addDays, differenceInCalendarDays, endOfMonth, endOfWeek, format, isSameMonth, isToday, startOfMonth, startOfWeek } from "date-fns";
 import { id as localeId } from "date-fns/locale";
 import {
@@ -37,7 +37,7 @@ function segmentClass(status, severity) {
   return "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300";
 }
 
-export function Timeline({ tasks, onOpen, onPatchTask, reload, initialFilterMode = "all" }) {
+export const Timeline = memo(function Timeline({ tasks, onOpen, onPatchTask, reload, initialFilterMode = "all" }) {
   const { labelMap, userMap, me, t: tr } = useApp();
   const [start, setStart] = useState(() => addDays(startOfWeek(new Date(), { weekStartsOn: 1 }), -7));
   const [filterMode, setFilterMode] = useState(initialFilterMode === "bottleneck" ? "bottleneck" : "all"); // "all" | "bottleneck"
@@ -752,9 +752,9 @@ export function Timeline({ tasks, onOpen, onPatchTask, reload, initialFilterMode
       </div>
     </div>
   );
-}
+});
 
-export function Calendar({ tasks, onOpen }) {
+export const Calendar = memo(function Calendar({ tasks, onOpen }) {
   const { labelMap, t: tr } = useApp();
   const [events, setEvents] = useState([]);
   const [month, setMonth] = useState(startOfMonth(new Date()));
@@ -870,4 +870,4 @@ export function Calendar({ tasks, onOpen }) {
       </div>
     </div>
   );
-}
+});

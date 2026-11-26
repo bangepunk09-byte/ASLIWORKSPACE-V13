@@ -594,8 +594,24 @@ export function TaskWorkspace({ projectId, compactHeader }) {
     }
     load({ archiveOnly: isArchiveMode });
   }), [subscribe, load, upsertTaskImmediately, isArchiveMode]);
-  const open = (id) => { params.set("task", id); setParams(params); };
-  const close = () => { params.delete("task"); setParams(params); };
+  const open = useCallback((id) => {
+    if (!id) return;
+    setParams((prev) => {
+      if (prev.get("task") === id) return prev;
+      const next = new URLSearchParams(prev);
+      next.set("task", id);
+      return next;
+    });
+  }, [setParams]);
+  const close = useCallback(() => {
+    setParams((prev) => {
+      if (!prev.has("task") && !prev.has("id")) return prev;
+      const next = new URLSearchParams(prev);
+      next.delete("task");
+      next.delete("id");
+      return next;
+    });
+  }, [setParams]);
   const switchView = (v) => {
     if (v !== view) playSound("tab");
     setView(v);
@@ -621,7 +637,23 @@ export function TaskWorkspace({ projectId, compactHeader }) {
   const activeMoreView = MORE_SAVED_VIEWS.find(([k]) => k === saved);
   const filteredAssigneeUser = f.assignee_id ? userMap?.[f.assignee_id] : null;
 
-  const activeBoardName = boards.find((b) => b.id === boardId)?.name || t("tasks_all_boards", "Semua Board");
+  const activeBoardObj = useMemo(() => boards.find((b) => b.id === boardId), [boards, boardId]);
+  const activeBoardName = activeBoardObj?.name || t("tasks_all_boards", "Semua Board");
+  const activeTaskObj = useMemo(() => (openId ? tasks.find((x) => x.id === openId) || null : null), [openId, tasks]);
+  const handleInviteBoard = useCallback(() => {
+    if (activeBoardObj) setManagingMembersBoard(activeBoardObj);
+    else if (boards.length > 0) setManagingMembersBoard(boards[0]);
+  }, [activeBoardObj, boards]);
+  const handleNewFromBoard = useCallback((status) => {
+    setCreate({ board_id: boardId || "", project_id: projectId || "", status });
+  }, [boardId, projectId]);
+  const handleDetailChanged = useCallback((updatedT) => {
+    if (updatedT?.id) {
+      upsertTaskImmediately(updatedT);
+    } else {
+      load();
+    }
+  }, [upsertTaskImmediately, load]);
 
   const setAssigneeFilter = (val) => {
     setF((prev) => ({ ...prev, assignee_id: val }));
@@ -1141,14 +1173,10 @@ export function TaskWorkspace({ projectId, compactHeader }) {
           : view === "board" ? (
             <Board
               tasks={visibleTasks}
-              board={boards.find((b) => b.id === boardId)}
-              onInvite={() => {
-                const b = boards.find((x) => x.id === boardId);
-                if (b) setManagingMembersBoard(b);
-                else if (boards.length > 0) setManagingMembersBoard(boards[0]);
-              }}
+              board={activeBoardObj}
+              onInvite={handleInviteBoard}
               onOpen={open}
-              onNew={(status) => newTask({ status })}
+              onNew={handleNewFromBoard}
               reload={load}
               onMoveTask={updateTaskLocally}
             />
@@ -1241,14 +1269,10 @@ export function TaskWorkspace({ projectId, compactHeader }) {
       />
       <TaskDetail
         id={openId}
+        initialTask={activeTaskObj}
+        boards={boards}
         onClose={close}
-        onChanged={(updatedT) => {
-          if (updatedT?.id) {
-            upsertTaskImmediately(updatedT);
-          } else {
-            load();
-          }
-        }}
+        onChanged={handleDetailChanged}
       />
       <PrintPreviewDialog
         open={printPreviewOpen}

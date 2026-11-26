@@ -320,7 +320,7 @@ export const TaskCard = memo(function TaskCard({ t, onOpen, done, draggable, onD
   );
 });
 
-export default function Board({ tasks, onOpen, onNew, reload, onMoveTask, board, onInvite }) {
+const Board = memo(function Board({ tasks, onOpen, onNew, reload, onMoveTask, board, onInvite }) {
   const { statuses, t: tr } = useApp();
   const [over, setOver] = useState(null);
   const [draggingId, setDraggingId] = useState(null);
@@ -528,4 +528,6 @@ export default function Board({ tasks, onOpen, onNew, reload, onMoveTask, board,
       </div>
     </div>
   );
-}
+});
+
+export default Board;

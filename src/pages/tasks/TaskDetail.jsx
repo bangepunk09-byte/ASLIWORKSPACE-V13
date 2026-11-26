@@ -78,71 +78,150 @@ function Comments({ t, reload }) {
   );
 }
 
-const getInitialTask = (id) => {
-  if (!id) return null;
+const TASK_DETAIL_MEM_CACHE = new Map();
+let BOARDS_MEM_CACHE = null;
+
+const getInitialBoards = (propBoards) => {
+  if (Array.isArray(propBoards) && propBoards.length > 0) {
+    BOARDS_MEM_CACHE = propBoards;
+    return propBoards;
+  }
+  if (Array.isArray(BOARDS_MEM_CACHE) && BOARDS_MEM_CACHE.length > 0) return BOARDS_MEM_CACHE;
   try {
-    const c1 = localStorage.getItem("circle_tasks_cache");
+    const saved = localStorage.getItem("circle_boards_cache");
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        BOARDS_MEM_CACHE = parsed;
+        return parsed;
+      }
+    }
+  } catch {}
+  return [];
+};
+
+const resolveTaskSync = (id, initialTask, ctxTasks) => {
+  if (!id) return null;
+  const cachedDetail = TASK_DETAIL_MEM_CACHE.get(id);
+  const fromCtx = Array.isArray(ctxTasks) ? ctxTasks.find((x) => x && x.id === id) : null;
+  if (initialTask && initialTask.id === id) {
+    if (cachedDetail && cachedDetail.updated_at === initialTask.updated_at) return cachedDetail;
+    return cachedDetail && (!initialTask.updated_at || (cachedDetail.updated_at || "") >= (initialTask.updated_at || ""))
+      ? { ...initialTask, ...cachedDetail }
+      : initialTask;
+  }
+  if (fromCtx) {
+    if (cachedDetail && (!fromCtx.updated_at || (cachedDetail.updated_at || "") >= (fromCtx.updated_at || ""))) {
+      return { ...fromCtx, ...cachedDetail };
+    }
+    return fromCtx;
+  }
+  if (cachedDetail) return cachedDetail;
+  try {
+    const c1 = localStorage.getItem("circle_tasks_cache") || localStorage.getItem("circle_cache_tasks");
     if (c1) {
       const arr = JSON.parse(c1);
       const found = Array.isArray(arr) && arr.find((x) => x && x.id === id);
       if (found) return found;
     }
-    const c2 = localStorage.getItem("circle_cache_tasks");
-    if (c2) {
-      const arr = JSON.parse(c2);
-      const found = Array.isArray(arr) && arr.find((x) => x && x.id === id);
-      if (found) return found;
-    }
   } catch {}
-  return INITIAL_TASKS.find((x) => x.id === id) || {
-    id,
-    number_str: "TSK",
-    title: "Detail Tugas",
-    status: "todo",
-    priority: "medium",
-    checkpoints: [],
-    comments: [],
-    activity: []
-  };
+  return INITIAL_TASKS.find((x) => x.id === id) || null;
 };
 
-export default function TaskDetail({ id, onClose, onChanged }) {
-  const { me, statuses, userMap, labelMap, isManager, subscribe, t: tr } = useApp();
-  const [t, setT] = useState(() => getInitialTask(id));
-  const [boards, setBoards] = useState(() => {
-    try {
-      const saved = localStorage.getItem("circle_boards_cache");
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return [];
-  });
+const isSameTaskDetail = (a, b) => {
+  if (!a || !b) return false;
+  return (
+    a.id === b.id &&
+    a.updated_at === b.updated_at &&
+    a.status === b.status &&
+    a.title === b.title &&
+    (a.description || "") === (b.description || "") &&
+    (a.comments?.length || 0) === (b.comments?.length || 0) &&
+    (a.activity?.length || 0) === (b.activity?.length || 0) &&
+    (a.checkpoints?.length || 0) === (b.checkpoints?.length || 0) &&
+    Boolean(a.board) === Boolean(b.board)
+  );
+};
+
+export default function TaskDetail({ id, initialTask = null, boards: propBoards = null, onClose, onChanged }) {
+  const { me, statuses, userMap, labelMap, tasks: ctxTasks, isManager, subscribe, t: tr } = useApp();
+  const syncResolvedTask = id ? resolveTaskSync(id, initialTask, ctxTasks) : null;
+  const [tState, setTState] = useState(() => syncResolvedTask);
+  const [boards, setBoards] = useState(() => getInitialBoards(propBoards));
   const [tab, setTab] = useState("comments");
   const [groups, setGroups] = useState(null);
   const [approving, setApproving] = useState(false);
   const [printPreviewOpen, setPrintPreviewOpen] = useState(false);
   const navigate = useNavigate();
 
+  // Always prefer up-to-date matching state for `id`, or immediate in-memory task on first render frame
+  const t = !id
+    ? null
+    : tState && tState.id === id
+    ? tState
+    : syncResolvedTask || {
+        id,
+        number_str: "TSK",
+        title: "Detail Tugas",
+        status: "todo",
+        priority: "medium",
+        checkpoints: [],
+        comments: [],
+        activity: []
+      };
+
+  const setT = (updater) => {
+    setTState((prev) => {
+      const base = prev && prev.id === id ? prev : syncResolvedTask;
+      const next = typeof updater === "function" ? updater(base) : updater;
+      if (next && next.id) TASK_DETAIL_MEM_CACHE.set(next.id, next);
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    if (Array.isArray(propBoards) && propBoards.length > 0) {
+      BOARDS_MEM_CACHE = propBoards;
+      setBoards(propBoards);
+    }
+  }, [propBoards]);
+
   const load = () => {
     if (!id) return;
     api.get(`/tasks/${id}`)
       .then((r) => {
-        if (r.data) setT(r.data);
+        if (r.data) {
+          TASK_DETAIL_MEM_CACHE.set(id, r.data);
+          setTState((prev) => {
+            const current = prev && prev.id === id ? prev : syncResolvedTask;
+            if (isSameTaskDetail(current, r.data)) return current;
+            return r.data;
+          });
+        }
       })
-      .catch(() => {
-        const local = getInitialTask(id);
-        if (local) setT(local);
-      });
+      .catch(() => {});
   };
   useEffect(() => {
     if (id) {
-      setT(getInitialTask(id));
+      setTab("comments");
+      setGroups(null);
+      if (syncResolvedTask) {
+        setTState((prev) => (prev && prev.id === id && (prev.updated_at || "") >= (syncResolvedTask.updated_at || "") ? prev : syncResolvedTask));
+      } else {
+        setTState(null);
+      }
       load();
-      api.get("/boards").then((r) => {
-        if (Array.isArray(r.data)) {
-          setBoards(r.data);
-          try { localStorage.setItem("circle_boards_cache", JSON.stringify(r.data)); } catch {}
-        }
-      }).catch(() => {});
+      if ((!propBoards || propBoards.length === 0) && (!BOARDS_MEM_CACHE || BOARDS_MEM_CACHE.length === 0)) {
+        api.get("/boards").then((r) => {
+          if (Array.isArray(r.data)) {
+            BOARDS_MEM_CACHE = r.data;
+            setBoards(r.data);
+            try { localStorage.setItem("circle_boards_cache", JSON.stringify(r.data)); } catch {}
+          }
+        }).catch(() => {});
+      }
+    } else {
+      setTState(null);
     }
   }, [id]); // eslint-disable-line
 
@@ -289,7 +368,7 @@ export default function TaskDetail({ id, onClose, onChanged }) {
   return (
     <>
     <Sheet open={!!id} onOpenChange={(v) => !v && onClose()}>
-      <SheetContent className="w-full max-w-full overflow-y-auto overflow-x-hidden bg-surface p-0 sm:max-w-3xl print:max-w-none print:static print:shadow-none print:border-0" data-testid="task-detail-panel">
+      <SheetContent instant className="w-full max-w-full overflow-y-auto overflow-x-hidden bg-surface p-0 sm:max-w-3xl print:max-w-none print:static print:shadow-none print:border-0" data-testid="task-detail-panel">
         <SheetHeader className="flex flex-row items-center justify-between border-b px-4 py-3 sm:px-6 sm:py-4">
           <SheetTitle className="text-base font-bold">{tr("task_detail_title", "Detail Tugas")}</SheetTitle>
           <div className="flex items-center gap-1 print:hidden">
@@ -679,16 +758,18 @@ export default function TaskDetail({ id, onClose, onChanged }) {
         )}
       </SheetContent>
     </Sheet>
-    <PrintPreviewDialog
-      open={printPreviewOpen}
-      onOpenChange={setPrintPreviewOpen}
-      mode="detail"
-      task={t}
-      boardName={activeBoardObj?.name || t?.department || tr("task_detail_title", "Detail Tugas")}
-      userMap={userMap}
-      labelMap={labelMap}
-      statuses={statuses}
-    />
+    {printPreviewOpen && (
+      <PrintPreviewDialog
+        open={printPreviewOpen}
+        onOpenChange={setPrintPreviewOpen}
+        mode="detail"
+        task={t}
+        boardName={activeBoardObj?.name || t?.department || tr("task_detail_title", "Detail Tugas")}
+        userMap={userMap}
+        labelMap={labelMap}
+        statuses={statuses}
+      />
+    )}
     </>
   );
 }

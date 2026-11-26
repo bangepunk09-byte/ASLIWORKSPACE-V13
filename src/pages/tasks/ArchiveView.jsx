@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   Folder, FolderOpen, Search, RotateCcw, CheckCircle2, Zap, ArrowRight, X,
   ChevronDown, ChevronRight, Inbox, Trash2, CheckSquare, Square, ShieldAlert, Check
@@ -28,7 +28,7 @@ function formatMonthFolder(monthKey, tr) {
   return `${MONTH_NAMES[month] || month} ${year}`;
 }
 
-export default function ArchiveView({ tasks, onOpen, reload, projects }) {
+const ArchiveView = memo(function ArchiveView({ tasks, onOpen, reload, projects }) {
   const { users, me, subscribe, t: tr } = useApp();
   const [search, setSearch] = useState("");
   const [selectedMonth, setSelectedMonth] = useState("");
@@ -840,4 +840,6 @@ export default function ArchiveView({ tasks, onOpen, reload, projects }) {
       </Dialog>
     </div>
   );
-}
+});
+
+export default ArchiveView;

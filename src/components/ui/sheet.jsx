@@ -13,10 +13,12 @@ const SheetClose = SheetPrimitive.Close
 
 const SheetPortal = SheetPrimitive.Portal
 
-const SheetOverlay = React.forwardRef(({ className, ...props }, ref) => (
+const SheetOverlay = React.forwardRef(({ className, instant = false, ...props }, ref) => (
   <SheetPrimitive.Overlay
     className={cn(
-      "fixed inset-0 z-50 bg-black/55 overscroll-none touch-none duration-120 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+      instant
+        ? "fixed inset-0 z-50 bg-black/55 overscroll-none touch-none data-[state=open]:!animate-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:duration-75"
+        : "fixed inset-0 z-50 bg-black/55 overscroll-none touch-none duration-120 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
       className
     )}
     {...props}
@@ -25,7 +27,7 @@ const SheetOverlay = React.forwardRef(({ className, ...props }, ref) => (
 SheetOverlay.displayName = SheetPrimitive.Overlay.displayName
 
 const sheetVariants = cva(
-  "fixed z-50 gap-4 bg-background p-6 shadow-xl transition ease-out overflow-x-hidden overscroll-contain max-w-[100vw] max-h-[100dvh] data-[state=closed]:duration-120 data-[state=open]:duration-150 data-[state=open]:animate-in data-[state=closed]:animate-out",
+  "fixed z-50 gap-4 bg-background p-6 shadow-xl transition ease-out overflow-x-hidden overscroll-contain max-w-[100vw] max-h-[100dvh] data-[state=closed]:duration-100 data-[state=open]:duration-120 data-[state=open]:animate-in data-[state=closed]:animate-out",
   {
     variants: {
       side: {
@@ -43,10 +45,18 @@ const sheetVariants = cva(
   }
 )
 
-const SheetContent = React.forwardRef(({ side = "right", className, children, ...props }, ref) => (
+const SheetContent = React.forwardRef(({ side = "right", instant = false, className, children, ...props }, ref) => (
   <SheetPortal>
-    <SheetOverlay />
-    <SheetPrimitive.Content ref={ref} className={cn(sheetVariants({ side }), className)} {...props}>
+    <SheetOverlay instant={instant} />
+    <SheetPrimitive.Content
+      ref={ref}
+      className={cn(
+        sheetVariants({ side }),
+        instant && "data-[state=open]:!animate-none data-[state=open]:!duration-0 data-[state=closed]:duration-75",
+        className
+      )}
+      {...props}
+    >
       {children}
     </SheetPrimitive.Content>
   </SheetPortal>

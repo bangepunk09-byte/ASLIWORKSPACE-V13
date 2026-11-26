@@ -729,7 +729,7 @@ function AddRow({ span, onAdd, gkey }) {
   return <tr className="print:hidden"><td className="border-r p-0 text-center text-sub"><Plus size={13} className="mx-auto" /></td><td colSpan={span} className="p-0"><input value={v} onChange={(e) => setV(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} onBlur={submit} placeholder={t("table_add_row", "Tambah baris baru — ketik judul lalu Enter")} className="h-9 w-full bg-transparent px-3 text-xs outline-none placeholder:text-sub focus:bg-surface2" data-testid={`sheet-add-row-${gkey}`} /></td></tr>;
 }
 
-export default function ListView({ tasks, projects, boards = [], projectId, onOpen, selected, setSelected, reload, onPatchTask, groupBy, boardId, reportMode: controlledReportMode, onReportModeChange }) {
+const ListView = memo(function ListView({ tasks, projects, boards = [], projectId, onOpen, selected, setSelected, reload, onPatchTask, groupBy, boardId, reportMode: controlledReportMode, onReportModeChange }) {
   const { me, prefs, ws, statuses, users, userMap, labelMap, t } = useApp();
   const [collapsed, setCollapsed] = useState({});
   const [sort, setSort] = useState({ k: "number", dir: 1 });
@@ -1053,4 +1053,6 @@ export default function ListView({ tasks, projects, boards = [], projectId, onOp
       </div>
     </div>
   );
-}
+});
+
+export default ListView;
