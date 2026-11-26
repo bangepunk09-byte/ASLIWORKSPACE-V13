@@ -2371,11 +2371,41 @@ async function startServer() {
     return entry;
   }
 
+  function unmarkUserDeleted(userId?: string, email?: string) {
+    const cleanUid = userId ? String(userId).trim() : "";
+    const cleanEmail = email ? String(email).toLowerCase().trim() : "";
+    if (cleanUid && Array.isArray(db.deleted_user_ids)) {
+      db.deleted_user_ids = db.deleted_user_ids.filter((id: any) => String(id || "").trim() !== cleanUid);
+    }
+    if (cleanEmail && Array.isArray(db.deleted_user_emails)) {
+      db.deleted_user_emails = db.deleted_user_emails.filter(
+        (e: any) => String(e || "").toLowerCase().trim() !== cleanEmail
+      );
+    }
+  }
+
   function isUserExplicitlyDeleted(userId?: string, email?: string): boolean {
+    const cleanUid = userId ? String(userId).trim() : "";
+    const cleanEmail = email ? String(email).toLowerCase().trim() : "";
+    if (cleanUid && db.session_user_id && String(db.session_user_id) === cleanUid) {
+      return false;
+    }
+    // Never treat an active user currently present in db.users as explicitly deleted
+    if ((cleanUid || cleanEmail) && Array.isArray(db.users)) {
+      const activeMatch = db.users.find(
+        (u: any) =>
+          u &&
+          !u.is_bot &&
+          u.status === "active" &&
+          ((cleanUid && String(u.user_id || "").trim() === cleanUid) ||
+            (cleanEmail && String(u.email || "").toLowerCase().trim() === cleanEmail))
+      );
+      if (activeMatch) return false;
+    }
     const deletedIds = Array.isArray(db.deleted_user_ids) ? db.deleted_user_ids : [];
     const deletedEmails = Array.isArray(db.deleted_user_emails) ? db.deleted_user_emails : [];
-    if (userId && deletedIds.includes(userId)) return true;
-    if (email && deletedEmails.includes(String(email).toLowerCase().trim())) return true;
+    if (cleanUid && deletedIds.includes(cleanUid)) return true;
+    if (cleanEmail && deletedEmails.includes(cleanEmail)) return true;
     return false;
   }
 
@@ -2501,29 +2531,33 @@ async function startServer() {
     if (!payload?.uid) return null;
 
     const headerProfile = req ? decodeUserProfileHeader(req) : null;
+    const tokenEmail = payload.email ? String(payload.email).toLowerCase().trim() : "";
     const headerEmail =
-      headerProfile?.user_id === payload.uid && headerProfile?.email
+      headerProfile?.email
         ? String(headerProfile.email).toLowerCase().trim()
         : "";
+    const candidateEmail = tokenEmail || (headerProfile?.user_id === payload.uid ? headerEmail : "") || headerEmail;
     let found = (db.users || []).find(
       (u: any) =>
         u &&
         (u.user_id === payload.uid ||
-          (headerEmail && String(u.email || "").toLowerCase().trim() === headerEmail))
+          (candidateEmail && String(u.email || "").toLowerCase().trim() === candidateEmail))
     );
-    if (!found && headerProfile && headerProfile.user_id === payload.uid && !isUserExplicitlyDeleted(payload.uid, headerProfile.email)) {
-      mergeKnownAccountsIntoDb([headerProfile], payload.uid);
+    if (!found && headerProfile && (headerProfile.user_id === payload.uid || (candidateEmail && headerEmail === candidateEmail))) {
+      unmarkUserDeleted(payload.uid, candidateEmail || headerProfile.email);
+      mergeKnownAccountsIntoDb([{ ...headerProfile, user_id: payload.uid }], payload.uid);
       found = (db.users || []).find(
         (u: any) =>
           u &&
           (u.user_id === payload.uid ||
-            (headerEmail && String(u.email || "").toLowerCase().trim() === headerEmail))
+            (candidateEmail && String(u.email || "").toLowerCase().trim() === candidateEmail))
       );
     }
     if (!found || found.is_bot) return null;
-    if (found.status === "inactive" || found.status === "rejected" || isUserExplicitlyDeleted(found.user_id, found.email)) {
+    if (found.status === "inactive" || found.status === "rejected") {
       return null;
     }
+    unmarkUserDeleted(found.user_id, found.email);
     if (found.status === "pending") {
       found.status = "active";
       saveDbToFile(true);
@@ -2576,7 +2610,14 @@ async function startServer() {
     if (typeof user.token_version !== "number" || user.token_version < 1) {
       user.token_version = 1;
     }
-    const token = signSessionToken(user.user_id, user.token_version, MASTER_KEY);
+    unmarkUserDeleted(user.user_id, user.email);
+    const token = signSessionToken(
+      user.user_id,
+      user.token_version,
+      MASTER_KEY,
+      undefined,
+      user.email
+    );
     setSessionCookie(req, res, token);
     db.session_user_id = user.user_id;
     return token;
@@ -3543,15 +3584,35 @@ async function startServer() {
       (rawData.workspace && typeof rawData.workspace === "object");
     if (!hasRecognized) return false;
 
-    // Union explicit deletion tombstones FIRST so deleted accounts are never resurrected
+    // Protect currently active users in db.users from stale deleted_user_ids/deleted_user_emails in snapshots
+    const protectedActiveIds = new Set<string>();
+    const protectedActiveEmails = new Set<string>();
+    if (db.session_user_id) protectedActiveIds.add(String(db.session_user_id).trim());
+    for (const u of Array.isArray(db.users) ? db.users : []) {
+      if (u && !u.is_bot && u.status === "active") {
+        if (u.user_id) protectedActiveIds.add(String(u.user_id).trim());
+        if (u.email) protectedActiveEmails.add(String(u.email).toLowerCase().trim());
+      }
+    }
+
     const prevDelIds = Array.isArray(db.deleted_user_ids) ? db.deleted_user_ids : [];
     const nextDelIds = Array.isArray(rawData.deleted_user_ids) ? rawData.deleted_user_ids : [];
-    db.deleted_user_ids = Array.from(new Set([...prevDelIds, ...nextDelIds].filter(Boolean)));
+    db.deleted_user_ids = Array.from(
+      new Set(
+        [...prevDelIds, ...nextDelIds]
+          .map((id: any) => String(id || "").trim())
+          .filter((id: string) => Boolean(id) && !protectedActiveIds.has(id))
+      )
+    );
 
     const prevDelEmails = Array.isArray(db.deleted_user_emails) ? db.deleted_user_emails : [];
     const nextDelEmails = Array.isArray(rawData.deleted_user_emails) ? rawData.deleted_user_emails : [];
     db.deleted_user_emails = Array.from(
-      new Set([...prevDelEmails, ...nextDelEmails].map((e: any) => String(e || "").toLowerCase().trim()).filter(Boolean))
+      new Set(
+        [...prevDelEmails, ...nextDelEmails]
+          .map((e: any) => String(e || "").toLowerCase().trim())
+          .filter((e: string) => Boolean(e) && !protectedActiveEmails.has(e))
+      )
     );
 
     const prevDelMktIds = Array.isArray(db.deleted_marketplace_listing_ids) ? db.deleted_marketplace_listing_ids : [];
@@ -3608,6 +3669,11 @@ async function startServer() {
                 return u.token_version !== undefined ? u : { ...u, token_version: 1 };
               }
               const mergedUser: any = { ...u };
+              // Preserve live server user_id and active status if matched by email so active session tokens never lose their uid
+              if (ex.user_id && ex.status === "active") {
+                mergedUser.user_id = ex.user_id;
+                mergedUser.status = "active";
+              }
               // Always keep live server token_version so snapshot hydration never invalidates an active login or resurrects a revoked session
               mergedUser.token_version = Number(ex.token_version || 1);
               if (ex.password_hash && (!u.password_hash || (ex.password_updated_at && (!u.password_updated_at || new Date(ex.password_updated_at).getTime() >= new Date(u.password_updated_at).getTime())))) {
@@ -3853,15 +3919,35 @@ async function startServer() {
 
     let anyChanged = false;
 
-    // 1. Sync deletion tombstones first
+    // 1. Sync deletion tombstones first, while protecting currently active users in db.users
+    const protectedActiveIds = new Set<string>();
+    const protectedActiveEmails = new Set<string>();
+    if (db.session_user_id) protectedActiveIds.add(String(db.session_user_id).trim());
+    for (const u of Array.isArray(db.users) ? db.users : []) {
+      if (u && !u.is_bot && u.status === "active") {
+        if (u.user_id) protectedActiveIds.add(String(u.user_id).trim());
+        if (u.email) protectedActiveEmails.add(String(u.email).toLowerCase().trim());
+      }
+    }
+
     const prevDelIds = Array.isArray(db.deleted_user_ids) ? db.deleted_user_ids : [];
     const nextDelIds = Array.isArray(rawData.deleted_user_ids) ? rawData.deleted_user_ids : [];
-    db.deleted_user_ids = Array.from(new Set([...prevDelIds, ...nextDelIds].filter(Boolean)));
+    db.deleted_user_ids = Array.from(
+      new Set(
+        [...prevDelIds, ...nextDelIds]
+          .map((id: any) => String(id || "").trim())
+          .filter((id: string) => Boolean(id) && !protectedActiveIds.has(id))
+      )
+    );
 
     const prevDelEmails = Array.isArray(db.deleted_user_emails) ? db.deleted_user_emails : [];
     const nextDelEmails = Array.isArray(rawData.deleted_user_emails) ? rawData.deleted_user_emails : [];
     db.deleted_user_emails = Array.from(
-      new Set([...prevDelEmails, ...nextDelEmails].map((e: any) => String(e || "").toLowerCase().trim()).filter(Boolean))
+      new Set(
+        [...prevDelEmails, ...nextDelEmails]
+          .map((e: any) => String(e || "").toLowerCase().trim())
+          .filter((e: string) => Boolean(e) && !protectedActiveEmails.has(e))
+      )
     );
 
     const prevDelMktIds = Array.isArray(db.deleted_marketplace_listing_ids) ? db.deleted_marketplace_listing_ids : [];
@@ -4241,7 +4327,12 @@ async function startServer() {
 
     const reqUser = getReqUser(req);
     const preAuthUserId = reqUser?.user_id ? String(reqUser.user_id) : null;
+    const preAuthEmail = reqUser?.email ? String(reqUser.email).toLowerCase().trim() : null;
     const preTokenVersion = reqUser ? Number(reqUser.token_version || 1) : null;
+    const preUserSnapshot = reqUser ? JSON.parse(JSON.stringify(reqUser)) : null;
+    if (preAuthUserId || preAuthEmail) {
+      unmarkUserDeleted(preAuthUserId || undefined, preAuthEmail || undefined);
+    }
     const isAdmin = Boolean(reqUser && ["super_admin", "workspace_admin"].includes(reqUser.role));
     const isSignedSnapshot = verifySnapshotSignature(snapshot, snapshot_sig);
 
@@ -4286,10 +4377,24 @@ async function startServer() {
       mergeSnapshotIntoDb(snapshot);
     }
 
-    if (preAuthUserId && preTokenVersion !== null && Array.isArray(db.users)) {
-      const callerUser = db.users.find((u: any) => u && String(u.user_id) === preAuthUserId);
-      if (callerUser) {
-        callerUser.token_version = preTokenVersion;
+    if (preAuthUserId || preAuthEmail) {
+      unmarkUserDeleted(preAuthUserId || undefined, preAuthEmail || undefined);
+      if (Array.isArray(db.users)) {
+        let callerUser = db.users.find(
+          (u: any) =>
+            u &&
+            ((preAuthUserId && String(u.user_id) === preAuthUserId) ||
+              (preAuthEmail && String(u.email || "").toLowerCase().trim() === preAuthEmail))
+        );
+        if (!callerUser && preUserSnapshot) {
+          db.users.push(preUserSnapshot);
+          callerUser = preUserSnapshot;
+        }
+        if (callerUser) {
+          if (preAuthUserId) callerUser.user_id = preAuthUserId;
+          if (preTokenVersion !== null) callerUser.token_version = preTokenVersion;
+          if (callerUser.status === "pending") callerUser.status = "active";
+        }
       }
     }
 
@@ -4317,13 +4422,18 @@ async function startServer() {
       ? known_accounts.find((a: any) => a && a.user_id === tokenPayload.uid && a.email)
       : null;
     const candidateEmail = String(
-      (user?.user_id === tokenPayload.uid && user?.email) ||
+      tokenPayload.email ||
+        (user?.user_id === tokenPayload.uid && user?.email) ||
         knownMatch?.email ||
         (headerProfile?.user_id === tokenPayload.uid && headerProfile?.email) ||
+        user?.email ||
+        headerProfile?.email ||
         ""
     )
       .toLowerCase()
       .trim();
+
+    unmarkUserDeleted(tokenPayload.uid, candidateEmail);
 
     let reqUser = (db.users || []).find(
       (u: any) =>
@@ -4348,8 +4458,17 @@ async function startServer() {
         );
       }
     }
-    if (!reqUser && user && typeof user === "object" && user.user_id === tokenPayload.uid && user.email) {
-      mergeKnownAccountsIntoDb([user], tokenPayload.uid);
+    if (!reqUser && user && typeof user === "object" && (user.user_id === tokenPayload.uid || candidateEmail) && (user.email || candidateEmail)) {
+      mergeKnownAccountsIntoDb([{ ...user, user_id: user.user_id || tokenPayload.uid, email: user.email || candidateEmail }], tokenPayload.uid);
+      reqUser = (db.users || []).find(
+        (u: any) =>
+          u &&
+          (u.user_id === tokenPayload.uid ||
+            (candidateEmail && String(u.email || "").toLowerCase().trim() === candidateEmail))
+      );
+    }
+    if (!reqUser && headerProfile && (headerProfile.user_id === tokenPayload.uid || candidateEmail)) {
+      mergeKnownAccountsIntoDb([{ ...headerProfile, user_id: headerProfile.user_id || tokenPayload.uid, email: headerProfile.email || candidateEmail }], tokenPayload.uid);
       reqUser = (db.users || []).find(
         (u: any) =>
           u &&
@@ -4361,9 +4480,10 @@ async function startServer() {
     if (!reqUser || reqUser.is_bot) {
       return res.status(401).json({ detail: "Sesi tidak dapat dipulihkan." });
     }
-    if (reqUser.status === "inactive" || reqUser.status === "rejected" || isUserExplicitlyDeleted(reqUser.user_id, reqUser.email)) {
+    if (reqUser.status === "inactive" || reqUser.status === "rejected") {
       return res.status(401).json({ revoked: true, detail: "Akun telah dinonaktifkan." });
     }
+    unmarkUserDeleted(reqUser.user_id, reqUser.email);
     const tokenTv = Number(tokenPayload.tv || 1);
     if (typeof reqUser.token_version !== "number" || reqUser.token_version < 1) {
       reqUser.token_version = tokenTv;
@@ -4712,6 +4832,7 @@ async function startServer() {
     }
 
     syncUserDivisionAndGroupMembership(newUserObj);
+    unmarkUserDeleted(newUserObj.user_id, cleanEmail);
 
     if (autoApproveNow) {
       setUserOnlineStatus(newUserObj.user_id, true);
@@ -4852,7 +4973,21 @@ async function startServer() {
     }
 
     const cleanEmail = emailCheck.email;
+    // Unmark from deleted tombstones BEFORE merging known_accounts so a previously deleted account that logs in with Google can be restored or re-registered cleanly
+    unmarkUserDeleted(undefined, cleanEmail);
+    if (Array.isArray(known_accounts) && known_accounts.length > 0) {
+      const matchingKnown = known_accounts.find(
+        (a: any) => a && String(a.email || "").toLowerCase().trim() === cleanEmail
+      );
+      if (matchingKnown?.user_id) {
+        unmarkUserDeleted(String(matchingKnown.user_id), cleanEmail);
+      }
+      mergeKnownAccountsIntoDb(known_accounts);
+    }
     let user = db.users.find((u: any) => u.email?.toLowerCase() === cleanEmail);
+    if (user) {
+      unmarkUserDeleted(user.user_id, cleanEmail);
+    }
     if (user && verifiedFirebase?.uid && !user.firebase_uid) {
       user.firebase_uid = verifiedFirebase.uid;
     }
@@ -5025,6 +5160,7 @@ async function startServer() {
         user.status = isAutoApproveEligible ? "active" : "pending";
       }
 
+      unmarkUserDeleted(user.user_id, cleanEmail);
       syncUserDivisionAndGroupMembership(user);
 
       if (!isAutoApproveEligible) {
@@ -5161,6 +5297,7 @@ async function startServer() {
       user.onboarding_completed = true;
     }
 
+    unmarkUserDeleted(user.user_id, cleanEmail);
     setUserOnlineStatus(user.user_id, true);
     syncUserDivisionAndGroupMembership(user);
     ensureProfileCompletionReminder(user);
@@ -6108,11 +6245,13 @@ async function startServer() {
     if (department) accessReq.assigned_department = department;
 
     // Activate user in db.users
+    unmarkUserDeleted(accessReq.target_user_id, accessReq.email);
     let user = db.users.find((u: any) => u.email?.toLowerCase() === accessReq.email.toLowerCase());
     if (user) {
       user.status = "active";
       if (role) user.role = role;
       if (department) user.department = department;
+      unmarkUserDeleted(user.user_id, user.email);
     } else {
       user = {
         user_id: `user_${Date.now()}`,

@@ -179,6 +179,7 @@ export function verifySecretDigest(candidate: string, expectedHex: string, maste
  */
 export interface SessionTokenPayload {
   uid: string;
+  email?: string;
   tv: number;
   iat: number;
   exp: number;
@@ -188,11 +189,14 @@ export function signSessionToken(
   userId: string,
   tokenVersion: number,
   masterKey: Buffer,
-  ttlMs: number = SESSION_TTL_MS
+  ttlMs: number = SESSION_TTL_MS,
+  email?: string
 ): string {
   const now = Date.now();
+  const cleanEmail = email ? String(email).toLowerCase().trim() : undefined;
   const payload: SessionTokenPayload = {
     uid: userId,
+    ...(cleanEmail ? { email: cleanEmail } : {}),
     tv: Number(tokenVersion || 1),
     iat: now,
     exp: now + ttlMs,

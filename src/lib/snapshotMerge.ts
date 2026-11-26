@@ -342,6 +342,34 @@ export function mergeTwoSnapshotsNonDestructive(primarySnap: any, secondarySnap:
   };
 
   pRoot.users = mergeItemsById(pRoot.users || [], sRoot.users || [], 'user_id');
+
+  const activeUserIdSet = new Set<string>();
+  const activeUserEmailSet = new Set<string>();
+  for (const u of Array.isArray(pRoot.users) ? pRoot.users : []) {
+    if (u && !u.is_bot && u.status === 'active') {
+      if (u.user_id) activeUserIdSet.add(String(u.user_id).trim());
+      if (u.email) activeUserEmailSet.add(String(u.email).toLowerCase().trim());
+    }
+  }
+  const pDelUserIds = Array.isArray(pRoot.deleted_user_ids) ? pRoot.deleted_user_ids : [];
+  const sDelUserIds = Array.isArray(sRoot.deleted_user_ids) ? sRoot.deleted_user_ids : [];
+  pRoot.deleted_user_ids = Array.from(
+    new Set(
+      [...pDelUserIds, ...sDelUserIds]
+        .map((id: any) => String(id || '').trim())
+        .filter((id: string) => Boolean(id) && !activeUserIdSet.has(id))
+    )
+  );
+  const pDelUserEmails = Array.isArray(pRoot.deleted_user_emails) ? pRoot.deleted_user_emails : [];
+  const sDelUserEmails = Array.isArray(sRoot.deleted_user_emails) ? sRoot.deleted_user_emails : [];
+  pRoot.deleted_user_emails = Array.from(
+    new Set(
+      [...pDelUserEmails, ...sDelUserEmails]
+        .map((e: any) => String(e || '').toLowerCase().trim())
+        .filter((e: string) => Boolean(e) && !activeUserEmailSet.has(e))
+    )
+  );
+
   pRoot.messages = mergeItemsById(pRoot.messages || [], sRoot.messages || []).filter(notDeleted());
 
   const msgApprovalsByTaskId = new Map<string, string[]>();

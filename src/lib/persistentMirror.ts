@@ -152,21 +152,37 @@ export function pruneDeletedAccountsFromVault(
   deletedEmails: string[] = []
 ): void {
   try {
+    let activeSessionUid = '';
+    let activeSessionEmail = '';
+    try {
+      const rawSess =
+        sessionStorage.getItem('circle_session_user') ||
+        localStorage.getItem('circle_session_cache');
+      if (rawSess) {
+        const parsed = JSON.parse(rawSess);
+        const sessUser = parsed?.user || parsed;
+        activeSessionUid = String(sessUser?.user_id || '').trim();
+        activeSessionEmail = String(sessUser?.email || '').toLowerCase().trim();
+      }
+    } catch {}
     const idSet = new Set(
       (Array.isArray(deletedIds) ? deletedIds : [])
         .map((x) => String(x || '').trim())
-        .filter(Boolean)
+        .filter((x) => Boolean(x) && x !== activeSessionUid)
     );
     const emailSet = new Set(
       (Array.isArray(deletedEmails) ? deletedEmails : [])
         .map((x) => String(x || '').toLowerCase().trim())
-        .filter(Boolean)
+        .filter((x) => Boolean(x) && x !== activeSessionEmail)
     );
     if (idSet.size === 0 && emailSet.size === 0) return;
     const list = readVaultRaw();
     const filtered = list.filter((u) => {
       const uid = String(u?.user_id || '').trim();
       const email = String(u?.email || '').toLowerCase().trim();
+      if ((activeSessionUid && uid === activeSessionUid) || (activeSessionEmail && email === activeSessionEmail)) {
+        return true;
+      }
       return !idSet.has(uid) && !emailSet.has(email);
     });
     if (filtered.length !== list.length) {

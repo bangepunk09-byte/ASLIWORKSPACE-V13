@@ -632,11 +632,11 @@ export function AppProvider({ children }) {
   useEffect(() => {
     const unsubStatus = subscribeCloudSyncStatus(setCloudSyncStatus);
     const unsubFb = subscribeFirebaseAuth(async (fbUser) => {
-      if (fbUser?.emailVerified) {
+      if (fbUser?.emailVerified && me?.user_id) {
         const restored = await attemptAutoHydrateServer(api).catch(() => false);
-        if (restored && me?.user_id) {
+        if (restored) {
           loadAll().catch(() => {});
-        } else if (me?.user_id) {
+        } else {
           syncWorkspaceMirror(api, false, () => loadAllRef.current?.().catch(() => {})).catch(() => {});
         }
       }
