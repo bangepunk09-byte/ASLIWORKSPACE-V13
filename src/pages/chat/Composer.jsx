@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Smile, Sticker, Paperclip, Image as ImageIcon, BarChart3, SendHorizonal, X, Search, Upload, FileText, Plus, Sparkles, Trash2, Palette } from "lucide-react";
 import { toast } from "sonner";
 import { api, errMsg, fileUrl, uploadFile } from "../../lib/api";
@@ -419,7 +419,48 @@ export default function Composer({ conv, reply, onCancelReply, onSent, onPoll, i
     if (ta.current) { ta.current.style.height = "auto"; ta.current.style.height = `${Math.min(ta.current.scrollHeight, 160)}px`; }
   }, [text]);
 
+  const focusComposer = useCallback(() => {
+    if (!ta.current || conv?.archived || conv?.is_member === false) return;
+    if (document.querySelector('[role="dialog"], [data-testid="chat-search-input"]')) return;
+    try {
+      ta.current.focus({ preventScroll: true });
+    } catch {
+      ta.current.focus();
+    }
+    const len = ta.current.value.length;
+    try { ta.current.setSelectionRange(len, len); } catch {}
+  }, [conv?.archived, conv?.is_member]);
+
   useEffect(() => {
+    if (!conv?.id || conv?.archived || conv?.is_member === false) return;
+    let rafId = 0;
+    let timerId = 0;
+    rafId = requestAnimationFrame(() => {
+      focusComposer();
+      timerId = setTimeout(() => {
+        if (document.activeElement !== ta.current) {
+          focusComposer();
+        }
+      }, 45);
+    });
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId);
+      if (timerId) clearTimeout(timerId);
+    };
+  }, [conv?.id, conv?.archived, conv?.is_member, focusComposer]);
+
+  useEffect(() => {
+    if (!reply?.id) return;
+    const rafId = requestAnimationFrame(() => focusComposer());
+    return () => cancelAnimationFrame(rafId);
+  }, [reply?.id, focusComposer]);
+
+  useEffect(() => {
+    const onFocusReq = (ev) => {
+      const detail = ev?.detail || {};
+      if (detail.conversationId && detail.conversationId !== conv?.id) return;
+      requestAnimationFrame(() => focusComposer());
+    };
     const onPrefill = (ev) => {
       const detail = ev?.detail || {};
       if (detail.conversationId && detail.conversationId !== conv?.id) return;
@@ -435,9 +476,13 @@ export default function Composer({ conv, reply, onCancelReply, onSent, onPoll, i
         }
       });
     };
+    window.addEventListener("circle:composer-focus", onFocusReq);
     window.addEventListener("circle:composer-prefill", onPrefill);
-    return () => window.removeEventListener("circle:composer-prefill", onPrefill);
-  }, [conv?.id]);
+    return () => {
+      window.removeEventListener("circle:composer-focus", onFocusReq);
+      window.removeEventListener("circle:composer-prefill", onPrefill);
+    };
+  }, [conv?.id, focusComposer]);
 
   const post = async (body) => {
     const tempId = `msg_opt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;

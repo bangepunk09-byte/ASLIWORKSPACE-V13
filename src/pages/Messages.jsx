@@ -42,9 +42,11 @@ function NewDM({ open, onOpenChange, convs, onCreated }) {
   const { users, me, t: tr } = useApp();
   const [q, setQ] = useState("");
   const [starting, setStarting] = useState(false);
+  const pickedRef = useRef(false);
   const navigate = useNavigate();
   const start = async (uid) => {
     if (starting) return;
+    pickedRef.current = true;
     onOpenChange(false);
     // Check if DM with uid already exists in memory for 0ms navigation
     const existing = (convs || []).find((c) => {
@@ -71,8 +73,17 @@ function NewDM({ open, onOpenChange, convs, onCreated }) {
     }
   };
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="bg-surface rounded-3xl max-w-md">
+    <Dialog open={open} onOpenChange={(v) => { if (v) pickedRef.current = false; onOpenChange(v); }}>
+      <DialogContent
+        className="bg-surface rounded-3xl max-w-md"
+        onCloseAutoFocus={(e) => {
+          if (pickedRef.current) {
+            e.preventDefault();
+            pickedRef.current = false;
+            window.dispatchEvent(new CustomEvent("circle:composer-focus"));
+          }
+        }}
+      >
         <DialogHeader><DialogTitle>{tr("messages_new_dm_title", "Pesan Baru")}</DialogTitle></DialogHeader>
         <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={tr("messages_new_dm_search_ph", "Cari rekan kerja…")} className="h-11 rounded-xl border bg-surface2 px-3 text-sm outline-none" data-testid="new-dm-search" />
         <div className="max-h-80 overflow-y-auto">
@@ -364,7 +375,11 @@ export default function Messages() {
   const activeConvHint = useMemo(() => (cid ? named.find((c) => c.id === cid) || null : null), [cid, named]);
 
   const handleSelectConv = useCallback((c) => {
-    if (!c?.id || c.id === cidRef.current) return;
+    if (!c?.id) return;
+    if (c.id === cidRef.current) {
+      window.dispatchEvent(new CustomEvent("circle:composer-focus", { detail: { conversationId: c.id } }));
+      return;
+    }
     playSound("click");
     upsertConversationInCache(c, me?.user_id);
     navigate(`/messages/${c.id}`);
