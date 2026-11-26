@@ -3,7 +3,7 @@ import { Navigate, useSearchParams } from "react-router-dom";
 import { ShieldCheck, Sparkles, MessageCircle, CheckSquare, Users, Eye, EyeOff, Mail, Lock, User, Building2, Briefcase, CheckCircle2, ArrowRight, ShieldAlert, Check, Upload, KeyRound, RefreshCw, Clock, XCircle, Phone, MapPin } from "lucide-react";
 import { toast } from "sonner";
 import { useApp } from "../context/AppContext";
-import { api, errMsg, uploadFile, fileUrl } from "../lib/api";
+import { api, errMsg, uploadFile, fileUrl, setAuthToken, setAuthUserId } from "../lib/api";
 import { Avatar } from "../components/common";
 import { googleBasicSignIn, setManualGoogleAuth } from "../lib/auth";
 import { getTranslation } from "../lib/i18n";
@@ -195,6 +195,24 @@ export default function Login() {
   const effectiveGoogleAutoApprove = Boolean(googleAutoApprove || isDomainAutoApproved(googleForm.email));
 
   useEffect(() => {
+    if (!session?.user?.user_id) {
+      try {
+        const hasStoredSession = Boolean(
+          sessionStorage.getItem("circle_tab_session_cache") ||
+            localStorage.getItem("circle_session_cache")
+        );
+        if (!hasStoredSession) {
+          setAuthToken(null);
+          setAuthUserId(null);
+        }
+      } catch {
+        setAuthToken(null);
+        setAuthUserId(null);
+      }
+    }
+  }, [session?.user?.user_id]);
+
+  useEffect(() => {
     let active = true;
     api.get("/public/branding").then((r) => {
       if (!active) return;
@@ -301,8 +319,14 @@ export default function Login() {
       if (data?.account_vault_entry || data?.user) {
         upsertAccountInVault(data.account_vault_entry || data.user);
       }
+      if (data?.user?.user_id) {
+        setAuthUserId(data.user.user_id);
+      }
+      if (data?.token) {
+        setAuthToken(data.token);
+      }
       setSession(data);
-      syncWorkspaceMirror(api, true).catch(() => {});
+      syncWorkspaceMirror(api, false).catch(() => {});
       toast.success("Berhasil masuk ke workspace!");
     } catch (err) {
       const respData = err?.response?.data;
@@ -555,8 +579,12 @@ export default function Login() {
         upsertAccountInVault(res.data.account_vault_entry || res.data.user);
       }
       if (res.data?.status === "active" && res.data?.token) {
+        if (res.data?.user?.user_id) {
+          setAuthUserId(res.data.user.user_id);
+        }
+        setAuthToken(res.data.token);
         setSession(res.data);
-        syncWorkspaceMirror(api, true).catch(() => {});
+        syncWorkspaceMirror(api, false).catch(() => {});
         toast.success(res.data?.detail || "Akun domain perusahaan otomatis aktif! Selamat datang.");
         return;
       }
@@ -716,8 +744,10 @@ export default function Login() {
         toast.success(data.detail || "Pendaftaran akun Google berhasil diajukan!");
       } else if (data?.user && data?.token) {
         setManualGoogleAuth(data.user);
+        setAuthUserId(data.user.user_id);
+        setAuthToken(data.token);
         setSession(data);
-        syncWorkspaceMirror(api, true).catch(() => {});
+        syncWorkspaceMirror(api, false).catch(() => {});
         toast.success("Berhasil masuk menggunakan Google!");
       }
     } catch (errPost) {

@@ -2,6 +2,8 @@ import { initializeApp, getApps } from 'firebase/app';
 import { getAuth, onAuthStateChanged, User } from 'firebase/auth';
 import {
   getFirestore,
+  initializeFirestore,
+  Firestore,
   doc,
   getDocFromServer,
   getDocs,
@@ -24,7 +26,18 @@ import {
 } from './snapshotMerge';
 
 const app = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
-export const firestoreDb = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+function createFirestoreInstance(): Firestore {
+  try {
+    return initializeFirestore(
+      app,
+      { experimentalForceLongPolling: true },
+      firebaseConfig.firestoreDatabaseId
+    );
+  } catch {
+    return getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  }
+}
+export const firestoreDb = createFirestoreInstance();
 export const firebaseAuth = getAuth(app);
 
 export const SHARED_LIVE_BACKUP_ID = 'shared_workspace_live';
@@ -165,14 +178,31 @@ export function syncServerQuotaPauseUntil(untilMs: number): boolean {
   return true;
 }
 
+async function testConnection() {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+  try {
+    await getDocFromServer(doc(firestoreDb, 'test', 'connection'));
+  } catch (error) {
+    if (error instanceof Error && error.message.toLowerCase().includes('client is offline')) {
+      console.warn('Firestore offline check note:', error.message);
+    }
+  }
+}
+
 const initialQuotaPaused = isFirestoreQuotaPaused();
 if (initialQuotaPaused) {
   void disableNetwork(firestoreDb).catch(() => {});
 } else {
-  // Startup Firestore connectivity check (non-blocking)
-  void getDocFromServer(doc(firestoreDb, 'test', 'connection')).catch((error) => {
-    if (error instanceof Error && error.message.toLowerCase().includes('client is offline')) {
-      console.warn('Firestore offline check note:', error.message);
+  void testConnection();
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('offline', () => {
+    void disableNetwork(firestoreDb).catch(() => {});
+  });
+  window.addEventListener('online', () => {
+    if (!isFirestoreQuotaPaused()) {
+      void enableNetwork(firestoreDb).catch(() => {});
     }
   });
 }
@@ -246,7 +276,12 @@ function formatReadableFirestoreError(error: unknown): {
       upgradeUrl: null,
     };
   }
-  if (lower.includes('client is offline') || lower.includes('network')) {
+  if (
+    lower.includes('client is offline') ||
+    lower.includes('network') ||
+    lower.includes('unavailable') ||
+    lower.includes('could not reach')
+  ) {
     return {
       message: 'Jaringan sedang offline — perubahan disimpan lokal & akan tersinkron otomatis.',
       isQuota: false,
@@ -304,7 +339,7 @@ async function guardedFirestoreWrite<T>(
   fn: () => Promise<T>,
   operationType: OperationType,
   path: string,
-  timeoutMs = 6500,
+  timeoutMs = 12000,
   options?: { silentConsoleOnQuota?: boolean }
 ): Promise<T> {
   if (isFirestoreQuotaPaused()) {
@@ -324,7 +359,7 @@ async function guardedFirestoreWrite<T>(
       fn(),
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => {
-          reject(new Error('Quota exceeded (resource-exhausted write backoff timeout).'));
+          reject(new Error('Firestore write timeout (unavailable/network).'));
         }, timeoutMs);
       }),
     ]);
@@ -744,7 +779,7 @@ async function upsertBackupDocumentWithChunks(
     },
     exists ? OperationType.UPDATE : OperationType.CREATE,
     headerPath,
-    6500,
+    12000,
     writeOpts
   );
 
@@ -777,7 +812,7 @@ async function upsertBackupDocumentWithChunks(
       () => batch.commit(),
       OperationType.WRITE,
       `workspaceBackups/${backupId}/chunks`,
-      6500,
+      12000,
       writeOpts
     );
   }
@@ -796,7 +831,7 @@ async function upsertBackupDocumentWithChunks(
         () => batch.commit(),
         OperationType.DELETE,
         `workspaceBackups/${backupId}/chunks`,
-        6500,
+        12000,
         writeOpts
       );
     } catch {}

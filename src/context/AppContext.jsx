@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { api, wsUrl, fileUrl, setAuthUserId, setAuthToken, getAuthToken } from "../lib/api";
+import { api, wsUrl, fileUrl, setAuthUserId, setAuthToken, getAuthToken, getAuthGeneration } from "../lib/api";
 import { applyTheme, buildTheme } from "../lib/theme";
 import { getTranslation, getEffectiveCopywriting } from "../lib/i18n";
 import { playSound } from "../lib/sound";
@@ -17,6 +17,7 @@ import {
   upsertGroupInCache,
   removeGroupFromCache,
   scheduleJsonStorageWrite,
+  cancelScheduledStorageWrite,
 } from "../lib/workspaceCaches";
 import { preloadAllRoutes } from "../lib/routePreload";
 import { setCachedDriveShortcuts } from "../data/initialDriveShortcuts";
@@ -62,54 +63,57 @@ export function AppProvider({ children }) {
     setAuthToken(null);
     return null;
   });
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
 
   const setSession = useCallback((updater) => {
-    setSessionState((prev) => {
-      const rawNext = typeof updater === "function" ? updater(prev) : updater;
-      const prevUid = prev?.user?.user_id || null;
-      const rawNextUid = rawNext?.user?.user_id || null;
-      const next =
-        rawNext && rawNextUid && !rawNext.token && prev?.token && prevUid === rawNextUid
-          ? { ...rawNext, token: prev.token }
-          : rawNext;
-      const nextUid = next?.user?.user_id || null;
+    const prev = sessionRef.current;
+    const rawNext = typeof updater === "function" ? updater(prev) : updater;
+    const prevUid = prev?.user?.user_id || null;
+    const rawNextUid = rawNext?.user?.user_id || null;
+    const next =
+      rawNext && rawNextUid && !rawNext.token && prev?.token && prevUid === rawNextUid
+        ? { ...rawNext, token: prev.token }
+        : rawNext;
+    const nextUid = next?.user?.user_id || null;
 
-      if (prevUid !== nextUid) {
-        clearChatCache();
-        lastBootstrapEtagRef.current = null;
-        lastLoadAllAtRef.current = 0;
-        try {
-          [
-            "circle_convs_cache",
-            "circle_cache_conversations",
-            "circle_tasks_cache",
-            "circle_cache_tasks",
-            "circle_admin_stats",
-            "circle_admin_audit",
-            "circle_admin_users",
-            "circle_admin_invites",
-            "circle_admin_access_reqs",
-          ].forEach((k) => localStorage.removeItem(k));
-        } catch {}
-      }
-
-      setAuthUserId(nextUid);
-      setAuthToken(next?.token || null);
-
+    if (prevUid !== nextUid) {
+      clearChatCache();
+      lastBootstrapEtagRef.current = null;
+      lastLoadAllAtRef.current = 0;
       try {
-        if (next && nextUid) {
-          upsertAccountInVault(next.account_vault_entry || next.user);
-          const serialized = JSON.stringify(next);
-          sessionStorage.setItem("circle_tab_session_cache", serialized);
-          localStorage.setItem("circle_session_cache", serialized);
-        } else {
-          sessionStorage.removeItem("circle_tab_session_cache");
-          localStorage.removeItem("circle_session_cache");
-        }
+        [
+          "circle_convs_cache",
+          "circle_cache_conversations",
+          "circle_tasks_cache",
+          "circle_cache_tasks",
+          "circle_admin_stats",
+          "circle_admin_audit",
+          "circle_admin_users",
+          "circle_admin_invites",
+          "circle_admin_access_reqs",
+        ].forEach((k) => localStorage.removeItem(k));
       } catch {}
+    }
 
-      return next;
-    });
+    sessionRef.current = next;
+    cancelScheduledStorageWrite("circle_session_cache");
+    setAuthUserId(nextUid);
+    setAuthToken(next?.token || null);
+
+    try {
+      if (next && nextUid) {
+        upsertAccountInVault(next.account_vault_entry || next.user);
+        const serialized = JSON.stringify(next);
+        sessionStorage.setItem("circle_tab_session_cache", serialized);
+        localStorage.setItem("circle_session_cache", serialized);
+      } else {
+        sessionStorage.removeItem("circle_tab_session_cache");
+        localStorage.removeItem("circle_session_cache");
+      }
+    } catch {}
+
+    setSessionState(next);
   }, []);
 
   const [users, setUsers] = useState(() => {
@@ -370,9 +374,7 @@ export function AppProvider({ children }) {
           if (syncedMe) {
             setSession((s) => {
               if (!s?.user) return s;
-              const next = { ...s, user: { ...s.user, ...syncedMe } };
-              scheduleJsonStorageWrite("circle_session_cache", next);
-              return next;
+              return { ...s, user: { ...s.user, ...syncedMe } };
             });
             upsertAccountInVault(syncedMe);
           }
@@ -526,11 +528,25 @@ export function AppProvider({ children }) {
   useEffect(() => {
     let lastNotified = 0;
     let handling = false;
-    const handleExpired = async () => {
+    const handleExpired = async (evt) => {
       if (handling) return;
+      const eventAuthGen = evt?.detail?.authGen;
+      const currentGenBefore = getAuthGeneration();
+      if (typeof eventAuthGen === "number" && eventAuthGen !== currentGenBefore) {
+        return;
+      }
+      const hadSessionUid = sessionRef.current?.user?.user_id || null;
+      const hadToken = sessionRef.current?.token || getAuthToken();
+      if (!hadSessionUid && !hadToken) {
+        return;
+      }
       handling = true;
       try {
         await attemptAutoHydrateServer(api).catch(() => false);
+        // If user just signed in manually while auto-hydrate ran, do NOT wipe out their new session
+        if (getAuthGeneration() !== currentGenBefore && sessionRef.current?.user?.user_id && sessionRef.current?.token) {
+          return;
+        }
         try {
           const cachedRaw = sessionStorage.getItem("circle_tab_session_cache") || localStorage.getItem("circle_session_cache");
           const cachedSess = cachedRaw ? JSON.parse(cachedRaw) : null;
@@ -541,7 +557,6 @@ export function AppProvider({ children }) {
               known_accounts: getKnownAccountsFromVault()
             });
             if (rec?.token && rec?.user) {
-              setAuthToken(rec.token);
               setSession((prev) => ({
                 ...(prev || cachedSess),
                 token: rec.token,
@@ -553,6 +568,9 @@ export function AppProvider({ children }) {
             }
           }
         } catch {}
+        if (getAuthGeneration() !== currentGenBefore && sessionRef.current?.user?.user_id && sessionRef.current?.token) {
+          return;
+        }
         const now = Date.now();
         setSession(null);
         if (now - lastNotified > 3000) {
@@ -851,9 +869,7 @@ export function AppProvider({ children }) {
             setSession((s) => {
               if (!s?.user) return s;
               if (s.user.availability_status === incomingAvail && s.user.online === true) return s;
-              const next = { ...s, user: { ...s.user, availability_status: incomingAvail, online: true } };
-              scheduleJsonStorageWrite("circle_session_cache", next);
-              return next;
+              return { ...s, user: { ...s.user, availability_status: incomingAvail, online: true } };
             });
           }
         }
@@ -1093,9 +1109,7 @@ export function AppProvider({ children }) {
                 if (!s?.user) return s;
                 const updatedMe = synced.find((u) => u.user_id === s.user.user_id);
                 if (!updatedMe) return s;
-                const next = { ...s, user: updatedMe };
-                scheduleJsonStorageWrite("circle_session_cache", next);
-                return next;
+                return { ...s, user: updatedMe };
               });
             }
           }).catch(() => {});
@@ -1310,9 +1324,7 @@ export function AppProvider({ children }) {
         if (!s?.user) return s;
         const updatedMe = synced.find((u) => u.user_id === s.user.user_id);
         if (!updatedMe) return s;
-        const next = { ...s, user: updatedMe };
-        scheduleJsonStorageWrite("circle_session_cache", next);
-        return next;
+        return { ...s, user: updatedMe };
       });
     }
   }), [setSession]);
@@ -1333,31 +1345,25 @@ export function AppProvider({ children }) {
       );
     }
     setSession((s) => {
-      const next = { ...s, workspace: r.data };
-      scheduleJsonStorageWrite("circle_session_cache", next);
       if (Array.isArray(r.data?.divisions)) {
         scheduleJsonStorageWrite("circle_admin_divisions", r.data.divisions);
       }
-      return next;
+      return s ? { ...s, workspace: r.data } : s;
     });
   }), [setSession]);
 
   const savePrefs = useCallback(async (patch) => {
     setSession((s) => {
       const nextPrefs = { ...(s?.prefs || {}), ...patch };
-      const nextSession = { ...s, prefs: nextPrefs };
       scheduleJsonStorageWrite("circle_user_prefs", nextPrefs);
-      scheduleJsonStorageWrite("circle_session_cache", nextSession);
-      return nextSession;
+      return s ? { ...s, prefs: nextPrefs } : s;
     });
     try {
       const { data } = await api.put("/prefs", patch);
       setSession((s) => {
         const synced = { ...(s?.prefs || {}), ...data };
-        const nextSession = { ...s, prefs: synced };
         scheduleJsonStorageWrite("circle_user_prefs", synced);
-        scheduleJsonStorageWrite("circle_session_cache", nextSession);
-        return nextSession;
+        return s ? { ...s, prefs: synced } : s;
       });
     } catch (e) {
       console.warn("Server prefs sync warning:", e);
@@ -1380,9 +1386,7 @@ export function AppProvider({ children }) {
     if (!uid) return;
     setSession((s) => {
       if (!s?.user) return s;
-      const next = { ...s, user: { ...s.user, availability_status: normalized, online: true } };
-      scheduleJsonStorageWrite("circle_session_cache", next);
-      return next;
+      return { ...s, user: { ...s.user, availability_status: normalized, online: true } };
     });
     setUsers((prev) => {
       const next = (Array.isArray(prev) ? prev : []).map((u) =>

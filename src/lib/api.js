@@ -6,19 +6,28 @@ export const api = axios.create({ baseURL: `/api`, withCredentials: true });
 
 let activeTabUserId = null;
 let activeAuthToken = null;
+let authGeneration = 0;
 let recoveryInFlight = null;
 let cachedProfileHeader = { uid: null, token: null, value: "", expiresAt: 0 };
+
+export function getAuthGeneration() {
+  return authGeneration;
+}
 
 export function invalidateProfileHeaderCache() {
   cachedProfileHeader = { uid: null, token: null, value: "", expiresAt: 0 };
 }
 
 export function setAuthToken(token) {
-  activeAuthToken = token || null;
+  const next = token || null;
+  if (activeAuthToken !== next) {
+    authGeneration += 1;
+  }
+  activeAuthToken = next;
   invalidateProfileHeaderCache();
   try {
-    if (token) {
-      sessionStorage.setItem("circle_active_token", token);
+    if (next) {
+      sessionStorage.setItem("circle_active_token", next);
     } else {
       sessionStorage.removeItem("circle_active_token");
     }
@@ -54,11 +63,15 @@ export function getAuthToken() {
 }
 
 export function setAuthUserId(uid) {
-  activeTabUserId = uid || null;
+  const next = uid || null;
+  if (activeTabUserId !== next) {
+    authGeneration += 1;
+  }
+  activeTabUserId = next;
   invalidateProfileHeaderCache();
   try {
-    if (uid) {
-      sessionStorage.setItem("circle_active_user_id", uid);
+    if (next) {
+      sessionStorage.setItem("circle_active_user_id", next);
     } else {
       sessionStorage.removeItem("circle_active_user_id");
     }
@@ -117,6 +130,7 @@ function encodeBase64Json(obj) {
 api.interceptors.request.use((config) => {
   const token = getAuthToken();
   const uid = getAuthUserId();
+  config._authGen = authGeneration;
   config.headers = config.headers || {};
   if (token) {
     config.headers["Authorization"] = `Bearer ${token}`;
@@ -192,7 +206,7 @@ async function recoverActiveSession() {
       const sessUser = getCachedSessionUser();
       const token = getAuthToken();
       const known = getKnownAccountsFromVault();
-      if (!sessUser?.user_id || !sessUser?.email) return false;
+      if (!token && !sessUser?.user_id) return false;
 
       // 1. Hydrate workspace mirror if server cold-started
       await attemptAutoHydrateServer(api).catch(() => false);
@@ -251,24 +265,67 @@ api.interceptors.response.use(
       reqUrl.includes("/workspace/auto-hydrate") ||
       reqUrl.includes("/public/");
 
-    if (status === 401 && !isPublicOrLogin && (getAuthToken() || getAuthUserId())) {
-      // Attempt silent session recovery once before kicking the user out
-      if (originalConfig && !originalConfig._retriedAfterRecover) {
-        originalConfig._retriedAfterRecover = true;
-        const recovered = await recoverActiveSession();
-        if (recovered) {
-          const freshToken = getAuthToken();
+    if (status === 401 && !isPublicOrLogin) {
+      const reqAuthGen = originalConfig?._authGen;
+      // If a newer login / token rotation already happened while this stale request was in-flight,
+      // replay once with the fresh credentials instead of falsely kicking out the newly logged-in user.
+      if (typeof reqAuthGen === "number" && reqAuthGen !== authGeneration) {
+        const freshToken = getAuthToken();
+        const freshUid = getAuthUserId();
+        if (freshToken && freshUid && originalConfig && !originalConfig._retriedAfterAuthChange) {
+          originalConfig._retriedAfterAuthChange = true;
+          originalConfig._authGen = authGeneration;
           originalConfig.headers = originalConfig.headers || {};
-          if (freshToken) {
-            originalConfig.headers["Authorization"] = `Bearer ${freshToken}`;
-          }
+          originalConfig.headers["Authorization"] = `Bearer ${freshToken}`;
+          originalConfig.headers["x-user-id"] = freshUid;
+          delete originalConfig.headers["x-user-profile"];
           return api.request(originalConfig);
         }
+        return Promise.reject(err);
       }
 
-      try {
-        window.dispatchEvent(new CustomEvent("circle:session-expired"));
-      } catch {}
+      if (getAuthToken() || getAuthUserId()) {
+        // Attempt silent session recovery once before kicking the user out
+        if (originalConfig && !originalConfig._retriedAfterRecover) {
+          originalConfig._retriedAfterRecover = true;
+          const recovered = await recoverActiveSession();
+          // Re-check if user logged in manually while recovery was in-flight
+          if (typeof reqAuthGen === "number" && reqAuthGen !== authGeneration) {
+            const freshToken = getAuthToken();
+            const freshUid = getAuthUserId();
+            if (freshToken && freshUid && !originalConfig._retriedAfterAuthChange) {
+              originalConfig._retriedAfterAuthChange = true;
+              originalConfig._authGen = authGeneration;
+              originalConfig.headers = originalConfig.headers || {};
+              originalConfig.headers["Authorization"] = `Bearer ${freshToken}`;
+              originalConfig.headers["x-user-id"] = freshUid;
+              delete originalConfig.headers["x-user-profile"];
+              return api.request(originalConfig);
+            }
+            return Promise.reject(err);
+          }
+          if (recovered) {
+            const freshToken = getAuthToken();
+            const freshUid = getAuthUserId();
+            originalConfig._authGen = authGeneration;
+            originalConfig.headers = originalConfig.headers || {};
+            if (freshToken) {
+              originalConfig.headers["Authorization"] = `Bearer ${freshToken}`;
+            }
+            if (freshUid) {
+              originalConfig.headers["x-user-id"] = freshUid;
+            }
+            delete originalConfig.headers["x-user-profile"];
+            return api.request(originalConfig);
+          }
+        }
+
+        if (typeof reqAuthGen !== "number" || reqAuthGen === authGeneration) {
+          try {
+            window.dispatchEvent(new CustomEvent("circle:session-expired", { detail: { authGen: reqAuthGen ?? authGeneration } }));
+          } catch {}
+        }
+      }
     }
     return Promise.reject(err);
   }

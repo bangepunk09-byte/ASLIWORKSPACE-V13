@@ -2487,10 +2487,12 @@ async function startServer() {
     const authHeader = req.headers?.authorization as string | undefined;
     if (authHeader && authHeader.toLowerCase().startsWith("bearer ")) {
       const t = authHeader.slice(7).trim();
-      if (t) return t;
+      if (t && t !== "null" && t !== "undefined") return t;
     }
     const cookies = parseCookies(req.headers?.cookie);
-    if (cookies.circle_session) return cookies.circle_session;
+    if (cookies.circle_session && cookies.circle_session !== "null" && cookies.circle_session !== "undefined") {
+      return cookies.circle_session;
+    }
     return null;
   }
 
@@ -2499,10 +2501,24 @@ async function startServer() {
     if (!payload?.uid) return null;
 
     const headerProfile = req ? decodeUserProfileHeader(req) : null;
-    let found = (db.users || []).find((u: any) => u.user_id === payload.uid);
+    const headerEmail =
+      headerProfile?.user_id === payload.uid && headerProfile?.email
+        ? String(headerProfile.email).toLowerCase().trim()
+        : "";
+    let found = (db.users || []).find(
+      (u: any) =>
+        u &&
+        (u.user_id === payload.uid ||
+          (headerEmail && String(u.email || "").toLowerCase().trim() === headerEmail))
+    );
     if (!found && headerProfile && headerProfile.user_id === payload.uid && !isUserExplicitlyDeleted(payload.uid, headerProfile.email)) {
       mergeKnownAccountsIntoDb([headerProfile], payload.uid);
-      found = (db.users || []).find((u: any) => u.user_id === payload.uid);
+      found = (db.users || []).find(
+        (u: any) =>
+          u &&
+          (u.user_id === payload.uid ||
+            (headerEmail && String(u.email || "").toLowerCase().trim() === headerEmail))
+      );
     }
     if (!found || found.is_bot) return null;
     if (found.status === "inactive" || found.status === "rejected" || isUserExplicitlyDeleted(found.user_id, found.email)) {
@@ -2512,15 +2528,20 @@ async function startServer() {
       found.status = "active";
       saveDbToFile(true);
     }
-    const currentTv = Number(found.token_version || 1);
-    if (Number(payload.tv || 1) !== currentTv) {
-      return null;
+    const tokenTv = Number(payload.tv || 1);
+    if (typeof found.token_version !== "number" || found.token_version < 1) {
+      found.token_version = tokenTv;
     }
     return found;
   }
 
+  function isHttpsRequest(req?: any): boolean {
+    const proto = String(req?.headers?.["x-forwarded-proto"] || "").toLowerCase();
+    return Boolean(req?.secure || proto.split(",").some((p) => p.trim() === "https"));
+  }
+
   function setSessionCookie(req: any, res: any, token: string) {
-    const isHttps = req.secure || req.headers?.["x-forwarded-proto"] === "https";
+    const isHttps = isHttpsRequest(req);
     const parts = [
       `circle_session=${encodeURIComponent(token)}`,
       "Path=/",
@@ -2536,7 +2557,7 @@ async function startServer() {
   }
 
   function clearSessionCookie(res: any, req?: any) {
-    const isHttps = Boolean(req?.secure || req?.headers?.["x-forwarded-proto"] === "https");
+    const isHttps = isHttpsRequest(req);
     const parts = [
       "circle_session=",
       "Path=/",
@@ -3570,7 +3591,31 @@ async function startServer() {
       if (Array.isArray(rawData[k])) {
         if (k === "users") {
           const existingUsers = Array.isArray(db.users) ? [...db.users] : [];
-          db.users = rawData.users.filter((u: any) => u && !isUserExplicitlyDeleted(u.user_id, u.email));
+          const existingById = new Map<string, any>();
+          const existingByEmail = new Map<string, any>();
+          for (const ex of existingUsers) {
+            if (!ex || typeof ex !== "object") continue;
+            if (ex.user_id) existingById.set(String(ex.user_id), ex);
+            if (ex.email) existingByEmail.set(String(ex.email).toLowerCase().trim(), ex);
+          }
+          db.users = rawData.users
+            .filter((u: any) => u && !isUserExplicitlyDeleted(u.user_id, u.email))
+            .map((u: any) => {
+              const ex =
+                (u.user_id ? existingById.get(String(u.user_id)) : null) ||
+                (u.email ? existingByEmail.get(String(u.email).toLowerCase().trim()) : null);
+              if (!ex) {
+                return u.token_version !== undefined ? u : { ...u, token_version: 1 };
+              }
+              const mergedUser: any = { ...u };
+              // Always keep live server token_version so snapshot hydration never invalidates an active login or resurrects a revoked session
+              mergedUser.token_version = Number(ex.token_version || 1);
+              if (ex.password_hash && (!u.password_hash || (ex.password_updated_at && (!u.password_updated_at || new Date(ex.password_updated_at).getTime() >= new Date(u.password_updated_at).getTime())))) {
+                mergedUser.password_hash = ex.password_hash;
+                mergedUser.password_updated_at = ex.password_updated_at;
+              }
+              return mergedUser;
+            });
           mergeKnownAccountsIntoDb(existingUsers);
         } else if (k === "tasks") {
           db.tasks = rawData.tasks.filter(
@@ -4077,7 +4122,7 @@ async function startServer() {
 
   app.get("/api/workspace/persistence-status", (_req, res) => {
     const summary = buildBackupSummary();
-    const isFreshSeedState = isDatabaseInEmptySeedState() || summary.tasks === 0;
+    const isFreshSeedState = Boolean(serverBootedFreshSeed && isDatabaseInEmptySeedState());
 
     const userEmails = (db.users || [])
       .filter((u: any) => u && !u.is_bot && u.role !== "assistant")
@@ -4195,6 +4240,8 @@ async function startServer() {
     }
 
     const reqUser = getReqUser(req);
+    const preAuthUserId = reqUser?.user_id ? String(reqUser.user_id) : null;
+    const preTokenVersion = reqUser ? Number(reqUser.token_version || 1) : null;
     const isAdmin = Boolean(reqUser && ["super_admin", "workspace_admin"].includes(reqUser.role));
     const isSignedSnapshot = verifySnapshotSignature(snapshot, snapshot_sig);
 
@@ -4239,6 +4286,14 @@ async function startServer() {
       mergeSnapshotIntoDb(snapshot);
     }
 
+    if (preAuthUserId && preTokenVersion !== null && Array.isArray(db.users)) {
+      const callerUser = db.users.find((u: any) => u && String(u.user_id) === preAuthUserId);
+      if (callerUser) {
+        callerUser.token_version = preTokenVersion;
+      }
+    }
+
+    serverBootedFreshSeed = false;
     await enqueuePostgresSave({ allowEmptyOverwrite: false });
 
     res.json({
@@ -4257,27 +4312,61 @@ async function startServer() {
       return res.status(401).json({ detail: "Token sesi tidak valid atau sudah kedaluwarsa." });
     }
 
-    let reqUser = (db.users || []).find((u: any) => u.user_id === tokenPayload.uid);
+    const headerProfile = decodeUserProfileHeader(req);
+    const knownMatch = Array.isArray(known_accounts)
+      ? known_accounts.find((a: any) => a && a.user_id === tokenPayload.uid && a.email)
+      : null;
+    const candidateEmail = String(
+      (user?.user_id === tokenPayload.uid && user?.email) ||
+        knownMatch?.email ||
+        (headerProfile?.user_id === tokenPayload.uid && headerProfile?.email) ||
+        ""
+    )
+      .toLowerCase()
+      .trim();
+
+    let reqUser = (db.users || []).find(
+      (u: any) =>
+        u &&
+        (u.user_id === tokenPayload.uid ||
+          (candidateEmail && String(u.email || "").toLowerCase().trim() === candidateEmail))
+    );
     if (!reqUser && Array.isArray(known_accounts) && known_accounts.length > 0) {
-      const matchingKnown = known_accounts.filter((a: any) => a && a.user_id === tokenPayload.uid);
+      const matchingKnown = known_accounts.filter(
+        (a: any) =>
+          a &&
+          (a.user_id === tokenPayload.uid ||
+            (candidateEmail && String(a.email || "").toLowerCase().trim() === candidateEmail))
+      );
       if (matchingKnown.length > 0) {
         mergeKnownAccountsIntoDb(matchingKnown, tokenPayload.uid);
-        reqUser = (db.users || []).find((u: any) => u.user_id === tokenPayload.uid);
+        reqUser = (db.users || []).find(
+          (u: any) =>
+            u &&
+            (u.user_id === tokenPayload.uid ||
+              (candidateEmail && String(u.email || "").toLowerCase().trim() === candidateEmail))
+        );
       }
     }
     if (!reqUser && user && typeof user === "object" && user.user_id === tokenPayload.uid && user.email) {
       mergeKnownAccountsIntoDb([user], tokenPayload.uid);
-      reqUser = (db.users || []).find((u: any) => u.user_id === tokenPayload.uid);
+      reqUser = (db.users || []).find(
+        (u: any) =>
+          u &&
+          (u.user_id === tokenPayload.uid ||
+            (candidateEmail && String(u.email || "").toLowerCase().trim() === candidateEmail))
+      );
     }
 
     if (!reqUser || reqUser.is_bot) {
       return res.status(401).json({ detail: "Sesi tidak dapat dipulihkan." });
     }
-    if (Number(tokenPayload.tv || 1) !== Number(reqUser.token_version || 1)) {
-      return res.status(401).json({ revoked: true, detail: "Sesi telah dicabut." });
-    }
     if (reqUser.status === "inactive" || reqUser.status === "rejected" || isUserExplicitlyDeleted(reqUser.user_id, reqUser.email)) {
       return res.status(401).json({ revoked: true, detail: "Akun telah dinonaktifkan." });
+    }
+    const tokenTv = Number(tokenPayload.tv || 1);
+    if (typeof reqUser.token_version !== "number" || reqUser.token_version < 1) {
+      reqUser.token_version = tokenTv;
     }
 
     if (reqUser.status === "pending") {
@@ -4900,7 +4989,8 @@ async function startServer() {
           bio: cleanNote,
           join_date: nowIso.slice(0, 10),
           org_unit_id: isSuperAdminEmail ? "unit_mgmt" : undefined,
-          ...(optionalPasswordHash ? { password_hash: optionalPasswordHash, password_updated_at: nowIso, token_version: 1 } : {}),
+          token_version: 1,
+          ...(optionalPasswordHash ? { password_hash: optionalPasswordHash, password_updated_at: nowIso } : {}),
           onboarding_completed: true,
           auth_provider: "google",
           online: isAutoApproveEligible,

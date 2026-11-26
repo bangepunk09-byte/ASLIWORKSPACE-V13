@@ -36,6 +36,11 @@ function flushPendingStorageWrites() {
   pendingStorageWrites.clear();
 }
 
+export function cancelScheduledStorageWrite(key) {
+  if (!key) return;
+  pendingStorageWrites.delete(key);
+}
+
 export function scheduleStorageWrite(key, serializedValue) {
   if (!key) return;
   if (serializedValue !== null && lastWrittenStorageValues.get(key) === serializedValue && !pendingStorageWrites.has(key)) {
