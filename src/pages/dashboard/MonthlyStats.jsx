@@ -562,7 +562,7 @@ function getCachedStats(
         })()
       : null);
 
-  if ((Array.isArray(fallbackTasks) && fallbackTasks.length > 0) || (Array.isArray(fallbackScopes) && fallbackScopes.length > 0) || altRangeStored) {
+  if ((Array.isArray(fallbackTasks) && fallbackTasks.length > 0) || (Array.isArray(fallbackUsers) && fallbackUsers.length > 0) || (Array.isArray(fallbackScopes) && fallbackScopes.length > 0) || altRangeStored) {
     const computed = computeInstantClientStats(fallbackTasks, fallbackUsers, me, rRange, scopeKey, fallbackBoards, fallbackScopes);
     if (altRangeStored && isValidStats(altRangeStored)) {
       return preserveScopes({
@@ -1364,17 +1364,30 @@ export default function MonthlyStats({ showPerformance = true, showBottleneck = 
     if (!selectedBoardId && range === "7d" && Date.now() - lastBootstrapStatsAtRef.current < 4000) {
       return undefined;
     }
-    const tId = setTimeout(() => {
-      if (!selectedBoardId && range === "7d" && Date.now() - lastBootstrapStatsAtRef.current < 4000) return;
-      load(range, selectedBoardId);
-    }, (!selectedBoardId && range === "7d") ? 200 : 0);
+    load(range, selectedBoardId);
     return () => {
-      clearTimeout(tId);
       if (abortRef.current) {
         try { abortRef.current.abort(); } catch {}
       }
     };
   }, [range, selectedBoardId, load]);
+
+  useEffect(() => {
+    if (data?.__serverAuthoritative) return;
+    const instant = getCachedStats(
+      me?.user_id,
+      selectedBoardId || "default",
+      range,
+      tasks,
+      users,
+      me,
+      boards,
+      availableScopesRef.current
+    );
+    if (instant) {
+      setData((prev) => (statsSignature(prev) === statsSignature(instant) ? prev : instant));
+    }
+  }, [tasks.length, users.length, boards.length, me?.user_id, selectedBoardId, range]);
 
   useEffect(() => {
     if (!showBottleneck) return;

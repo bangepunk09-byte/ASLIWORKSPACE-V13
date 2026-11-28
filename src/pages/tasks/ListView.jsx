@@ -192,9 +192,10 @@ function TitleCell({ row, patch, onOpen }) {
 }
 
 const Cell = memo(function Cell({ k, row, projects, assigneeScope, scopedAssignUsers, patch, onOpen }) {
-  const { userMap, statuses, labels, labelMap, ws, t } = useApp();
+  const { userMap, statuses: wsStatuses, allStatuses, getStatusesForDivision, labels, labelMap, ws, t } = useApp();
   const taskItem = row.task;
   const cp = row.cp;
+  const statuses = getStatusesForDivision ? getStatusesForDivision(taskItem?.department) : wsStatuses;
 
   switch (k) {
     case "requestor_id": {
@@ -612,7 +613,7 @@ const Cell = memo(function Cell({ k, row, projects, assigneeScope, scopedAssignU
               </div>
               <div className="flex justify-between">
                 <span className="text-sub">{t("table_board_status_label", "Status Board:")}</span>
-                <span className="font-semibold text-ink">{statuses.find((s) => s.key === taskItem.status)?.name || taskItem.status}</span>
+                <span className="font-semibold text-ink">{statuses.find((s) => s.key === taskItem.status)?.name || (allStatuses || []).find((s) => s.key === taskItem.status)?.name || taskItem.status}</span>
               </div>
             </div>
             {(() => {
@@ -729,8 +730,12 @@ function AddRow({ span, onAdd, gkey }) {
   return <tr className="print:hidden"><td className="border-r p-0 text-center text-sub"><Plus size={13} className="mx-auto" /></td><td colSpan={span} className="p-0"><input value={v} onChange={(e) => setV(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} onBlur={submit} placeholder={t("table_add_row", "Tambah baris baru — ketik judul lalu Enter")} className="h-9 w-full bg-transparent px-3 text-xs outline-none placeholder:text-sub focus:bg-surface2" data-testid={`sheet-add-row-${gkey}`} /></td></tr>;
 }
 
-const ListView = memo(function ListView({ tasks, projects, boards = [], projectId, onOpen, selected, setSelected, reload, onPatchTask, groupBy, boardId, reportMode: controlledReportMode, onReportModeChange }) {
-  const { me, prefs, ws, statuses, users, userMap, labelMap, t } = useApp();
+const ListView = memo(function ListView({ tasks, projects, boards = [], statuses: propStatuses, projectId, onOpen, selected, setSelected, reload, onPatchTask, groupBy, boardId, reportMode: controlledReportMode, onReportModeChange }) {
+  const { me, prefs, ws, statuses: wsStatuses, getStatusesForDivision, users, userMap, labelMap, t } = useApp();
+  const activeBoardForList = boards.find((b) => b.id === boardId);
+  const statuses = Array.isArray(propStatuses) && propStatuses.length > 0
+    ? propStatuses
+    : (getStatusesForDivision ? getStatusesForDivision(activeBoardForList?.department) : wsStatuses);
   const [collapsed, setCollapsed] = useState({});
   const [sort, setSort] = useState({ k: "number", dir: 1 });
   const [limit, setLimit] = useState({});
@@ -784,7 +789,7 @@ const ListView = memo(function ListView({ tasks, projects, boards = [], projectI
       const invited = Array.isArray(data?.newly_invited_assignees) ? data.newly_invited_assignees : [];
       if (invited.length > 0) {
         const names = invited.map((x) => x.name).filter(Boolean).join(", ");
-        toast.info(`Box approval penugasan dikirim lewat japri ke ${names}. Nama PIC akan aktif setelah diterima.`);
+        toast.info(`Konfirmasi penugasan telah dikirim melalui pesan langsung ke ${names}. Nama PIC akan aktif setelah disetujui.`);
       }
     } catch (e) {
       toast.error(errMsg(e));

@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { Trash2, Plus, ArrowUp, ArrowDown, Upload, KeyRound, Eye, EyeOff, RefreshCw, Copy, Check, ShieldCheck, Zap, Webhook, CheckCircle2, RotateCcw } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Trash2, Plus, ArrowUp, ArrowDown, Upload, KeyRound, Eye, EyeOff, RefreshCw, Copy, Check, ShieldCheck, Zap, Webhook, CheckCircle2, RotateCcw, Building2, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { useApp } from "../../context/AppContext";
 import { api, errMsg, uploadFile, fileUrl } from "../../lib/api";
@@ -23,6 +23,12 @@ import {
 import { syncWorkspaceMirror } from "../../lib/persistentMirror";
 import { ADMIN_PANELS_CACHE_BOX, hydrateAdminPanelsCache } from "../../lib/bootstrapCaches";
 import { DEFAULT_ORG_LEVELS, inferUserOrgLevel } from "../../lib/orgLevels";
+import {
+  normalizeTaskStatusList,
+  findDivisionStatusEntry,
+  getDivisionTaskStatuses,
+  collectWorkspaceDivisions,
+} from "../../lib/taskStatuses";
 import { googleGmailOAuthSignIn, getGmailAccessToken, clearGmailAuth } from "../../lib/auth";
 import {
   BANNER_IMAGE_PRESETS,
@@ -1914,23 +1920,276 @@ export function LabelsAdmin() {
 }
 
 export function StatusesAdmin() {
-  const { ws, reloadWs } = useApp();
-  const normalizeStatuses = (arr) => (arr || []).map((s) => typeof s === "string" ? { key: s, name: s.replace(/_/g, " "), color: "#F0F4FA", is_done: s === "done" } : { key: s.key || `st_${Math.random()}`, name: s.name || "Status", color: s.color || "#F0F4FA", is_done: !!s.is_done });
-  const [list, setList] = useState(() => normalizeStatuses(ws?.task_statuses));
+  const { me, ws, users, boards, reloadWs } = useApp();
+  const isSuperAdmin = me?.role === "super_admin";
+  const myDivision = String(me?.department || "").trim();
+
+  const allDivisions = useMemo(() => {
+    const list = collectWorkspaceDivisions(ws, users, boards);
+    if (myDivision && !list.some((d) => d.toLowerCase() === myDivision.toLowerCase())) {
+      list.push(myDivision);
+      list.sort((a, b) => a.localeCompare(b, "id"));
+    }
+    return list;
+  }, [ws, users, boards, myDivision]);
+
+  const [selectedScope, setSelectedScope] = useState(() =>
+    isSuperAdmin ? "__default__" : (myDivision || "__default__")
+  );
+  const [saving, setSaving] = useState(false);
+
+  // Enforce strict own-division lock for non-super-admins
+  const activeScope = isSuperAdmin ? selectedScope : myDivision;
+  const isDefaultScope = isSuperAdmin && activeScope === "__default__";
+
+  const hasCustomForActive = useMemo(() => {
+    if (isDefaultScope || !activeScope) return false;
+    return Boolean(findDivisionStatusEntry(ws?.division_task_statuses, activeScope));
+  }, [isDefaultScope, activeScope, ws?.division_task_statuses]);
+
+  const resolvedServerStatuses = useMemo(() => {
+    if (isDefaultScope) return normalizeTaskStatusList(ws?.task_statuses, true);
+    if (!activeScope) return normalizeTaskStatusList(ws?.task_statuses, true);
+    return getDivisionTaskStatuses(ws, activeScope);
+  }, [isDefaultScope, activeScope, ws]);
+
+  const [list, setList] = useState(() => resolvedServerStatuses);
+
   useEffect(() => {
-    if (ws?.task_statuses) setList(normalizeStatuses(ws.task_statuses));
-  }, [ws?.task_statuses]);
-  const mv = (i, d) => { const l = [...list]; [l[i], l[i + d]] = [l[i + d], l[i]]; setList(l); };
+    setList(resolvedServerStatuses);
+  }, [resolvedServerStatuses]);
+
+  const mv = (i, d) => {
+    const l = [...list];
+    [l[i], l[i + d]] = [l[i + d], l[i]];
+    setList(l);
+  };
+
+  const handleSave = async () => {
+    if (list.length === 0) {
+      toast.error("Minimal harus ada 1 status tugas.");
+      return;
+    }
+    const invalid = list.some((s) => !String(s.name || "").trim());
+    if (invalid) {
+      toast.error("Nama status tidak boleh kosong.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const payload = isDefaultScope
+        ? { division: "__default__", task_statuses: list }
+        : { division: activeScope, task_statuses: list };
+      await api.put("/settings/task-config", payload);
+      await reloadWs();
+      toast.success(
+        isDefaultScope
+          ? "Status default workspace berhasil disimpan!"
+          : `Status tugas divisi ${activeScope} berhasil disimpan!`
+      );
+    } catch (e) {
+      toast.error(errMsg(e, "Gagal menyimpan status tugas"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleResetToDefault = async () => {
+    if (isDefaultScope || !activeScope) return;
+    setSaving(true);
+    try {
+      await api.put("/settings/task-config", { division: activeScope, reset_to_default: true });
+      await reloadWs();
+      toast.success(`Status divisi ${activeScope} dikembalikan ke Default Workspace.`);
+    } catch (e) {
+      toast.error(errMsg(e, "Gagal mereset status divisi"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!isSuperAdmin && !myDivision) {
+    return (
+      <Card title="Status Tugas" testid="statuses-admin">
+        <div className="rounded-xl border border-border bg-surface2/60 p-4 text-sm text-sub">
+          Akun Anda belum memiliki divisi yang ditetapkan. Hubungi Super Admin untuk menetapkan divisi Anda terlebih dahulu.
+        </div>
+      </Card>
+    );
+  }
+
   return (
     <Card title="Status Tugas" testid="statuses-admin">
-      <div className="space-y-2">{list.map((s, i) => (
-        <div key={s.key || i} className="flex flex-wrap items-center gap-2"><input type="color" value={s.color} onChange={(e) => setList(list.map((x, j) => (j === i ? { ...x, color: e.target.value } : x)))} className="h-9 w-9" aria-label="Warna status" />
-          <input value={s.name} onChange={(e) => setList(list.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} className={`${inp} flex-1`} data-testid={`status-name-${s.key || i}`} />
-          <label className="flex items-center gap-1 text-xs"><input type="checkbox" checked={s.is_done} onChange={(e) => setList(list.map((x, j) => (j === i ? { ...x, is_done: e.target.checked } : x)))} className="accent-[var(--c-accent)]" />Selesai</label>
-          <button type="button" disabled={!i} onClick={() => mv(i, -1)} className="text-sub disabled:opacity-30" aria-label="Geser ke atas"><ArrowUp size={14} /></button><button type="button" disabled={i === list.length - 1} onClick={() => mv(i, 1)} className="text-sub disabled:opacity-30" aria-label="Geser ke bawah"><ArrowDown size={14} /></button>
-          <button type="button" onClick={() => setList(list.filter((_, j) => j !== i))} className="text-rose-500" aria-label="Hapus status"><Trash2 size={14} /></button></div>))}</div>
-      <div className="mt-3 flex gap-2"><button type="button" onClick={() => setList([...list, { key: `st_${Date.now().toString(36)}`, name: "Status baru", color: "#EEE6FF", is_done: false }])} className="btn-ghost h-10 border px-4 text-sm font-semibold" data-testid="add-status-btn">Tambah Status</button>
-        <button type="button" onClick={() => run(() => api.put("/settings/task-config", { task_statuses: list }), "Status tugas berhasil disimpan!").then(reloadWs)} className="btn-accent h-10 px-4 text-sm font-semibold" data-testid="save-statuses-btn">Simpan</button></div>
+      {/* Division Scope Header */}
+      <div className="mb-4 rounded-2xl border border-border/80 bg-surface2/55 p-3.5">
+        {isSuperAdmin ? (
+          <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-ink">
+                <Building2 size={14} className="text-brand shrink-0" />
+                <span>Pilih Divisi</span>
+              </div>
+              <p className="mt-0.5 text-[11px] text-sub">
+                Super Admin dapat mengatur status default maupun status khusus untuk masing-masing divisi.
+              </p>
+            </div>
+            <div className="sm:w-64 shrink-0">
+              <AppSelect
+                value={activeScope}
+                onChange={(e) => setSelectedScope(e.target.value)}
+                className="h-10 w-full rounded-xl border border-border bg-surface px-3 text-xs sm:text-sm font-semibold text-ink"
+                data-testid="status-division-select"
+              >
+                <option value="__default__">Default Workspace (Semua Divisi)</option>
+                {allDivisions.map((divName) => {
+                  const isCustom = Boolean(findDivisionStatusEntry(ws?.division_task_statuses, divName));
+                  return (
+                    <option key={divName} value={divName}>
+                      Divisi {divName}{isCustom ? " (Kustom)" : " (Default)"}
+                    </option>
+                  );
+                })}
+              </AppSelect>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand">
+                <Building2 size={15} />
+              </span>
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-bold text-ink">Divisi {myDivision}</span>
+                  <span className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-1.5 py-0.5 text-[10px] font-semibold text-sub">
+                    <Lock size={10} /> Divisi Anda
+                  </span>
+                </div>
+                <p className="text-[11px] text-sub">
+                  Perubahan status tugas hanya berlaku untuk divisi Anda sendiri.
+                </p>
+              </div>
+            </div>
+            <span
+              className={`rounded-lg px-2.5 py-1 text-[11px] font-semibold ${
+                hasCustomForActive
+                  ? "bg-brand/10 text-brand"
+                  : "bg-surface text-sub border border-border"
+              }`}
+            >
+              {hasCustomForActive ? "Status Kustom Aktif" : "Mengikuti Default"}
+            </span>
+          </div>
+        )}
+
+        {!isDefaultScope && activeScope && (
+          <p className="mt-2.5 border-t border-border/60 pt-2 text-[11px] text-sub">
+            {hasCustomForActive
+              ? `Divisi ${activeScope} sedang menggunakan status tugas kustom.`
+              : `Divisi ${activeScope} saat ini mengikuti status Default Workspace. Klik Simpan untuk menerapkan status khusus divisi ini.`}
+          </p>
+        )}
+      </div>
+
+      {/* Status List Editor */}
+      <div className="space-y-2">
+        {list.map((s, i) => (
+          <div key={s.key || i} className="flex flex-wrap items-center gap-2">
+            <input
+              type="color"
+              value={s.color || "#F0F4FA"}
+              onChange={(e) => setList(list.map((x, j) => (j === i ? { ...x, color: e.target.value } : x)))}
+              className="h-9 w-9 rounded-md cursor-pointer"
+              aria-label="Warna status"
+            />
+            <input
+              value={s.name}
+              onChange={(e) => setList(list.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
+              className={`${inp} flex-1 min-w-[160px]`}
+              data-testid={`status-name-${s.key || i}`}
+            />
+            <label className="flex items-center gap-1.5 text-xs select-none cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!!s.is_done}
+                onChange={(e) => setList(list.map((x, j) => (j === i ? { ...x, is_done: e.target.checked } : x)))}
+                className="accent-[var(--c-accent)]"
+              />
+              Selesai
+            </label>
+            <button
+              type="button"
+              disabled={!i}
+              onClick={() => mv(i, -1)}
+              className="text-sub hover:text-ink disabled:opacity-30 cursor-pointer"
+              aria-label="Geser ke atas"
+            >
+              <ArrowUp size={14} />
+            </button>
+            <button
+              type="button"
+              disabled={i === list.length - 1}
+              onClick={() => mv(i, 1)}
+              className="text-sub hover:text-ink disabled:opacity-30 cursor-pointer"
+              aria-label="Geser ke bawah"
+            >
+              <ArrowDown size={14} />
+            </button>
+            <button
+              type="button"
+              disabled={list.length <= 1}
+              onClick={() => setList(list.filter((_, j) => j !== i))}
+              className="text-rose-500 hover:text-rose-600 disabled:opacity-30 cursor-pointer"
+              aria-label="Hapus status"
+            >
+              <Trash2 size={14} />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {/* Actions */}
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() =>
+            setList([
+              ...list,
+              {
+                key: `st_${Date.now().toString(36)}`,
+                name: "Status baru",
+                color: "#EEE6FF",
+                is_done: false,
+              },
+            ])
+          }
+          className="btn-ghost h-10 border px-4 text-sm font-semibold"
+          data-testid="add-status-btn"
+        >
+          Tambah Status
+        </button>
+        <button
+          type="button"
+          disabled={saving}
+          onClick={handleSave}
+          className="btn-accent h-10 px-5 text-sm font-semibold disabled:opacity-60"
+          data-testid="save-statuses-btn"
+        >
+          {saving ? "Menyimpan..." : "Simpan"}
+        </button>
+        {!isDefaultScope && hasCustomForActive && (
+          <button
+            type="button"
+            disabled={saving}
+            onClick={handleResetToDefault}
+            className="btn-ghost h-10 border px-3.5 text-xs sm:text-sm font-semibold text-sub hover:text-ink inline-flex items-center gap-1.5 ml-auto"
+            data-testid="reset-division-statuses-btn"
+          >
+            <RotateCcw size={13} />
+            Reset ke Default
+          </button>
+        )}
+      </div>
     </Card>
   );
 }

@@ -1510,6 +1510,11 @@ function Feed() {
     const cached = getPostsCache();
     return tag ? cached.filter((p) => postMatchesTopic(p, tag)) : cached;
   });
+  const [loadingPosts, setLoadingPosts] = useState(() => {
+    const cached = getPostsCache();
+    const initial = tag ? cached.filter((p) => postMatchesTopic(p, tag)) : cached;
+    return initial.length === 0;
+  });
   const [more, setMore] = useState(() => getPostsCache().length >= 30);
 
   useEffect(() => {
@@ -1546,16 +1551,17 @@ function Feed() {
           }
         }
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => {
+        setLoadingPosts(false);
+      });
   }, [tag]);
 
   useEffect(() => {
     const cached = getPostsCache();
-    if (tag) {
-      setPosts(cached.filter((p) => postMatchesTopic(p, tag)));
-    } else {
-      setPosts(cached);
-    }
+    const nextCached = tag ? cached.filter((p) => postMatchesTopic(p, tag)) : cached;
+    setPosts(nextCached);
+    setLoadingPosts(nextCached.length === 0);
     load();
   }, [tag, load]);
 
@@ -1873,21 +1879,41 @@ function Feed() {
         <Composer onPosted={handlePosted} defaultTopic={tag} />
 
         {!posts.length ? (
-          <div className="card py-12 px-4 text-center" data-testid="feed-empty">
-            <div className="mx-auto mb-2.5 flex h-11 w-11 items-center justify-center rounded-2xl bg-brand/10 text-brand">
-              <Hash size={20} />
+          loadingPosts ? (
+            <div className="space-y-3.5" data-testid="feed-loading-skeleton">
+              {[0, 1].map((idx) => (
+                <div key={idx} className="card p-4 sm:p-5 space-y-3">
+                  <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 rounded-full bg-surface2 animate-pulse" />
+                    <div className="space-y-1.5 flex-1">
+                      <div className="h-3.5 w-36 rounded-full bg-surface2 animate-pulse" />
+                      <div className="h-2.5 w-24 rounded-full bg-surface2 animate-pulse" />
+                    </div>
+                  </div>
+                  <div className="space-y-2 pt-1">
+                    <div className="h-3 w-full rounded-full bg-surface2 animate-pulse" />
+                    <div className="h-3 w-4/5 rounded-full bg-surface2 animate-pulse" />
+                  </div>
+                </div>
+              ))}
             </div>
-            <p className="text-sm font-bold text-ink">
-              {tag
-                ? t("beranda_topic_empty_title", "Belum ada utas di topik ini")
-                : t("beranda_feed_empty", "Belum ada postingan. Jadilah yang pertama!")}
-            </p>
-            {tag && (
-              <p className="mt-1 text-xs text-sub max-w-md mx-auto">
-                {t("beranda_topic_empty_subtitle", "Mulai percakapan pertama untuk topik ini menggunakan kotak tulis di atas.")}
+          ) : (
+            <div className="card py-12 px-4 text-center" data-testid="feed-empty">
+              <div className="mx-auto mb-2.5 flex h-11 w-11 items-center justify-center rounded-2xl bg-brand/10 text-brand">
+                <Hash size={20} />
+              </div>
+              <p className="text-sm font-bold text-ink">
+                {tag
+                  ? t("beranda_topic_empty_title", "Belum ada utas di topik ini")
+                  : t("beranda_feed_empty", "Belum ada postingan. Jadilah yang pertama!")}
               </p>
-            )}
-          </div>
+              {tag && (
+                <p className="mt-1 text-xs text-sub max-w-md mx-auto">
+                  {t("beranda_topic_empty_subtitle", "Mulai percakapan pertama untuk topik ini menggunakan kotak tulis di atas.")}
+                </p>
+              )}
+            </div>
+          )
         ) : (
           posts.map((p) => (
             <PostCard

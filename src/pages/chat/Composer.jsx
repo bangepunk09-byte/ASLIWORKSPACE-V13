@@ -406,12 +406,90 @@ const Composer = forwardRef(function Composer({ conv, reply, onCancelReply, onSe
   const [slashIndex, setSlashIndex] = useState(0);
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
   const [mobileTab, setMobileTab] = useState("actions");
+  const [inputFocused, setInputFocused] = useState(false);
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
   const ta = useRef(null);
   const fileRef = useRef(null);
   const imgRef = useRef(null);
   const lastTyping = useRef(0);
   const isTouch = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
+  const isIOS =
+    typeof navigator !== "undefined" &&
+    (/iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));
+  const useContentEditable = isIOS;
   const circleMode = Boolean(isCircleConv || conv?.id?.startsWith("conv_circle_") || conv?.member_ids?.includes("user_circle_assistant"));
+
+  const getElText = (el) => {
+    if (!el) return "";
+    if (el.tagName === "TEXTAREA") return el.value || "";
+    const raw = (el.innerText || "").replace(/\r\n/g, "\n");
+    return raw === "\n" ? "" : raw;
+  };
+
+  const getCaretPos = (el) => {
+    if (!el) return 0;
+    if (el.tagName === "TEXTAREA") return el.selectionStart ?? (el.value || "").length;
+    try {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) return getElText(el).length;
+      const range = sel.getRangeAt(0);
+      if (!el.contains(range.startContainer)) return getElText(el).length;
+      const pre = range.cloneRange();
+      pre.selectNodeContents(el);
+      pre.setEnd(range.startContainer, range.startOffset);
+      return pre.toString().length;
+    } catch {
+      return getElText(el).length;
+    }
+  };
+
+  const setCaretPos = (el, pos) => {
+    if (!el) return;
+    if (el.tagName === "TEXTAREA") {
+      try { el.setSelectionRange(pos, pos); } catch {}
+      return;
+    }
+    try {
+      const sel = window.getSelection();
+      if (!sel) return;
+      const range = document.createRange();
+      let remaining = Math.max(0, pos);
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+      let node = walker.nextNode();
+      let placed = false;
+      while (node) {
+        const len = node.nodeValue ? node.nodeValue.length : 0;
+        if (remaining <= len) {
+          range.setStart(node, remaining);
+          range.collapse(true);
+          placed = true;
+          break;
+        }
+        remaining -= len;
+        node = walker.nextNode();
+      }
+      if (!placed) {
+        range.selectNodeContents(el);
+        range.collapse(false);
+      }
+      sel.removeAllRanges();
+      sel.addRange(range);
+    } catch {}
+  };
+
+  useEffect(() => {
+    if (!isTouch || typeof window === "undefined") return undefined;
+    const vv = window.visualViewport;
+    if (!vv) return undefined;
+    const update = () => {
+      const diff = window.innerHeight - vv.height;
+      setKeyboardOpen(diff > 110);
+    };
+    update();
+    vv.addEventListener("resize", update);
+    return () => vv.removeEventListener("resize", update);
+  }, [isTouch]);
 
   useEffect(() => {
     if (!circleMode) return;
@@ -423,7 +501,20 @@ const Composer = forwardRef(function Composer({ conv, reply, onCancelReply, onSe
   }, [circleMode]);
 
   useEffect(() => {
-    if (ta.current) { ta.current.style.height = "auto"; ta.current.style.height = `${Math.min(ta.current.scrollHeight, 160)}px`; }
+    const el = ta.current;
+    if (!el) return;
+    if (el.tagName === "TEXTAREA") {
+      el.style.height = "auto";
+      el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+    } else {
+      const currentDomText = getElText(el);
+      if (currentDomText !== text) {
+        el.textContent = text;
+        if (document.activeElement === el) {
+          setCaretPos(el, text.length);
+        }
+      }
+    }
   }, [text]);
 
   const focusComposer = useCallback(() => {
@@ -434,12 +525,12 @@ const Composer = forwardRef(function Composer({ conv, reply, onCancelReply, onSe
     } catch {
       ta.current.focus();
     }
-    const len = ta.current.value.length;
-    try { ta.current.setSelectionRange(len, len); } catch {}
+    const len = getElText(ta.current).length;
+    setCaretPos(ta.current, len);
   }, [conv?.archived, conv?.is_member]);
 
   useEffect(() => {
-    if (!conv?.id || conv?.archived || conv?.is_member === false) return;
+    if (isTouch || !conv?.id || conv?.archived || conv?.is_member === false) return;
     let rafId = 0;
     let timerId = 0;
     rafId = requestAnimationFrame(() => {
@@ -454,7 +545,7 @@ const Composer = forwardRef(function Composer({ conv, reply, onCancelReply, onSe
       if (rafId) cancelAnimationFrame(rafId);
       if (timerId) clearTimeout(timerId);
     };
-  }, [conv?.id, conv?.archived, conv?.is_member, focusComposer]);
+  }, [isTouch, conv?.id, conv?.archived, conv?.is_member, focusComposer]);
 
   useEffect(() => {
     if (!reply?.id) return;
@@ -477,8 +568,8 @@ const Composer = forwardRef(function Composer({ conv, reply, onCancelReply, onSe
       requestAnimationFrame(() => {
         if (ta.current) {
           ta.current.focus();
-          const len = ta.current.value.length;
-          try { ta.current.setSelectionRange(len, len); } catch {}
+          const len = getElText(ta.current).length;
+          setCaretPos(ta.current, len);
           ta.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
         }
       });
@@ -540,17 +631,21 @@ const Composer = forwardRef(function Composer({ conv, reply, onCancelReply, onSe
     onCancelReply?.();
     await post({ text: msgText, attachments: msgFiles, reply_to: msgReply, mention_ids: msgMentions });
   };
-  const onChange = (e) => {
-    const v = e.target.value;
+  const handleTextValueChange = (v, caretPos) => {
+    setSlashIndex(0);
     setText(v);
-    const m = v.slice(0, e.target.selectionStart).match(/@([\w]*)$/);
+    const m = v.slice(0, caretPos).match(/@([\w]*)$/);
     setMq(m ? m[1].toLowerCase() : null);
     setMentionIndex(0);
     if (Date.now() - lastTyping.current > 2500) { lastTyping.current = Date.now(); send({ type: "typing", conversation_id: conv.id }); }
   };
+  const onChange = (e) => {
+    const v = e.target.value;
+    handleTextValueChange(v, e.target.selectionStart ?? v.length);
+  };
   const pickMention = (u) => {
     if (!u) return;
-    const pos = ta.current ? ta.current.selectionStart : text.length;
+    const pos = ta.current ? getCaretPos(ta.current) : text.length;
     const tagText = u.isAll ? "@semua " : `@${u.name} `;
     const before = text.slice(0, pos).replace(/@[\w]*$/, tagText);
     const nextText = before + text.slice(pos);
@@ -561,8 +656,9 @@ const Composer = forwardRef(function Composer({ conv, reply, onCancelReply, onSe
     setMentionIndex(0);
     requestAnimationFrame(() => {
       if (ta.current) {
+        if (ta.current.tagName !== "TEXTAREA") ta.current.textContent = nextText;
         ta.current.focus();
-        try { ta.current.setSelectionRange(nextCursor, nextCursor); } catch {}
+        setCaretPos(ta.current, nextCursor);
       }
     });
   };
@@ -672,8 +768,53 @@ const Composer = forwardRef(function Composer({ conv, reply, onCancelReply, onSe
     requestAnimationFrame(() => ta.current?.focus());
   };
 
+  const compactMobilePadding = isTouch && (keyboardOpen || inputFocused);
+  const composerPlaceholder = conv.archived
+    ? tr("chat_composer_ph_archived", "Grup ini telah diarsipkan")
+    : circleMode
+    ? tr("chat_composer_ph_circle", "Tanya atau ketik / perintah…")
+    : tr("chat_composer_ph_default", "Tulis pesan…");
+
+  const handleInputKeyDown = (e) => {
+    if (members.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setMentionIndex((i) => (i + 1) % members.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setMentionIndex((i) => (i - 1 + members.length) % members.length);
+        return;
+      }
+      if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing)) {
+        e.preventDefault();
+        pickMention(members[mentionIndex % members.length] || members[0]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setMq(null);
+        return;
+      }
+    }
+    if (matchingSlash.length > 0) {
+      if (e.key === "ArrowDown") { e.preventDefault(); setSlashIndex((i) => (i + 1) % matchingSlash.length); return; }
+      if (e.key === "ArrowUp") { e.preventDefault(); setSlashIndex((i) => (i - 1 + matchingSlash.length) % matchingSlash.length); return; }
+      if (e.key === "Tab") { e.preventDefault(); pickSlashCommand(matchingSlash[slashIndex % matchingSlash.length]); return; }
+    }
+    if (e.key === "Enter" && !e.shiftKey && !isTouch && !e.nativeEvent.isComposing) { e.preventDefault(); submit(); }
+  };
+
   return (
-    <div className="border-t bg-surface px-3 pt-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] sm:px-4" data-testid="message-composer">
+    <div
+      className={`border-t bg-surface px-2.5 sm:px-4 ${
+        compactMobilePadding
+          ? "py-1.5"
+          : "pt-2 pb-[max(env(safe-area-inset-bottom),0.5rem)]"
+      }`}
+      data-testid="message-composer"
+    >
       {reply && <div className="mb-2 flex items-center gap-2 rounded-xl bg-surface2 px-3 py-2 text-xs"><span className="flex-1 truncate">{tr("chat_composer_replying_prefix", "Membalas")} <b>{userMap[reply.sender_id]?.name}</b>: {reply.text}</span><button onClick={onCancelReply} aria-label={tr("common_cancel", "Batal")}><X size={14} /></button></div>}
       {files.length > 0 && (
         <div className="mb-2 flex gap-2 overflow-x-auto no-scrollbar" data-testid="composer-attachments">
@@ -862,41 +1003,71 @@ const Composer = forwardRef(function Composer({ conv, reply, onCancelReply, onSe
             {onApproval && <button type="button" onClick={onApproval} className="btn-ghost flex h-10 w-10 items-center justify-center text-sub hover:text-brand" title="Buat Approval Card (Izin Cuti / Request Barang)" aria-label="Buat Approval Card" data-testid="composer-approval-btn"><ClipboardCheck size={19} /></button>}
           </div>
 
-          <input ref={imgRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
-          <input ref={fileRef} type="file" multiple hidden onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} data-testid="attach-file-input" />
+          <input ref={imgRef} type="file" accept="image/*" multiple hidden tabIndex={-1} aria-hidden="true" onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
+          <input ref={fileRef} type="file" multiple hidden tabIndex={-1} aria-hidden="true" onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} data-testid="attach-file-input" />
         </div>
-        <textarea ref={ta} rows={1} value={text} onPaste={handlePaste} onChange={(e) => { setSlashIndex(0); onChange(e); }} placeholder={conv.archived ? tr("chat_composer_ph_archived", "Grup ini telah diarsipkan") : circleMode ? tr("chat_composer_ph_circle", "Tanya atau ketik / perintah…") : tr("chat_composer_ph_default", "Tulis pesan…")} disabled={conv.archived}
-          onKeyDown={(e) => {
-            if (members.length > 0) {
-              if (e.key === "ArrowDown") {
-                e.preventDefault();
-                setMentionIndex((i) => (i + 1) % members.length);
+        {useContentEditable ? (
+          <div
+            ref={ta}
+            role="textbox"
+            aria-multiline="true"
+            aria-label={composerPlaceholder}
+            contentEditable={!conv.archived}
+            suppressContentEditableWarning
+            inputMode="text"
+            enterKeyHint="send"
+            data-placeholder={composerPlaceholder}
+            onFocus={() => setInputFocused(true)}
+            onBlur={() => setInputFocused(false)}
+            onInput={(e) => {
+              const el = e.currentTarget;
+              const v = getElText(el);
+              if (v === "" && el.innerHTML !== "") el.innerHTML = "";
+              handleTextValueChange(v, getCaretPos(el));
+            }}
+            onPaste={(e) => {
+              const dt = e.clipboardData;
+              const hasFiles = Boolean(dt && ((dt.files && dt.files.length > 0) || Array.from(dt.items || []).some((it) => it.kind === "file")));
+              if (hasFiles) {
+                handlePaste(e);
                 return;
               }
-              if (e.key === "ArrowUp") {
-                e.preventDefault();
-                setMentionIndex((i) => (i - 1 + members.length) % members.length);
-                return;
+              e.preventDefault();
+              const plain = dt?.getData("text/plain") || "";
+              if (!plain) return;
+              try {
+                document.execCommand("insertText", false, plain);
+              } catch {
+                const el = e.currentTarget;
+                const pos = getCaretPos(el);
+                const cur = getElText(el);
+                const next = cur.slice(0, pos) + plain + cur.slice(pos);
+                el.textContent = next;
+                setCaretPos(el, pos + plain.length);
+                handleTextValueChange(next, pos + plain.length);
               }
-              if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing)) {
-                e.preventDefault();
-                pickMention(members[mentionIndex % members.length] || members[0]);
-                return;
-              }
-              if (e.key === "Escape") {
-                e.preventDefault();
-                setMq(null);
-                return;
-              }
-            }
-            if (matchingSlash.length > 0) {
-              if (e.key === "ArrowDown") { e.preventDefault(); setSlashIndex((i) => (i + 1) % matchingSlash.length); return; }
-              if (e.key === "ArrowUp") { e.preventDefault(); setSlashIndex((i) => (i - 1 + matchingSlash.length) % matchingSlash.length); return; }
-              if (e.key === "Tab") { e.preventDefault(); pickSlashCommand(matchingSlash[slashIndex % matchingSlash.length]); return; }
-            }
-            if (e.key === "Enter" && !e.shiftKey && !isTouch && !e.nativeEvent.isComposing) { e.preventDefault(); submit(); }
-          }}
-          enterKeyHint="send" className="max-h-40 min-h-[38px] sm:min-h-[40px] min-w-0 flex-1 resize-none bg-transparent px-1 py-2 text-[15px] outline-none" data-testid="message-input" />
+            }}
+            onKeyDown={handleInputKeyDown}
+            className={`composer-ce max-h-36 min-h-[38px] min-w-0 flex-1 overflow-y-auto whitespace-pre-wrap break-words bg-transparent px-1 py-2 text-[15px] leading-[1.35] outline-none ${conv.archived ? "opacity-50 pointer-events-none" : ""}`}
+            data-testid="message-input"
+          />
+        ) : (
+          <textarea
+            ref={ta}
+            rows={1}
+            value={text}
+            onPaste={handlePaste}
+            onFocus={() => setInputFocused(true)}
+            onBlur={() => setInputFocused(false)}
+            onChange={onChange}
+            placeholder={composerPlaceholder}
+            disabled={conv.archived}
+            onKeyDown={handleInputKeyDown}
+            enterKeyHint="send"
+            className="max-h-40 min-h-[38px] sm:min-h-[40px] min-w-0 flex-1 resize-none bg-transparent px-1 py-2 text-[15px] outline-none"
+            data-testid="message-input"
+          />
+        )}
         <button onClick={submit} disabled={busy} className="btn-accent flex h-9 w-9 sm:h-10 sm:w-10 shrink-0 items-center justify-center disabled:opacity-50" aria-label="Kirim" data-testid="send-message-btn"><SendHorizonal size={18} /></button>
       </div>
     </div>

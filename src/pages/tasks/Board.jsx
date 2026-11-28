@@ -40,9 +40,18 @@ function formatUpdatedAgo(iso, tr) {
 }
 
 export const TaskCard = memo(function TaskCard({ t, onOpen, done, draggable, onDragStart, onDragEnd, isDragging, reload, onMoveTask }) {
-  const { t: tr } = useApp();
+  const { me, t: tr } = useApp();
   const [refreshing, setRefreshing] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+
+  const canDeleteTask = useMemo(() => {
+    const uid = me?.user_id;
+    if (!uid || !t) return false;
+    const reqIds = Array.isArray(t.requestor_ids) && t.requestor_ids.length > 0
+      ? t.requestor_ids.filter(Boolean)
+      : (t.requestor_id ? [t.requestor_id] : (t.created_by ? [t.created_by] : []));
+    return reqIds.includes(uid);
+  }, [me?.user_id, t]);
 
   const approvalCount = (t.approvals?.approved_by || t.approval?.approved_by || []).length;
   const approvalPct = t.status === "done" || done || approvalCount >= 2 ? 100 : approvalCount === 1 ? 50 : 0;
@@ -101,6 +110,10 @@ export const TaskCard = memo(function TaskCard({ t, onOpen, done, draggable, onD
   const handleDelete = async (e) => {
     e?.stopPropagation?.();
     setMenuOpen(false);
+    if (!canDeleteTask) {
+      toast.error("Hanya requestor yang dapat menghapus tugas ini.");
+      return;
+    }
     try {
       playSound("trash");
       await api.delete(`/tasks/${t.id}`);
@@ -205,14 +218,16 @@ export const TaskCard = memo(function TaskCard({ t, onOpen, done, draggable, onD
                 <span>{tr("board_menu_archive", "Arsipkan Tugas")}</span>
               </DropdownMenuItem>
 
-              <DropdownMenuItem
-                onClick={handleDelete}
-                className="cursor-pointer gap-2.5 text-xs font-semibold py-2 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30"
-                data-testid={`task-menu-delete-${t.id}`}
-              >
-                <Trash2 size={14} />
-                <span>{tr("board_menu_delete", "Hapus Tugas")}</span>
-              </DropdownMenuItem>
+              {canDeleteTask && (
+                <DropdownMenuItem
+                  onClick={handleDelete}
+                  className="cursor-pointer gap-2.5 text-xs font-semibold py-2 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+                  data-testid={`task-menu-delete-${t.id}`}
+                >
+                  <Trash2 size={14} />
+                  <span>{tr("board_menu_delete", "Hapus Tugas")}</span>
+                </DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -320,8 +335,11 @@ export const TaskCard = memo(function TaskCard({ t, onOpen, done, draggable, onD
   );
 });
 
-const Board = memo(function Board({ tasks, onOpen, onNew, reload, onMoveTask, board, onInvite }) {
-  const { statuses, t: tr } = useApp();
+const Board = memo(function Board({ tasks, onOpen, onNew, reload, onMoveTask, board, onInvite, statuses: propStatuses }) {
+  const { statuses: wsStatuses, getStatusesForDivision, t: tr } = useApp();
+  const statuses = Array.isArray(propStatuses) && propStatuses.length > 0
+    ? propStatuses
+    : (getStatusesForDivision ? getStatusesForDivision(board?.department) : wsStatuses);
   const [over, setOver] = useState(null);
   const [draggingId, setDraggingId] = useState(null);
   const dark = document.documentElement.classList.contains("dark");

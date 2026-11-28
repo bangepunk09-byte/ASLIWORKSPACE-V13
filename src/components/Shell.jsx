@@ -27,7 +27,8 @@ import {
   ChevronDown,
   Check,
   User as UserIcon,
-  ShoppingBag
+  ShoppingBag,
+  Archive
 } from "lucide-react";
 import { toast } from "sonner";
 import { useApp } from "../context/AppContext";
@@ -58,6 +59,7 @@ const NAV = [
   { to: "/org", icon: Network, label: "Struktur Organisasi", id: "org", group: "org" },
   { to: "/tasks", icon: CheckSquare, label: "Tugas", id: "tasks", group: "main" },
   { to: "/projects", icon: FolderKanban, label: "Proyek", id: "projects", group: "org" },
+  { to: "/archives", icon: Archive, label: "Arsip Dokumen", id: "archives", group: "sys", requiresArchiveAccess: true },
   { to: "/settings", icon: Settings, label: "Pengaturan", id: "settings", group: "sys" },
 ];
 
@@ -115,7 +117,7 @@ const NavItem = memo(function NavItem({ item, compact, unread, onClick }) {
 
 
 const Sidebar = memo(function Sidebar({ compact, setCompact, openSearch }) {
-  const { me, ws, savePrefs, logout, unread, isDemo, t, updateAvailabilityStatus } = useApp();
+  const { me, ws, savePrefs, logout, unread, isDemo, t, updateAvailabilityStatus, canAccessArchives } = useApp();
   const [soundOn, setSoundOn] = useState(() => isSoundEnabled());
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
   const { isInstalled } = usePWAInstall();
@@ -196,7 +198,7 @@ const Sidebar = memo(function Sidebar({ compact, setCompact, openSearch }) {
         </button>
       </div>
       <nav className="mt-3 flex-1 space-y-0.5 overflow-y-auto px-3 scroll-thin">
-        {NAV.filter((n) => !n.requiresMarketplace || ws?.marketplace_enabled !== false).map((n) => (
+        {NAV.filter((n) => (!n.requiresMarketplace || ws?.marketplace_enabled !== false) && (!n.requiresArchiveAccess || canAccessArchives)).map((n) => (
           <NavItem key={n.id} item={n} compact={compact} unread={unread} />
         ))}
       </nav>
@@ -377,7 +379,7 @@ const Sidebar = memo(function Sidebar({ compact, setCompact, openSearch }) {
 function MobileNav({ openSearch }) {
   const [more, setMore] = useState(false);
   const [soundOn, setSoundOn] = useState(() => isSoundEnabled());
-  const { unread, me, logout, ws, savePrefs, isDemo, t, updateAvailabilityStatus } = useApp();
+  const { unread, me, logout, ws, savePrefs, isDemo, t, updateAvailabilityStatus, canAccessArchives } = useApp();
   const loc = useLocation();
   const navigate = useNavigate();
   const dark = document.documentElement.classList.contains("dark");
@@ -405,7 +407,7 @@ function MobileNav({ openSearch }) {
     (n) => ["schedule", "directory", "groups", "marketplace"].includes(n.id) && (!n.requiresMarketplace || marketplaceOn)
   );
   const orgItems = NAV.filter((n) => ["employee", "org", "projects"].includes(n.id));
-  const sysItems = NAV.filter((n) => ["settings"].includes(n.id));
+  const sysItems = NAV.filter((n) => ["archives", "settings"].includes(n.id) && (!n.requiresArchiveAccess || canAccessArchives));
 
   return (
     <>
@@ -700,6 +702,37 @@ export default function Shell() {
   const loc = useLocation();
   const chatOpen = /^\/messages\/.+/.test(loc.pathname);
   const isMessagesRoot = loc.pathname === "/messages";
+  const [mobileViewportStyle, setMobileViewportStyle] = useState(null);
+
+  useEffect(() => {
+    if (!chatOpen || typeof window === "undefined") {
+      setMobileViewportStyle(null);
+      return undefined;
+    }
+    const vv = window.visualViewport;
+    if (!vv || window.innerWidth >= 768) {
+      setMobileViewportStyle(null);
+      return undefined;
+    }
+    const syncViewport = () => {
+      if (window.innerWidth >= 768) {
+        setMobileViewportStyle(null);
+        return;
+      }
+      const h = Math.round(vv.height);
+      const top = Math.max(0, Math.round(vv.offsetTop));
+      setMobileViewportStyle({ height: `${h}px`, maxHeight: `${h}px`, top: `${top}px`, bottom: "auto" });
+    };
+    syncViewport();
+    vv.addEventListener("resize", syncViewport);
+    vv.addEventListener("scroll", syncViewport);
+    window.addEventListener("resize", syncViewport);
+    return () => {
+      vv.removeEventListener("resize", syncViewport);
+      vv.removeEventListener("scroll", syncViewport);
+      window.removeEventListener("resize", syncViewport);
+    };
+  }, [chatOpen]);
 
   useEffect(() => {
     const k = (e) => {
@@ -722,9 +755,12 @@ export default function Shell() {
       <TopNotificationPopup notif={topNotif} onClose={closeTopNotif} />
       <OfflineIndicator />
       <div aria-hidden="true" className="md:hidden fixed inset-x-0 top-0 z-50 h-[env(safe-area-inset-top,0px)] bg-surface pointer-events-none" />
-      <div className="fixed inset-0 flex h-[100dvh] max-h-[100dvh] w-full max-w-[100vw] bg-surface md:bg-background overflow-hidden overscroll-none print:static print:h-auto print:max-h-none print:overflow-visible">
+      <div
+        style={mobileViewportStyle || undefined}
+        className="fixed inset-0 flex h-[100dvh] max-h-[100dvh] w-full max-w-[100vw] bg-surface md:bg-background overflow-hidden overscroll-none print:static print:h-auto print:max-h-none print:overflow-visible"
+      >
         <Sidebar compact={compact} setCompact={setCompact} openSearch={() => setSearch(true)} />
-        <div className={`flex h-full max-h-[100dvh] min-w-0 flex-1 flex-col overflow-hidden transition-[margin] duration-200 ${compact ? "md:ml-[76px]" : "md:ml-[248px]"} md:mr-[60px] print:!ml-0 print:!mr-0 print:h-auto print:max-h-none print:overflow-visible`}>
+        <div className={`flex h-full max-h-full min-w-0 flex-1 flex-col overflow-hidden transition-[margin] duration-200 ${compact ? "md:ml-[76px]" : "md:ml-[248px]"} md:mr-[60px] print:!ml-0 print:!mr-0 print:h-auto print:max-h-none print:overflow-visible`}>
           {!chatOpen && <MobileNav openSearch={() => setSearch(true)} />}
           <main
             className={`min-w-0 min-h-0 flex-1 w-full max-w-full bg-background overflow-x-hidden overscroll-y-contain ${

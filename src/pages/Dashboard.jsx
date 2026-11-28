@@ -756,7 +756,7 @@ export default function Dashboard() {
 
       <div className={`relative z-10 mx-auto w-full min-w-0 max-w-[1520px] ${densityStyles.outer}`}>
         {/* Top Header */}
-        <div className="flex flex-col gap-3.5 sm:flex-row sm:items-end sm:justify-between border-b border-slate-200/70 dark:border-slate-800/80 pb-4 sm:border-b-0 sm:pb-0">
+        <div className="flex flex-col gap-3.5 sm:flex-row sm:items-end sm:justify-between">
           <div className="min-w-0">
             <p className="text-xs sm:text-sm font-semibold text-sub" data-testid="dashboard-date">
               {format(new Date(), "EEEE, d MMMM yyyy", { locale: localeId })}

@@ -192,19 +192,49 @@ export default function Projects() {
       {pid ? <Detail pid={pid} /> : <>
         <PageHeader icon={FolderKanban} title={t("projects_title", "Proyek")} subtitle={t("projects_subtitle", "Progres dihitung otomatis dari data tugas.")} actions={<AccentButton onClick={() => setOpen(true)} data-testid="new-project-btn"><Plus size={16} />{t("projects_new_btn", "Proyek Baru")}</AccentButton>} />
         {!list.length ? <Empty icon={FolderKanban} title={t("projects_empty", "Belum ada proyek")} /> : (
-          <div className="grid grid-cols-1 gap-3.5 sm:gap-4 sm:grid-cols-2 xl:grid-cols-3 min-w-0">
+          <div className="grid grid-cols-1 gap-3.5 sm:gap-4 sm:grid-cols-2 xl:grid-cols-3 min-w-0 items-stretch">
             {list.map((p, i) => {
               const taskDone = p.task_done || 0;
               const taskTotal = p.task_total || 0;
               const progressPct = taskTotal > 0 ? (p.progress ?? Math.round((taskDone / taskTotal) * 100)) : 0;
               return (
-                <button key={p.id || i} onClick={() => navigate(`/projects/${p.id}`)} className="card min-w-0 w-full overflow-hidden p-4 sm:p-5 text-left transition-transform hover:-translate-y-0.5" data-testid={`project-card-${p.id}`}>
-                  <div className="flex items-center justify-between"><span className="h-10 w-10 rounded-md shrink-0" style={{ background: `linear-gradient(135deg, ${p.color || "#FF5364"}, var(--c-accent2))` }} /><span className="rounded-full bg-surface2 px-2.5 py-1 text-[11px] font-semibold">{t(`projects_status_${p.status || "active"}`, PROJECT_STATUS[p.status] || (p.status || "active").replace("_", " "))}</span></div>
-                  <p className="mt-4 font-bold">{p.name}</p><p className="mt-1 line-clamp-2 text-sm text-sub">{p.description}</p>
-                  <div className="mt-3"><Labels ids={p.label_ids || []} small /></div>
-                  <div className="mt-4 flex justify-between text-xs text-sub"><span>{taskDone}/{taskTotal} {t("projects_tasks_unit", "tugas")}</span><span className="font-semibold text-ink">{progressPct}%</span></div>
-                  <div className="mt-1.5 h-1.5 rounded-full bg-surface2"><div className="h-full rounded-full bg-brand" style={{ width: `${progressPct}%` }} /></div>
-                  <div className="mt-4"><AvatarStack ids={p.member_ids || []} /></div>
+                <button
+                  key={p.id || i}
+                  type="button"
+                  onClick={() => navigate(`/projects/${p.id}`)}
+                  className="card flex h-full min-w-0 w-full flex-col items-stretch justify-between overflow-hidden p-4 sm:p-5 text-left transition-transform hover:-translate-y-0.5 cursor-pointer"
+                  data-testid={`project-card-${p.id}`}
+                >
+                  <div className="w-full min-w-0">
+                    <div className="flex w-full items-center justify-between gap-2">
+                      <span
+                        className="h-10 w-10 rounded-xl shrink-0"
+                        style={{ background: `linear-gradient(135deg, ${p.color || "#FF5364"}, var(--c-accent2))` }}
+                      />
+                      <span className="rounded-full bg-surface2 px-2.5 py-1 text-[11px] font-semibold shrink-0">
+                        {t(`projects_status_${p.status || "active"}`, PROJECT_STATUS[p.status] || (p.status || "active").replace("_", " "))}
+                      </span>
+                    </div>
+                    <p className="mt-4 truncate text-base font-bold text-ink">{p.name}</p>
+                    <p className="mt-1.5 min-h-[2.625rem] line-clamp-2 text-sm text-sub">
+                      {p.description || "\u00A0"}
+                    </p>
+                    <div className="mt-3 flex min-h-[1.75rem] items-center">
+                      <Labels ids={p.label_ids || []} small />
+                    </div>
+                  </div>
+                  <div className="mt-4 w-full">
+                    <div className="flex w-full items-center justify-between text-xs text-sub">
+                      <span>{taskDone}/{taskTotal} {t("projects_tasks_unit", "tugas")}</span>
+                      <span className="font-semibold text-ink tabular-nums">{progressPct}%</span>
+                    </div>
+                    <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-surface2">
+                      <div className="h-full rounded-full bg-brand" style={{ width: `${progressPct}%` }} />
+                    </div>
+                    <div className="mt-4 flex min-h-[2rem] items-center px-0.5 py-0.5">
+                      <AvatarStack ids={p.member_ids || []} />
+                    </div>
+                  </div>
                 </button>
               );
             })}

@@ -167,3 +167,44 @@ export function getOrgLevelMeta(level, levels = DEFAULT_ORG_LEVELS) {
     ring: "border-l-slate-400",
   };
 }
+
+const ARCHIVE_APPROVER_DEPT_OR_TITLE_RE =
+  /\b(hr|hrd|human resource|people ops|finance|accounting|ga|general affair|procurement|legal|office manager|admin)\b/i;
+
+export function canViewAllArchiveDivisions(user) {
+  if (!user || user.is_bot || user.role === "assistant") return false;
+  const role = String(user.role || "").toLowerCase();
+  if (role === "super_admin" || role === "workspace_admin") return true;
+  const level = inferUserOrgLevel(user);
+  const rank = getOrgLevelRank(level);
+  if (rank <= 2) return true; // C Level & Direktur
+  const dept = String(user.department || "");
+  const title = String(user.job_title || "");
+  if (ARCHIVE_APPROVER_DEPT_OR_TITLE_RE.test(dept) || ARCHIVE_APPROVER_DEPT_OR_TITLE_RE.test(title)) {
+    return true;
+  }
+  return false;
+}
+
+export function canAccessEmployeeArchives(user, { users = [], serverFlag = false } = {}) {
+  if (!user || user.is_bot || user.role === "assistant") return false;
+  if (serverFlag || user.can_access_archives || user.can_approve || user.archive_access) return true;
+  const role = String(user.role || "").toLowerCase();
+  if (["super_admin", "workspace_admin", "department_manager", "project_manager", "manager"].includes(role)) {
+    return true;
+  }
+  const level = inferUserOrgLevel(user);
+  const rank = getOrgLevelRank(level);
+  // Rank 1..4 = C Level, Direktur, Manager, Lead
+  if (rank <= 4) return true;
+  const dept = String(user.department || "");
+  const title = String(user.job_title || "");
+  if (ARCHIVE_APPROVER_DEPT_OR_TITLE_RE.test(dept) || ARCHIVE_APPROVER_DEPT_OR_TITLE_RE.test(title)) {
+    return true;
+  }
+  if (Array.isArray(users) && user.user_id && users.some((u) => u && u.manager_id === user.user_id)) {
+    return true;
+  }
+  return false;
+}
+

@@ -20,7 +20,10 @@ import {
   cancelScheduledStorageWrite,
 } from "../lib/workspaceCaches";
 import { preloadAllRoutes } from "../lib/routePreload";
-import { prewarmImages } from "../lib/imagePreloader";
+import { clearFailedImages, prewarmImages } from "../lib/imagePreloader";
+import { canAccessEmployeeArchives } from "../lib/orgLevels";
+import { normalizeTaskStatusList, getDivisionTaskStatuses, getAllKnownTaskStatuses } from "../lib/taskStatuses";
+import { prefetchEmployeeArchives } from "../lib/archivesCache";
 import { setCachedDriveShortcuts } from "../data/initialDriveShortcuts";
 import { showSystemNotification, syncPushSubscription, syncAppBadge } from "../lib/systemNotifications";
 import { attemptAutoHydrateServer, syncWorkspaceMirror, scheduleRealtimeCloudSync, upsertAccountInVault, upsertAccountsListInVault, getKnownAccountsFromVault, removeAccountFromVault, hasCompletedInitialHydrate, rehydrateIfServerRestarted, recordDeletedTaskIds, recordDeletedCheckpointTemplateIds, recordDeletedEntityIds, resetLocalMirrorAfterRestore } from "../lib/persistentMirror";
@@ -157,6 +160,7 @@ export function AppProvider({ children }) {
   });
   const [online, setOnline] = useState(() => new Set(DEFAULT_USERS.map((u) => u.user_id)));
   const [unread, setUnread] = useState(0);
+  const [serverCanAccessArchives, setServerCanAccessArchives] = useState(false);
   const [themeDraft, setThemeDraft] = useState(null);
   const [topNotif, setTopNotif] = useState(null);
   const [cloudSyncStatus, setCloudSyncStatus] = useState(() => getCloudSyncStatus());
@@ -262,11 +266,9 @@ export function AppProvider({ children }) {
     const todayD = now.getDate();
 
     const doneKeys = new Set(["done"]);
-    if (Array.isArray(ws?.task_statuses)) {
-      ws.task_statuses.forEach((s) => {
-        if (s && typeof s === "object" && s.is_done && s.key) doneKeys.add(s.key);
-      });
-    }
+    getAllKnownTaskStatuses(ws).forEach((s) => {
+      if (s && s.is_done && s.key) doneKeys.add(s.key);
+    });
 
     const ensureUserStat = (uid) => {
       let entry = statsByUser.get(uid);
@@ -336,7 +338,7 @@ export function AppProvider({ children }) {
     });
 
     return { userDeadlinesToday: set, userDeadlineReasons: reasons };
-  }, [tasks, ws?.task_statuses]);
+  }, [tasks, ws?.task_statuses, ws?.division_task_statuses]);
 
   const hasDeadlineToday = useCallback((userId) => {
     return Boolean(userId && userDeadlinesToday.has(userId));
@@ -489,6 +491,9 @@ export function AppProvider({ children }) {
         }
         if (bootData.stats_team && typeof bootData.stats_team === "object") {
           hydrateTeamStatsCache(currentUid, bootData.stats_team, "default", "7d");
+        }
+        if (typeof bootData.can_access_archives === "boolean") {
+          setServerCanAccessArchives(bootData.can_access_archives);
         }
         subs.current.forEach((fn) =>
           fn({
@@ -684,6 +689,7 @@ export function AppProvider({ children }) {
           if (cancelled) return;
           const restored = await attemptAutoHydrateServer(api).catch(() => false);
           if (!cancelled && restored) {
+            clearFailedImages();
             await loadAll(true).catch(() => {});
           }
           if (!cancelled) {
@@ -1425,13 +1431,16 @@ export function AppProvider({ children }) {
     [labels]
   );
   const statuses = useMemo(
-    () =>
-      (ws?.task_statuses || ["todo", "in_progress", "in_review", "done"]).map((s) =>
-        typeof s === "string"
-          ? { key: s, name: s.replace(/_/g, " "), color: "#F0F4FA", is_done: s === "done" }
-          : s
-      ),
+    () => normalizeTaskStatusList(ws?.task_statuses, true),
     [ws?.task_statuses]
+  );
+  const allStatuses = useMemo(
+    () => getAllKnownTaskStatuses(ws),
+    [ws?.task_statuses, ws?.division_task_statuses]
+  );
+  const getStatusesForDivision = useCallback(
+    (division) => getDivisionTaskStatuses(ws, division),
+    [ws?.task_statuses, ws?.division_task_statuses]
   );
   const effectiveCopywriting = useMemo(
     () => getEffectiveCopywriting(ws?.custom_copywriting, prefs?.custom_copywriting),
@@ -1552,31 +1561,40 @@ export function AppProvider({ children }) {
     setSession(null);
   }, [setSession]);
 
-  // Proactively prewarm employee avatars & workspace logo in browser cache during idle time
+  // Proactively prewarm employee avatars & workspace logo in browser cache immediately
   // so profile photos across Dashboard, Pesan, Tugas, Grup, and Employee render with 0ms delay.
   useEffect(() => {
     if (!me?.user_id) return;
-    const urls = [];
-    if (me.avatar || me.picture) urls.push(me.avatar || me.picture);
-    if (ws?.logo_file_id && ws.logo_file_id !== "default_workspace_logo") {
-      urls.push(fileUrl(ws.logo_file_id));
-    }
-    if (ws?.assistant_avatar) urls.push(ws.assistant_avatar);
+    const avatarUrls = [];
+    if (me.avatar || me.picture) avatarUrls.push(me.avatar || me.picture);
+    if (ws?.assistant_avatar) avatarUrls.push(ws.assistant_avatar);
     if (Array.isArray(users)) {
       for (const u of users) {
         const src = u?.avatar || u?.picture;
-        if (src) urls.push(src);
+        if (src) avatarUrls.push(src);
       }
     }
-    if (urls.length === 0) return;
-    const run = () => prewarmImages(urls, { concurrency: 6, maxCount: 60 });
-    if (typeof window !== "undefined" && typeof window.requestIdleCallback === "function") {
-      const id = window.requestIdleCallback(run, { timeout: 1200 });
-      return () => window.cancelIdleCallback?.(id);
+    if (avatarUrls.length > 0) {
+      prewarmImages(avatarUrls, { concurrency: 10, maxCount: 120, optimizeAsAvatar: true });
     }
-    const timer = setTimeout(run, 300);
-    return () => clearTimeout(timer);
+    if (ws?.logo_file_id && ws.logo_file_id !== "default_workspace_logo") {
+      prewarmImages([fileUrl(ws.logo_file_id)], { concurrency: 2, maxCount: 2, optimizeAsAvatar: false });
+    }
   }, [me?.user_id, me?.avatar, me?.picture, ws?.logo_file_id, ws?.assistant_avatar, users]);
+
+  const canAccessArchives = useMemo(
+    () => canAccessEmployeeArchives(me, { users, serverFlag: serverCanAccessArchives }),
+    [me, users, serverCanAccessArchives]
+  );
+
+  // Gently prewarm Employee Archives cache in background so clicking "Arsip Dokumen" renders in 0ms
+  useEffect(() => {
+    if (!me?.user_id || !canAccessArchives) return;
+    const timer = setTimeout(() => {
+      prefetchEmployeeArchives(me.user_id).catch(() => {});
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [me?.user_id, canAccessArchives]);
 
   const value = useMemo(() => {
     return {
@@ -1588,8 +1606,11 @@ export function AppProvider({ children }) {
       showTopNotif: handleSetTopNotif,
       closeTopNotif,
       statuses,
+      allStatuses,
+      getStatusesForDivision,
       isAdmin: ["super_admin", "workspace_admin"].includes(me?.role),
       isManager: ["super_admin", "workspace_admin", "department_manager", "project_manager"].includes(me?.role),
+      canAccessArchives,
       isDemo: !!me?.is_demo,
       lang: "en",
       effectiveCopywriting,
@@ -1609,7 +1630,7 @@ export function AppProvider({ children }) {
       syncCloudNow,
       connectCloudGoogle,
     };
-  }, [session, setSession, me, ws, prefs, users, userMap, labels, labelMap, statuses, effectiveCopywriting, t, online, unread, topNotif, themeDraft, tasks, boards, orgUnits, userDeadlinesToday, userDeadlineReasons, hasDeadlineToday, reloadTasks, handleSetTopNotif, closeTopNotif, reloadUsers, reloadLabels, reloadWs, savePrefs, subscribe, send, updateAvailabilityStatus, logout, checkAuth, loadAll, cloudSyncStatus, syncCloudNow, connectCloudGoogle]);
+  }, [session, setSession, me, ws, prefs, users, userMap, labels, labelMap, statuses, allStatuses, getStatusesForDivision, effectiveCopywriting, t, online, unread, topNotif, themeDraft, tasks, boards, orgUnits, userDeadlinesToday, userDeadlineReasons, hasDeadlineToday, reloadTasks, handleSetTopNotif, closeTopNotif, canAccessArchives, reloadUsers, reloadLabels, reloadWs, savePrefs, subscribe, send, updateAvailabilityStatus, logout, checkAuth, loadAll, cloudSyncStatus, syncCloudNow, connectCloudGoogle]);
 
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
 }

@@ -840,7 +840,7 @@ function MessageEmojiPicker({ onReact, messageId, isMine }) {
   );
 }
 
-function MessageItem({ m, mine, grouped, conv, onReply, onCreateTask, readBy }) {
+function MessageItem({ m, mine, grouped, prevIsCard = false, conv, onReply, onCreateTask, readBy }) {
   const { userMap, me, t: tr } = useApp();
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState(m.text);
@@ -898,15 +898,21 @@ function MessageItem({ m, mine, grouped, conv, onReply, onCreateTask, readBy }) 
   const isFormApproval = m.type === "form_approval" || Boolean(m.form_approval);
   const isTaskAssignApproval = m.type === "task_assignment_approval" || Boolean(m.task_assignment);
   const isAssistantReport = useMemo(() => detectAssistantReport(m), [m]);
-  const plain = m.type === "sticker" || isPoll || isStickyNote || isFormApproval || isTaskAssignApproval || isAssistantReport || m.type === "task" || m.type === "approval_card" || m.type === "access_request_card";
+  const isCardMessage = isPoll || isStickyNote || isFormApproval || isTaskAssignApproval || isAssistantReport || m.type === "task" || m.type === "approval_card" || m.type === "access_request_card";
+  const plain = m.type === "sticker" || isCardMessage;
   const renderedBody = useMemo(
     () => (m.text && !isPoll && !isStickyNote && !isFormApproval && !isTaskAssignApproval && !isAssistantReport && m.type !== "access_request_card"
       ? renderText(m.text, userMap, isMine, m.mention_ids)
       : null),
     [m.text, m.type, isPoll, isStickyNote, isFormApproval, isTaskAssignApproval, isAssistantReport, userMap, isMine, m.mention_ids]
   );
+  const topSpacingClass = (isCardMessage || prevIsCard)
+    ? "mt-4 sm:mt-5"
+    : grouped
+    ? "mt-0.5"
+    : "mt-3.5 sm:mt-4";
   return (
-    <div className={`group flex w-full gap-2 sm:gap-2.5 ${isMine ? "flex-row-reverse justify-start" : "flex-row justify-start"} ${grouped ? "mt-0.5" : "mt-3.5 sm:mt-4"}`} data-testid={`message-${m.id}`}>
+    <div className={`group flex w-full gap-2 sm:gap-2.5 ${isMine ? "flex-row-reverse justify-start" : "flex-row justify-start"} ${topSpacingClass}`} data-testid={`message-${m.id}`}>
       {!isMine && (
         <div className="w-7 sm:w-8 shrink-0">
           {!grouped && senderId && <Link to={`/people/${senderId}`} className="block w-fit rounded-full"><Avatar user={sender} size={28} /></Link>}

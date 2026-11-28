@@ -256,9 +256,10 @@ export function PrioritySelect({ value, onChange, testid }) {
   );
 }
 
-export function StatusSelect({ value, onChange, testid }) {
-  const { statuses } = useApp();
-  const list = statuses && statuses.length ? statuses : [{ key: "todo", name: "To Do" }];
+export function StatusSelect({ value, onChange, testid, statuses: propStatuses }) {
+  const { statuses: wsStatuses } = useApp();
+  const source = Array.isArray(propStatuses) && propStatuses.length ? propStatuses : wsStatuses;
+  const list = source && source.length ? source : [{ key: "todo", name: "To Do" }];
   const current = list.find((s) => s.key === value) || list[0];
   return (
     <Select value={value || list[0]?.key || "todo"} onValueChange={onChange}>

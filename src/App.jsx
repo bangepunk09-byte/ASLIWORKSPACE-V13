@@ -6,19 +6,21 @@ import Shell from "./components/Shell";
 import { Spinner } from "./components/common";
 import { routeLoaders } from "./lib/routePreload";
 
-const Dashboard = lazy(routeLoaders["/"]);
+import Dashboard from "./pages/Dashboard";
+import Beranda from "./pages/Beranda";
+import Employees from "./pages/Employees";
+import Messages from "./pages/Messages";
+import Tasks from "./pages/Tasks";
+import Projects from "./pages/Projects";
+import EmployeeArchives from "./pages/EmployeeArchives";
+
 const Login = lazy(routeLoaders["/login"]);
-const Messages = lazy(routeLoaders["/messages"]);
 const Groups = lazy(routeLoaders["/groups"]);
 const Directory = lazy(routeLoaders["/directory"]);
-const Employees = lazy(routeLoaders["/employee"]);
 const Profile = lazy(routeLoaders["/people"]);
 const Org = lazy(routeLoaders["/org"]);
-const Tasks = lazy(routeLoaders["/tasks"]);
-const Projects = lazy(routeLoaders["/projects"]);
 const Settings = lazy(routeLoaders["/settings"]);
 const Onboarding = lazy(routeLoaders["/onboarding"]);
-const Beranda = lazy(routeLoaders["/beranda"]);
 const Schedule = lazy(routeLoaders["/schedule"]);
 const Marketplace = lazy(routeLoaders["/marketplace"]);
 const NotificationList = lazy(() =>
@@ -126,24 +128,25 @@ function Router() {
         }
       />
       <Route element={<Protected><Shell /></Protected>}>
-        <Route path="/" element={<LazyPage><Dashboard /></LazyPage>} />
-        <Route path="/beranda" element={<LazyPage><Beranda /></LazyPage>} />
-        <Route path="/beranda/:pid" element={<LazyPage><Beranda /></LazyPage>} />
-        <Route path="/messages" element={<LazyPage><Messages /></LazyPage>} />
-        <Route path="/messages/:cid" element={<LazyPage><Messages /></LazyPage>} />
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/beranda" element={<Beranda />} />
+        <Route path="/beranda/:pid" element={<Beranda />} />
+        <Route path="/messages" element={<Messages />} />
+        <Route path="/messages/:cid" element={<Messages />} />
         <Route path="/groups" element={<LazyPage><Groups /></LazyPage>} />
         <Route path="/directory" element={<LazyPage><Directory /></LazyPage>} />
-        <Route path="/employee" element={<LazyPage><Employees /></LazyPage>} />
-        <Route path="/people" element={<LazyPage><Employees /></LazyPage>} />
+        <Route path="/employee" element={<Employees />} />
+        <Route path="/people" element={<Employees />} />
         <Route path="/people/:uid" element={<LazyPage><Profile /></LazyPage>} />
         <Route path="/org" element={<LazyPage><Org /></LazyPage>} />
-        <Route path="/tasks" element={<LazyPage><Tasks /></LazyPage>} />
+        <Route path="/tasks" element={<Tasks />} />
         <Route path="/schedule" element={<LazyPage><Schedule /></LazyPage>} />
-        <Route path="/projects" element={<LazyPage><Projects /></LazyPage>} />
-        <Route path="/projects/:pid" element={<LazyPage><Projects /></LazyPage>} />
+        <Route path="/projects" element={<Projects />} />
+        <Route path="/projects/:pid" element={<Projects />} />
         <Route path="/marketplace" element={<LazyPage><Marketplace /></LazyPage>} />
         <Route path="/marketplace/:itemId" element={<LazyPage><Marketplace /></LazyPage>} />
         <Route path="/notifications" element={<LazyPage><div className="h-[calc(100dvh-7.5rem)] bg-surface md:h-screen"><NotificationList /></div></LazyPage>} />
+        <Route path="/archives" element={<LazyPage><EmployeeArchives /></LazyPage>} />
         <Route path="/settings" element={<LazyPage><Settings /></LazyPage>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

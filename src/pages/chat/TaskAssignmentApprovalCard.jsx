@@ -106,7 +106,7 @@ const TaskAssignmentApprovalCard = memo(function TaskAssignmentApprovalCard({ m 
       setRejectNote("");
       if (decision === "accept") {
         playSound("task_done");
-        toast.success(`Tugas ${info.number_str || ""} diterima! Sekarang aktif atas nama kamu.`);
+        toast.success(`Tugas ${info.number_str || ""} diterima dan kini aktif atas nama Anda.`);
       } else {
         playSound("click");
         toast.info(`Penugasan ${info.number_str || ""} ditolak.`);
@@ -259,7 +259,7 @@ const TaskAssignmentApprovalCard = memo(function TaskAssignmentApprovalCard({ m 
             ) : (
               <div className="space-y-2">
                 <p className="text-[11.5px] text-sub leading-relaxed">
-                  Tugas akan aktif atas nama kamu di board setelah kamu klik <strong className="font-semibold text-ink">Terima</strong>.
+                  Tugas akan aktif atas nama Anda di board setelah Anda mengklik <strong className="font-semibold text-ink">Terima Tugas</strong>.
                 </p>
                 <div className="grid grid-cols-2 gap-2">
                   <button

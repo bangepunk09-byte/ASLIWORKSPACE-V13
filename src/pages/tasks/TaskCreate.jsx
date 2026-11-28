@@ -244,7 +244,7 @@ function CheckpointCreator({ checkpoints = [], onChange, members, emptyMessage, 
 }
 
 export default function TaskCreate({ open, onOpenChange, preset, defaults, onCreated }) {
-  const { me, ws, users, statuses, t: tr } = useApp();
+  const { me, ws, users, statuses: wsStatuses, getStatusesForDivision, t: tr } = useApp();
   const [f, setF] = useState(() => blank(me, defaults));
   const [boards, setBoards] = useState(() => {
     try {
@@ -313,14 +313,27 @@ export default function TaskCreate({ open, onOpenChange, preset, defaults, onCre
     };
   };
 
+  const activeTargetBoard = useMemo(() => boards.find((b) => b.id === f.board_id) || null, [boards, f.board_id]);
+  const statuses = useMemo(() => {
+    const divName = f.department || activeTargetBoard?.department || me?.department || "";
+    return getStatusesForDivision ? getStatusesForDivision(divName) : wsStatuses;
+  }, [getStatusesForDivision, f.department, activeTargetBoard?.department, me?.department, wsStatuses]);
+
   useEffect(() => {
     if (open) {
       const initial = { ...blank(me, defaults), ...(preset || {}) };
       if ((!initial.assignee_ids || !initial.assignee_ids.length) && initial.assignee_id) {
         initial.assignee_ids = [initial.assignee_id];
       }
-      initial.status = preset?.status || defaults?.status || initial.status || statuses?.[0]?.key || "todo";
-      setF(applyBoardDefaults(initial, boards));
+      const next = applyBoardDefaults(initial, boards);
+      const divStatuses = getStatusesForDivision
+        ? getStatusesForDivision(next.department || me?.department || "")
+        : wsStatuses;
+      const requestedStatus = preset?.status || defaults?.status || next.status;
+      next.status = requestedStatus && divStatuses.some((s) => s.key === requestedStatus)
+        ? requestedStatus
+        : (divStatuses?.[0]?.key || "todo");
+      setF(next);
       setMore(false);
       api.get("/boards").then((r) => {
         const list = Array.isArray(r.data) ? r.data : [];
@@ -330,6 +343,13 @@ export default function TaskCreate({ open, onOpenChange, preset, defaults, onCre
       }).catch(() => {});
     }
   }, [open, defaults?.status, preset?.status]); // eslint-disable-line
+
+  useEffect(() => {
+    if (!open || !Array.isArray(statuses) || statuses.length === 0) return;
+    if (!f.status || !statuses.some((s) => s.key === f.status)) {
+      setF((prev) => ({ ...prev, status: statuses[0]?.key || "todo" }));
+    }
+  }, [open, statuses, f.status]);
 
   const assigneeScope = useMemo(
     () =>
@@ -396,7 +416,7 @@ export default function TaskCreate({ open, onOpenChange, preset, defaults, onCre
       const invited = Array.isArray(data?.newly_invited_assignees) ? data.newly_invited_assignees : [];
       if (invited.length > 0) {
         const names = invited.map((x) => x.name).filter(Boolean).join(", ");
-        toast.success(`Tugas ${data.number_str || ""} dibuat! Box approval penugasan dikirim lewat japri ke ${names}.`);
+        toast.success(`Tugas ${data.number_str || ""} dibuat. Konfirmasi penugasan telah dikirim melalui pesan langsung ke ${names}.`);
       } else {
         toast.success(`Tugas ${data.number_str || ""} berhasil dibuat!`);
       }
@@ -515,6 +535,7 @@ export default function TaskCreate({ open, onOpenChange, preset, defaults, onCre
               <StatusSelect
                 value={f.status || statuses?.[0]?.key || "todo"}
                 onChange={set("status")}
+                statuses={statuses}
                 testid="task-status-select"
               />
             </Row>

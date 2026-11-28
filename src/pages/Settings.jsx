@@ -1063,13 +1063,15 @@ function CopywritingSettings() {
 export default function Settings() {
   const { me, isAdmin, isManager, t } = useApp();
   const isSuperAdmin = me?.role === "super_admin";
+  const canEditTaskStatuses = isSuperAdmin || Boolean(String(me?.department || "").trim());
   const tabs = [
     ["profile", t("settings_tab_profile", "Profil & Keamanan")],
     ["notifications", t("settings_tab_notifications", "Notifikasi & PWA")],
     ["appearance", t("settings_tab_appearance", "Tema & Tampilan")],
     ...(isAdmin ? [["workspace", t("settings_tab_workspace", "Identitas Workspace")], ["copywriting", t("settings_tab_copywriting", "Kustomisasi Teks")], ["admin", t("settings_tab_admin", "Ringkasan Admin")], ["access", t("settings_tab_access", "Tim, Divisi & Akses")], ["backup", t("settings_tab_backup", "Backup & Restore")]] : []),
     ...(isSuperAdmin ? [["marketplace", t("settings_tab_marketplace", "Marketplace Employee")]] : []),
-    ...(isManager ? [["labels", t("settings_tab_labels", "Brand & Label")], ["statuses", t("settings_tab_statuses", "Status Tugas")]] : []),
+    ...(isManager ? [["labels", t("settings_tab_labels", "Brand & Label")]] : []),
+    ...(canEditTaskStatuses ? [["statuses", t("settings_tab_statuses", "Status Tugas")]] : []),
     ["background", t("settings_tab_background", "Latar Dashboard")],
     ...(isAdmin ? [["fields", t("settings_tab_fields", "Kolom Profil")], ["stickers", t("settings_tab_stickers", "Stiker Tim")]] : [])
   ];

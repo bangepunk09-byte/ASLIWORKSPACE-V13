@@ -146,7 +146,7 @@ const isSameTaskDetail = (a, b) => {
 };
 
 export default function TaskDetail({ id, initialTask = null, boards: propBoards = null, onClose, onChanged }) {
-  const { me, statuses, userMap, labelMap, tasks: ctxTasks, isManager, subscribe, t: tr } = useApp();
+  const { me, statuses: wsStatuses, allStatuses, getStatusesForDivision, userMap, labelMap, tasks: ctxTasks, isManager, subscribe, t: tr } = useApp();
   const syncResolvedTask = id ? resolveTaskSync(id, initialTask, ctxTasks) : null;
   const [tState, setTState] = useState(() => syncResolvedTask);
   const [boards, setBoards] = useState(() => getInitialBoards(propBoards));
@@ -171,6 +171,9 @@ export default function TaskDetail({ id, initialTask = null, boards: propBoards 
         comments: [],
         activity: []
       };
+
+  const taskDivision = t?.department || boards.find((b) => b.id === t?.board_id)?.department || "";
+  const statuses = getStatusesForDivision ? getStatusesForDivision(taskDivision) : wsStatuses;
 
   const setT = (updater) => {
     setTState((prev) => {
@@ -254,7 +257,7 @@ export default function TaskDetail({ id, initialTask = null, boards: propBoards 
       const invited = Array.isArray(data?.newly_invited_assignees) ? data.newly_invited_assignees : [];
       if (invited.length > 0) {
         const names = invited.map((x) => x.name).filter(Boolean).join(", ");
-        toast.info(`Box approval penugasan dikirim lewat japri ke ${names}. Nama PIC akan aktif setelah diterima.`);
+        toast.info(`Konfirmasi penugasan telah dikirim melalui pesan langsung ke ${names}. Nama PIC akan aktif setelah disetujui.`);
       } else if (msg) {
         toast.success(msg);
       }
@@ -549,7 +552,8 @@ export default function TaskDetail({ id, initialTask = null, boards: propBoards 
                       value={t.status}
                       disabled={ro || approvedCount >= 2}
                       onValueChange={(val) => {
-                        if (approvedCount >= 2 && val !== "done") {
+                        const targetDone = val === "done" || statuses.find((s) => s.key === val)?.is_done;
+                        if (approvedCount >= 2 && !targetDone) {
                           toast.error("Tugas sudah 2/2 Approved (100%) dan terkunci saklek di Done.");
                           return;
                         }
@@ -681,7 +685,7 @@ export default function TaskDetail({ id, initialTask = null, boards: propBoards 
                       if (pendingInvites.length === 0) return null;
                       return (
                         <div className="flex flex-wrap items-center gap-1.5 pt-0.5 text-[11px] text-amber-700 dark:text-amber-300" data-testid="task-detail-pending-assignees">
-                          <span className="font-semibold">Menunggu konfirmasi japri:</span>
+                          <span className="font-semibold">Menunggu konfirmasi penugasan:</span>
                           {pendingInvites.map((inv) => {
                             const nm = userMap?.[inv.user_id]?.name || inv.name || "Anggota";
                             return (
@@ -792,7 +796,7 @@ export default function TaskDetail({ id, initialTask = null, boards: propBoards 
                                 <span className="text-sub">{actionDisplay}</span>
                                 {!detailDisplay && a.changes?.from !== undefined && a.changes?.to !== undefined && typeof a.changes.to !== "object" && a.changes.to !== null && (
                                   <span className="text-sub">
-                                    {" "}→ <b className="text-ink">{userMap[a.changes.to]?.name || statuses.find((s) => s.key === a.changes.to)?.name || resolveRawUserTokens(String(a.changes.to), userMap).slice(0, 80)}</b>
+                                    {" "}→ <b className="text-ink">{userMap[a.changes.to]?.name || statuses.find((s) => s.key === a.changes.to)?.name || (allStatuses || []).find((s) => s.key === a.changes.to)?.name || resolveRawUserTokens(String(a.changes.to), userMap).slice(0, 80)}</b>
                                   </span>
                                 )}
                               </p>

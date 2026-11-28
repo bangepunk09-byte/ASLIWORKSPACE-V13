@@ -7,7 +7,7 @@ import { X, Download, ZoomIn, ZoomOut } from "lucide-react";
 import { useApp } from "../context/AppContext";
 import { fileUrl } from "../lib/api";
 import { getProfileCompletion } from "../lib/profileCompletion";
-import { isImageFailed, isImageLoaded, markImageFailed, markImageLoaded } from "../lib/imagePreloader";
+import { isImageFailed, isImageLoaded, markImageFailed, markImageLoaded, optimizeAvatarUrl } from "../lib/imagePreloader";
 
 const GRADS = ["from-[#FF8A9A] to-[#FF5364]", "from-[#8FB8FF] to-[#5B7CFA]", "from-[#C3A6FF] to-[#8B5CF6]", "from-[#7FE0B0] to-[#22A06B]", "from-[#FFD27A] to-[#F59E0B]", "from-[#7FD8E0] to-[#0EA5A4]"];
 const hash = (s = "") => [...s].reduce((a, c) => a + c.charCodeAt(0), 0);
@@ -67,7 +67,7 @@ export function getAvailabilityStatusMeta(status) {
   return AVAILABILITY_STATUS_OPTIONS.find((opt) => opt.value === normalized) || AVAILABILITY_STATUS_OPTIONS[0];
 }
 
-export const Avatar = memo(function Avatar({ user, size = 36, showStatus = true, className = "", ringDeadline = true }) {
+export const Avatar = memo(function Avatar({ user, size = 36, showStatus = true, className = "", style, ringDeadline = true }) {
   const { online, ws, me, userMap, userDeadlinesToday, userDeadlineReasons, hasDeadlineToday, t } = useApp() || {};
   const tr = t || ((_k, fb) => fb || _k);
   const isCircleBot = user?.user_id === "user_circle_assistant" || user?.role === "assistant";
@@ -75,9 +75,10 @@ export const Avatar = memo(function Avatar({ user, size = 36, showStatus = true,
     ? (userMap?.[user.user_id] || user)
     : user;
   const name = isCircleBot ? (ws?.assistant_name || user?.name || "Asli") : (liveUser?.name || user?.name || "?");
-  const avatarSrc = isCircleBot
+  const rawAvatarSrc = isCircleBot
     ? (ws?.assistant_avatar || user?.avatar || user?.picture || "https://api.dicebear.com/7.x/bottts/svg?seed=AsliWorkspace&backgroundColor=FF5364")
     : (liveUser?.avatar || liveUser?.picture || user?.avatar || user?.picture);
+  const avatarSrc = rawAvatarSrc ? optimizeAvatarUrl(rawAvatarSrc, size) : "";
 
   const [imgState, setImgState] = useState(() => ({
     src: avatarSrc || "",
@@ -133,8 +134,8 @@ export const Avatar = memo(function Avatar({ user, size = 36, showStatus = true,
 
   return (
     <span
-      className={`relative inline-flex shrink-0 rounded-full transition-colors duration-200 ${ringClass} ${className}`}
-      style={{ width: size, height: size }}
+      className={`relative isolate inline-flex shrink-0 rounded-full ${ringClass} ${className}`}
+      style={{ width: size, height: size, ...style }}
       title={
         user?.user_id && !isCircleBot
           ? `${name} (${statusLabel}) · ${hasDeadline ? (deadlineReason || tr("common_deadline_today_tip", "Ada deadline tugas hari ini!")) : tr("common_deadline_safe_tip", "Bebas deadline (Aman)")}`
@@ -143,7 +144,7 @@ export const Avatar = memo(function Avatar({ user, size = 36, showStatus = true,
     >
       {(!showImg || !imgReady) && (
         <span
-          className={`flex h-full w-full items-center justify-center rounded-full bg-gradient-to-br ${GRADS[hash(name) % GRADS.length]} font-semibold text-white`}
+          className={`absolute inset-0 flex h-full w-full items-center justify-center rounded-full bg-gradient-to-br ${GRADS[hash(name) % GRADS.length]} font-semibold text-white`}
           style={{ fontSize: size * 0.38 }}
         >
           {initials}
@@ -151,28 +152,36 @@ export const Avatar = memo(function Avatar({ user, size = 36, showStatus = true,
       )}
       {showImg && (
         <img
+          ref={(el) => {
+            if (el && el.complete && el.naturalWidth > 0 && !isImageLoaded(avatarSrc)) {
+              markImageLoaded(avatarSrc);
+              setImgState((prev) => (prev.src === avatarSrc && prev.loaded ? prev : { src: avatarSrc, loaded: true, failed: false }));
+            }
+          }}
           src={avatarSrc}
           alt={name}
           width={size}
           height={size}
           loading="eager"
           decoding="async"
-          fetchPriority={size >= 48 ? "high" : "auto"}
+          fetchPriority={size >= 36 ? "high" : "auto"}
           referrerPolicy="no-referrer"
           onLoad={() => {
             markImageLoaded(avatarSrc);
-            setImgState({ src: avatarSrc || "", loaded: true, failed: false });
+            if (!imgReady) {
+              setImgState({ src: avatarSrc || "", loaded: true, failed: false });
+            }
           }}
           onError={() => {
             markImageFailed(avatarSrc);
             setImgState({ src: avatarSrc || "", loaded: false, failed: true });
           }}
-          className={`${imgReady ? "h-full w-full" : "absolute inset-0 h-full w-full opacity-0"} rounded-full object-cover`}
+          className="relative z-10 h-full w-full rounded-full object-cover"
         />
       )}
       {showStatus && user && (
         <span
-          className={`absolute bottom-0 right-0 rounded-full border-2 border-[var(--c-surface)] ${dotColorClass}`}
+          className={`absolute bottom-0 right-0 z-20 rounded-full border-2 border-[var(--c-surface)] ${dotColorClass}`}
           style={{ width: Math.max(8, size * 0.28), height: Math.max(8, size * 0.28) }}
           title={statusLabel}
           data-testid="online-indicator"
@@ -347,17 +356,54 @@ export function ImageLightbox({ image, onClose }) {
   return typeof document !== "undefined" ? createPortal(modalContent, document.body) : modalContent;
 }
 
-export function GroupIcon({ c, size = 42, rounded = "rounded-2xl" }) {
-  if (c?.image) return <img src={fileUrl(c.image)} alt={c.name || "group"} className={`${rounded} shrink-0 object-cover`} style={{ width: size, height: size }} data-testid={`group-avatar-${c.id}`} />;
+export const GroupIcon = memo(function GroupIcon({ c, size = 42, rounded = "rounded-2xl" }) {
+  const [failed, setFailed] = useState(false);
+  const src = c?.image ? optimizeAvatarUrl(fileUrl(c.image), size) : "";
+  useEffect(() => { setFailed(false); }, [src]);
+  if (src && !failed) {
+    return (
+      <img
+        src={src}
+        alt={c.name || "group"}
+        width={size}
+        height={size}
+        loading="eager"
+        decoding="async"
+        fetchPriority="high"
+        onError={() => setFailed(true)}
+        className={`${rounded} shrink-0 object-cover`}
+        style={{ width: size, height: size }}
+        data-testid={`group-avatar-${c.id}`}
+      />
+    );
+  }
   return <span className={`flex shrink-0 items-center justify-center ${rounded} bg-soft-purple font-bold text-ink`} style={{ width: size, height: size, fontSize: size * 0.4 }} data-testid={`group-avatar-${c?.id}`}>{(c?.name || "#").trim().slice(0, 1).toUpperCase()}</span>;
-}
+});
 
 export const AvatarStack = memo(function AvatarStack({ ids = [], max = 4, size = 26, ringDeadline = true }) {
   const { userMap } = useApp();
+  const visible = [...ids.slice(0, max)].reverse();
   return (
-    <div className="flex items-center -space-x-1">
-      {[...ids.slice(0, max)].reverse().map((id, index) => <Avatar key={id} user={userMap[id]} size={size} showStatus={false} ringDeadline={ringDeadline} className="relative rounded-full" style={{ zIndex: index }} />)}
-      {ids.length > max && <span className="relative flex items-center justify-center rounded-full bg-surface2 text-[10px] font-semibold text-sub border border-slate-200 dark:border-slate-700" style={{ width: size, height: size, zIndex: 0 }}>+{ids.length - max}</span>}
+    <div className="flex items-center -space-x-1.5">
+      {visible.map((id, index) => (
+        <Avatar
+          key={`${id}-${index}`}
+          user={userMap[id]}
+          size={size}
+          showStatus={false}
+          ringDeadline={ringDeadline}
+          className="avatar-stack-item relative rounded-full"
+          style={{ zIndex: index + 1 }}
+        />
+      ))}
+      {ids.length > max && (
+        <span
+          className="relative inline-flex items-center justify-center rounded-full bg-surface2 text-[10px] font-semibold text-sub border border-slate-200 dark:border-slate-700 ring-2 ring-[var(--c-surface)]"
+          style={{ width: size, height: size, zIndex: visible.length + 2 }}
+        >
+          +{ids.length - max}
+        </span>
+      )}
     </div>
   );
 });
@@ -466,9 +512,13 @@ export const PriorityBadge = memo(function PriorityBadge({ value }) {
   return <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap shrink-0 ${p.cls}`}>{tr(`common_priority_${key}`, p.name)}</span>;
 });
 
-export const StatusBadge = memo(function StatusBadge({ status }) {
-  const { statuses } = useApp();
-  const s = statuses.find((x) => x.key === status);
+export const StatusBadge = memo(function StatusBadge({ status, division }) {
+  const { statuses, allStatuses, getStatusesForDivision } = useApp();
+  const divList = division && getStatusesForDivision ? getStatusesForDivision(division) : null;
+  const s =
+    divList?.find((x) => x.key === status) ||
+    statuses.find((x) => x.key === status) ||
+    (allStatuses || []).find((x) => x.key === status);
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap" style={{ background: `${s?.color || "#eee"}55` }}>
       <span className="h-2 w-2 rounded-full" style={{ background: s?.is_done ? "#22A06B" : "var(--c-accent2)", opacity: s?.is_done ? 1 : 0.7 }} />{s?.name || status}

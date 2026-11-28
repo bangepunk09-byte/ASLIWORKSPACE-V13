@@ -126,15 +126,27 @@ const ArchiveView = memo(function ArchiveView({ tasks, onOpen, reload, projects 
 
   const isFolderOpen = (key) => openFolders[key] !== false;
 
+  const isRequestorOf = useCallback((task) => {
+    const uid = me?.user_id;
+    if (!uid || !task) return false;
+    const reqIds = Array.isArray(task.requestor_ids) && task.requestor_ids.length > 0
+      ? task.requestor_ids.filter(Boolean)
+      : (task.requestor_id ? [task.requestor_id] : (task.created_by ? [task.created_by] : []));
+    return reqIds.includes(uid);
+  }, [me?.user_id]);
+
   const toggleSelect = (id, e) => {
     e?.stopPropagation();
+    const targetTask = tasks.find((x) => x.id === id);
+    if (!isRequestorOf(targetTask)) return;
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   };
 
   const toggleSelectFolder = (folderTasks, e) => {
     e?.stopPropagation();
-    const ids = folderTasks.map((t) => t.id);
-    const allSelected = ids.length > 0 && ids.every((id) => selectedIds.includes(id));
+    const ids = folderTasks.filter((t) => isRequestorOf(t)).map((t) => t.id);
+    if (!ids.length) return;
+    const allSelected = ids.every((id) => selectedIds.includes(id));
     if (allSelected) {
       setSelectedIds((prev) => prev.filter((id) => !ids.includes(id)));
     } else {
@@ -585,6 +597,7 @@ const ArchiveView = memo(function ArchiveView({ tasks, onOpen, reload, projects 
                         }
                       }
 
+                      const canDeleteThisTask = isRequestorOf(task);
                       return (
                         <div
                           key={task.id}
@@ -593,15 +606,17 @@ const ArchiveView = memo(function ArchiveView({ tasks, onOpen, reload, projects 
                           data-testid={`archive-task-${task.id}`}
                         >
                           <div className="flex items-start gap-3 min-w-0 flex-1">
-                            <button
-                              type="button"
-                              onClick={(e) => toggleSelect(task.id, e)}
-                              className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-sub hover:text-brand cursor-pointer"
-                              aria-label="Pilih tugas arsip"
-                              data-testid={`select-archive-task-${task.id}`}
-                            >
-                              {isChecked ? <CheckSquare size={16} className="text-rose-600" /> : <Square size={16} />}
-                            </button>
+                            {canDeleteThisTask && (
+                              <button
+                                type="button"
+                                onClick={(e) => toggleSelect(task.id, e)}
+                                className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-sub hover:text-brand cursor-pointer"
+                                aria-label="Pilih tugas arsip"
+                                data-testid={`select-archive-task-${task.id}`}
+                              >
+                                {isChecked ? <CheckSquare size={16} className="text-rose-600" /> : <Square size={16} />}
+                              </button>
+                            )}
                             <div className="min-w-0 flex-1">
                               <div className="flex flex-wrap items-center gap-2">
                                 <span className="text-xs font-bold text-sub w-16">{task.number_str || "TSK"}</span>
@@ -646,16 +661,18 @@ const ArchiveView = memo(function ArchiveView({ tasks, onOpen, reload, projects 
                                 <RotateCcw size={12} />
                                 {tr("archive_restore_btn", "Pulihkan")}
                               </button>
-                              <button
-                                type="button"
-                                onClick={() => setConfirmSingleTask(task)}
-                                className="flex items-center gap-1 rounded-xl border border-rose-200 dark:border-rose-900/50 bg-rose-50/70 dark:bg-rose-950/30 px-2.5 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-100 transition-colors cursor-pointer"
-                                title={tr("archive_delete_title", "Hapus permanen tugas ini")}
-                                data-testid={`delete-archive-task-${task.id}`}
-                              >
-                                <Trash2 size={12} />
-                                {tr("archive_delete_btn", "Hapus")}
-                              </button>
+                              {canDeleteThisTask && (
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmSingleTask(task)}
+                                  className="flex items-center gap-1 rounded-xl border border-rose-200 dark:border-rose-900/50 bg-rose-50/70 dark:bg-rose-950/30 px-2.5 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-100 transition-colors cursor-pointer"
+                                  title={tr("archive_delete_title", "Hapus permanen tugas ini")}
+                                  data-testid={`delete-archive-task-${task.id}`}
+                                >
+                                  <Trash2 size={12} />
+                                  {tr("archive_delete_btn", "Hapus")}
+                                </button>
+                              )}
                               <button
                                 type="button"
                                 onClick={() => onOpen(task.id)}

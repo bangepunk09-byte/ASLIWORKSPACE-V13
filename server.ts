@@ -291,6 +291,7 @@ async function startServer() {
       login_image_file_id: "default_login_bg",
       theme: { primary: "#2F7DE1", mode: "light" },
       task_statuses: ["todo", "in_progress", "in_review", "done"],
+      division_task_statuses: {},
       task_fields: [],
       divisions: ["Engineering", "Product", "Operations", "Design"],
       item_types: [],
@@ -356,6 +357,7 @@ async function startServer() {
     marketplace_carts: {},
     marketplace_wishlists: {},
     circle_notes: [],
+    employee_archives: [],
     deleted_user_ids: [],
     deleted_user_emails: [],
     deleted_task_ids: [],
@@ -677,6 +679,9 @@ async function startServer() {
     }, delayMs);
   }
 
+  let warmAvatarFilesInRamRef: (() => Promise<void>) | null = null;
+  let clearMissingFileCacheRef: (() => void) | null = null;
+
   async function ensurePostgresHydrated() {
     if (pgHydrated) return;
     if (!isPostgresAvailable()) {
@@ -718,6 +723,9 @@ async function startServer() {
           console.log(
             `[PostgreSQL] Hydrated ASLI workspace (rev ${db.revision}, users=${db.users.length}, tasks=${db.tasks.length}, messages=${db.messages.length}).`
           );
+          if (typeof warmAvatarFilesInRamRef === "function") {
+            void warmAvatarFilesInRamRef();
+          }
         } else if (!isDatabaseInEmptySeedState()) {
           await saveWorkspaceToPostgres(db, { allowEmptyOverwrite: false });
           await syncUploadedFilesMapToPostgres(getCachedUploadedFilesBase64(), db.files || {});
@@ -3049,6 +3057,7 @@ async function startServer() {
       "files",
       "meetings",
       "circle_notes",
+      "employee_archives",
       "marketplace_listings",
       "marketplace_orders",
       "marketplace_reviews",
@@ -3530,6 +3539,7 @@ async function startServer() {
       "statuses",
       "meetings",
       "circle_notes",
+      "employee_archives",
       "marketplace_listings",
       "marketplace_orders",
       "marketplace_reviews",
@@ -3875,6 +3885,7 @@ async function startServer() {
       "reminders", "polls", "task_automations", "audit_logs", "invitations",
       "drive_shortcuts", "access_requests", "sticker_packs", "stickers", "meetings",
       "circle_notes",
+      "employee_archives",
       "marketplace_listings", "marketplace_orders", "marketplace_reviews", "marketplace_vouchers",
     ];
 
@@ -4373,6 +4384,7 @@ async function startServer() {
       "access_requests",
       "meetings",
       "circle_notes",
+      "employee_archives",
       "notifications",
       "marketplace_listings",
       "marketplace_orders",
@@ -4477,6 +4489,10 @@ async function startServer() {
           }
         }
         void syncUploadedFilesMapToPostgres(uploadedBase64 as Record<string, string>, db.files || {});
+        clearMissingFileCacheRef?.();
+        if (typeof warmAvatarFilesInRamRef === "function") {
+          void warmAvatarFilesInRamRef();
+        }
       } catch {}
     }
 
@@ -7752,7 +7768,7 @@ async function startServer() {
       createNotification({
         user_id: targetUid,
         title: "Konfirmasi Penugasan Tugas",
-        body: `${actorName} ingin menugaskan "${task.title}" (${task.number_str || "Tugas"}) kepadamu. Buka japri untuk Terima atau Tolak.`,
+        body: `${actorName} menugaskan "${task.title}" (${task.number_str || "Tugas"}) kepada Anda. Buka pesan langsung untuk menerima atau menolak.`,
         type: "task_assign_invite",
         category: "tasks",
         actor_id: actorId,
@@ -7849,20 +7865,6 @@ async function startServer() {
       created_at: new Date().toISOString()
     };
 
-    const validStatuses = (db.workspace?.task_statuses || [])
-      .map((s: any) => (typeof s === "string" ? s : s?.key))
-      .filter(Boolean);
-    const rawCreateStatus = String(req.body.status || "").trim().toLowerCase().replace(/\s+/g, "_");
-    const normalizedCreateStatus =
-      ["done", "selesai", "completed", "complete"].includes(rawCreateStatus) ? "done"
-      : ["in_review", "review", "approval"].includes(rawCreateStatus) ? "in_review"
-      : ["in_progress", "on_progress", "progress", "sedang_dikerjakan", "ongoing"].includes(rawCreateStatus) ? "in_progress"
-      : ["todo", "to_do", "open", "pending"].includes(rawCreateStatus) ? "todo"
-      : rawCreateStatus;
-    const resolvedStatus = normalizedCreateStatus && (validStatuses.length === 0 || validStatuses.includes(normalizedCreateStatus))
-      ? normalizedCreateStatus
-      : (validStatuses[0] || "todo");
-
     const boardHintUserId = primaryAssigneeId || pendingTargetIds[0] || null;
     const primaryAssigneeUser = boardHintUserId
       ? (db.users || []).find((u: any) => u.user_id === boardHintUserId)
@@ -7883,6 +7885,40 @@ async function startServer() {
     const resolvedDept = (explicitBoardId && targetBoard?.department)
       ? targetBoard.department
       : (req.body.department || targetBoard?.department || primaryAssigneeUser?.department || userDept || "Marketing");
+
+    const divStatusMap = db.workspace?.division_task_statuses && typeof db.workspace.division_task_statuses === "object"
+      ? db.workspace.division_task_statuses
+      : {};
+    const matchedDivStatusKey = Object.keys(divStatusMap).find(
+      (k) => String(k || "").trim().toLowerCase() === String(resolvedDept || "").trim().toLowerCase()
+    );
+    const effectiveDivisionStatuses = (matchedDivStatusKey && Array.isArray(divStatusMap[matchedDivStatusKey]) && divStatusMap[matchedDivStatusKey].length > 0)
+      ? divStatusMap[matchedDivStatusKey]
+      : (db.workspace?.task_statuses || []);
+    const validStatuses = effectiveDivisionStatuses
+      .map((s: any) => (typeof s === "string" ? s : s?.key))
+      .filter(Boolean);
+    const allDivValidKeys = new Set<string>(validStatuses);
+    (db.workspace?.task_statuses || []).forEach((s: any) => {
+      const k = typeof s === "string" ? s : s?.key;
+      if (k) allDivValidKeys.add(k);
+    });
+    const rawCreateStatus = String(req.body.status || "").trim();
+    const rawCreateStatusLower = rawCreateStatus.toLowerCase().replace(/\s+/g, "_");
+    const exactMatch = effectiveDivisionStatuses.find((s: any) => {
+      const k = typeof s === "string" ? s : s?.key;
+      return k && (k === rawCreateStatus || k.toLowerCase() === rawCreateStatusLower);
+    });
+    const normalizedCreateStatus = exactMatch
+      ? (typeof exactMatch === "string" ? exactMatch : exactMatch.key)
+      : ["done", "selesai", "completed", "complete"].includes(rawCreateStatusLower) ? "done"
+      : ["in_review", "review", "approval"].includes(rawCreateStatusLower) ? "in_review"
+      : ["in_progress", "on_progress", "progress", "sedang_dikerjakan", "ongoing"].includes(rawCreateStatusLower) ? "in_progress"
+      : ["todo", "to_do", "open", "pending"].includes(rawCreateStatusLower) ? "todo"
+      : rawCreateStatusLower;
+    const resolvedStatus = normalizedCreateStatus && (allDivValidKeys.size === 0 || allDivValidKeys.has(normalizedCreateStatus))
+      ? normalizedCreateStatus
+      : (validStatuses[0] || "todo");
 
     const t: any = {
       comments: [],
@@ -7961,7 +7997,7 @@ async function startServer() {
       const invAct = {
         id: `act_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
         actor_id: creatorId,
-        action: `mengirim konfirmasi penugasan via japri ke ${invitedNames} (menunggu diterima)`,
+        action: `mengirim konfirmasi penugasan melalui pesan langsung ke ${invitedNames} (menunggu persetujuan)`,
         task_id: t.id,
         task_title: t.title,
         created_at: new Date().toISOString(),
@@ -8108,7 +8144,15 @@ async function startServer() {
       );
       const finalReqIds = resolvedRequestors.length > 0 ? resolvedRequestors : [actorId];
 
-      const workspaceStatuses = Array.isArray(db.workspace?.task_statuses) ? db.workspace.task_statuses : [];
+      const importDivMap = db.workspace?.division_task_statuses && typeof db.workspace.division_task_statuses === "object"
+        ? db.workspace.division_task_statuses
+        : {};
+      const matchedImportDivKey = Object.keys(importDivMap).find(
+        (k) => String(k || "").trim().toLowerCase() === String(resolvedDept || "").trim().toLowerCase()
+      );
+      const workspaceStatuses = (matchedImportDivKey && Array.isArray(importDivMap[matchedImportDivKey]) && importDivMap[matchedImportDivKey].length > 0)
+        ? importDivMap[matchedImportDivKey]
+        : (Array.isArray(db.workspace?.task_statuses) ? db.workspace.task_statuses : []);
       const validStatuses = workspaceStatuses
         .map((s: any) => (typeof s === "string" ? s : s?.key))
         .filter(Boolean);
@@ -8368,16 +8412,24 @@ async function startServer() {
       return res.status(400).json({ detail: "Pilih minimal 1 tugas arsip untuk dihapus." });
     }
 
+    const isRequestor = (task: any, uid: string) => {
+      const reqIds = Array.isArray(task?.requestor_ids) && task.requestor_ids.length > 0
+        ? task.requestor_ids.filter(Boolean)
+        : (task?.requestor_id ? [task.requestor_id] : (task?.created_by ? [task.created_by] : []));
+      return reqIds.includes(uid);
+    };
+
     const deletedIds: string[] = [];
     db.tasks = (db.tasks || []).filter((t: any) => {
       if (!t || !t.archived || !targetIds.has(String(t.id))) return true;
       if (!isTaskAccessible(t, reqUser)) return true;
+      if (!isRequestor(t, reqUser.user_id)) return true;
       deletedIds.push(t.id);
       return false;
     });
 
     if (deletedIds.length === 0) {
-      return res.status(403).json({ detail: "Tidak ada tugas arsip yang dapat Anda hapus." });
+      return res.status(403).json({ detail: "Hanya requestor yang dapat menghapus tugas. Tidak ada tugas arsip yang memenuhi izin penghapusan Anda." });
     }
 
     db.deleted_task_ids = Array.from(
@@ -8799,7 +8851,30 @@ async function startServer() {
     }
     enforceTaskSaklekDone(t);
     const isLockedByApproval = getTaskApprovedList(t).length >= 2;
-    if (isLockedByApproval && req.body?.status !== undefined && req.body.status !== "done") {
+    const getTaskDivisionStatuses = () => {
+      const divMap = db.workspace?.division_task_statuses && typeof db.workspace.division_task_statuses === "object"
+        ? db.workspace.division_task_statuses
+        : {};
+      const tBoard = t.board_id ? db.boards?.find((b: any) => b.id === t.board_id) : null;
+      const divName = String(t.department || tBoard?.department || "").trim().toLowerCase();
+      const matchedKey = divName
+        ? Object.keys(divMap).find((k) => String(k || "").trim().toLowerCase() === divName)
+        : undefined;
+      if (matchedKey && Array.isArray(divMap[matchedKey]) && divMap[matchedKey].length > 0) {
+        return divMap[matchedKey];
+      }
+      return Array.isArray(db.workspace?.task_statuses) ? db.workspace.task_statuses : [];
+    };
+    const isTaskStatusDone = (key: string | null | undefined) => {
+      if (!key) return false;
+      if (key === "done") return true;
+      const divSt = getTaskDivisionStatuses();
+      const found = divSt.find((s: any) => (typeof s === "string" ? s : s?.key) === key);
+      if (found && typeof found === "object" && found.is_done) return true;
+      const wsSt = (db.workspace?.task_statuses || []).find((s: any) => (typeof s === "string" ? s : s?.key) === key);
+      return Boolean(wsSt && typeof wsSt === "object" && wsSt.is_done);
+    };
+    if (isLockedByApproval && req.body?.status !== undefined && !isTaskStatusDone(req.body.status)) {
       return res.status(409).json({
         detail: "Tugas sudah mencapai 2/2 Approval (100%) dan terkunci saklek di Done."
       });
@@ -8830,6 +8905,10 @@ async function startServer() {
     };
     const getStatusName = (key: string | null | undefined) => {
       if (!key) return "—";
+      const divMatch = getTaskDivisionStatuses().find((s: any) => (typeof s === "string" ? s : s?.key) === key);
+      if (divMatch) return typeof divMatch === "string" ? divMatch : (divMatch.name || key);
+      const wsMatch = (db.workspace?.task_statuses || []).find((s: any) => (typeof s === "string" ? s : s?.key) === key);
+      if (wsMatch) return typeof wsMatch === "string" ? wsMatch : (wsMatch.name || key);
       return db.statuses?.find((s: any) => s.key === key)?.name || key;
     };
     const getBoardName = (bid: string | null | undefined) => {
@@ -9533,10 +9612,10 @@ async function startServer() {
     if (newlyInvitedAssignees.length > 0) {
       const invitedNames = newlyInvitedAssignees.map((x) => x.name);
       recordTaskActivity(
-        `mengirim konfirmasi penugasan via japri ke ${joinListNatural(invitedNames)} (menunggu diterima)`,
+        `mengirim konfirmasi penugasan melalui pesan langsung ke ${joinListNatural(invitedNames)} (menunggu persetujuan)`,
         undefined,
         undefined,
-        `mengirim konfirmasi penugasan ${t.number_str || t.title} via japri ke ${joinListNatural(invitedNames)}`
+        `mengirim konfirmasi penugasan ${t.number_str || t.title} melalui pesan langsung ke ${joinListNatural(invitedNames)}`
       );
     }
 
@@ -9876,6 +9955,12 @@ async function startServer() {
     if (!t) return res.status(404).json({ detail: "Task not found" });
     if (!isTaskAccessible(t, user)) {
       return res.status(403).json({ detail: "Akses ditolak. Anda tidak memiliki izin untuk menghapus tugas divisi lain." });
+    }
+    const taskRequestorIds = Array.isArray(t.requestor_ids) && t.requestor_ids.length > 0
+      ? t.requestor_ids.filter(Boolean)
+      : (t.requestor_id ? [t.requestor_id] : (t.created_by ? [t.created_by] : []));
+    if (!taskRequestorIds.includes(user.user_id)) {
+      return res.status(403).json({ detail: "Hanya requestor yang dapat menghapus tugas ini. Assignee tidak memiliki izin untuk menghapus tugas." });
     }
     const idx = db.tasks.findIndex((x: any) => x.id === req.params.id);
     const deleted = db.tasks.splice(idx, 1)[0];
@@ -11952,8 +12037,14 @@ async function startServer() {
   // Eliminates disk syscalls & serves repeat/profile image requests in <0.5ms on Hostinger.
   const HOT_FILE_CACHE_MAX_BYTES = 64 * 1024 * 1024;
   const HOT_FILE_CACHE_MAX_SINGLE = 2.5 * 1024 * 1024;
+  const MISSING_FILE_CACHE_TTL_MS = 15_000;
   const hotFileCache = new Map<string, { buffer: Buffer; mimetype: string; etag: string; name: string }>();
+  const missingFileCache = new Map<string, number>();
   let hotFileCacheBytes = 0;
+
+  clearMissingFileCacheRef = () => {
+    missingFileCache.clear();
+  };
 
   function computeFileEtag(id: string, buf: Buffer): string {
     const hash = crypto.createHash("sha1").update(buf).digest("hex").slice(0, 16);
@@ -11964,6 +12055,7 @@ async function startServer() {
     if (!id || !Buffer.isBuffer(buffer) || buffer.length === 0 || buffer.length > HOT_FILE_CACHE_MAX_SINGLE) {
       return;
     }
+    missingFileCache.delete(id);
     const existing = hotFileCache.get(id);
     if (existing) {
       hotFileCacheBytes -= existing.buffer.length;
@@ -11988,6 +12080,35 @@ async function startServer() {
     hotFileCache.delete(id);
     hotFileCache.set(id, entry);
     return entry;
+  }
+
+  function extractLocalFileId(raw: any): string | null {
+    if (typeof raw !== "string") return null;
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    const m = /^\/api\/files\/([^/?#]+)/.exec(trimmed);
+    if (m) return path.basename(m[1]);
+    if (!trimmed.includes("/") && !trimmed.startsWith("http") && !trimmed.startsWith("data:")) {
+      return path.basename(trimmed);
+    }
+    return null;
+  }
+
+  function isReferencedAvatarFileId(fileId: string): boolean {
+    if (!fileId) return false;
+    for (const u of db.users || []) {
+      if (!u) continue;
+      if (extractLocalFileId(u.avatar) === fileId || extractLocalFileId(u.picture) === fileId) {
+        return true;
+      }
+    }
+    for (const c of db.conversations || []) {
+      if (c && extractLocalFileId(c.image) === fileId) return true;
+    }
+    for (const g of db.groups || []) {
+      if (g && extractLocalFileId(g.image) === fileId) return true;
+    }
+    return false;
   }
 
   function sendCachedBufferResponse(
@@ -12018,6 +12139,11 @@ async function startServer() {
 
     const cached = getHotFileCache(safeId);
     if (cached) return cached;
+
+    const missedAt = missingFileCache.get(safeId);
+    if (missedAt && Date.now() - missedAt < MISSING_FILE_CACHE_TTL_MS) {
+      return null;
+    }
 
     const file = db.files[safeId] || db.files[rawId];
     const uploadsRoot = path.resolve(UPLOADS_DIR);
@@ -12099,8 +12225,49 @@ async function startServer() {
       return getHotFileCache(safeId) || { buffer: buf, mimetype, etag: computeFileEtag(safeId, buf), name };
     }
 
+    missingFileCache.set(safeId, Date.now());
     return null;
   }
+
+  async function warmAvatarFilesInRam() {
+    try {
+      const ids = new Set<string>();
+      for (const u of db.users || []) {
+        if (!u) continue;
+        const a = extractLocalFileId(u.avatar);
+        const p = extractLocalFileId(u.picture);
+        if (a) ids.add(a);
+        if (p) ids.add(p);
+      }
+      for (const c of db.conversations || []) {
+        const imgId = extractLocalFileId(c?.image);
+        if (imgId) ids.add(imgId);
+      }
+      for (const g of db.groups || []) {
+        const imgId = extractLocalFileId(g?.image);
+        if (imgId) ids.add(imgId);
+      }
+      const logoId = extractLocalFileId(db.workspace?.logo_file_id);
+      if (logoId && logoId !== "default_workspace_logo") ids.add(logoId);
+      const asstId = extractLocalFileId(db.workspace?.assistant_avatar);
+      if (asstId) ids.add(asstId);
+
+      const list = Array.from(ids).filter((id) => !hotFileCache.has(id));
+      const CONCURRENCY = 8;
+      let cursor = 0;
+      const workers = Array.from({ length: Math.min(CONCURRENCY, list.length) }, async () => {
+        while (cursor < list.length) {
+          const nextId = list[cursor++];
+          await resolveAndCacheFileBuffer(nextId, "image/webp").catch(() => null);
+        }
+      });
+      await Promise.all(workers);
+    } catch {}
+  }
+
+  warmAvatarFilesInRamRef = warmAvatarFilesInRam;
+  // Warm all user/group avatar files into RAM immediately on boot for <0.5ms serving
+  void warmAvatarFilesInRam();
 
   app.post("/api/upload", upload.single("file"), async (req: any, res) => {
     const reqUser = getReqUser(req);
@@ -12171,6 +12338,10 @@ async function startServer() {
       }
       res.setHeader("Content-Type", resolved.mimetype || "application/octet-stream");
       return res.sendFile(resolved.diskPath);
+    }
+    if (isReferencedAvatarFileId(safeId)) {
+      res.setHeader("Cache-Control", "no-store");
+      return res.status(404).end();
     }
     res.redirect("/assets/aistudio/SIGN_DEPAN_2_86dd649d.jpg");
   });
@@ -13137,7 +13308,7 @@ async function startServer() {
   app.get("/api/conversations", (req, res) => {
     const reqUser = getReqUser(req);
     if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
-    res.json(buildConversationsListForUser(reqUser, 50));
+    res.json(buildConversationsListForUser(reqUser, 30));
   });
 
   let lastBootstrapMaintenanceAt = 0;
@@ -13381,6 +13552,7 @@ async function startServer() {
       notes: userNotes,
       projects: Array.isArray(db.projects) ? db.projects : [],
       stats_team: computeTeamStatsForUser(reqUser, { range: "7d" }),
+      can_access_archives: getEmployeeArchiveAccess(reqUser).allowed,
       ...adminPayload,
     });
 
@@ -13558,19 +13730,31 @@ async function startServer() {
       }
     }
 
-    const { q, before } = req.query;
+    const { q, before, limit } = req.query;
     let list = (db.messages || []).filter((m: any) => m.conversation_id === id);
     if (q) {
       const query = String(q).toLowerCase();
       list = list.filter((m: any) => (m.text || "").toLowerCase().includes(query));
     }
     if (before) {
-      list = list.filter((m: any) => new Date(m.created_at) < new Date(String(before)));
+      const beforeTs = new Date(String(before)).getTime();
+      list = list.filter((m: any) => new Date(m.created_at).getTime() < beforeTs);
+    }
+    // Paginate by default (latest 50 messages) so opening busy conversations never transfers/renders hundreds of old messages at once
+    if (!q) {
+      const parsedLimit = Number(limit);
+      const effectiveLimit = Number.isFinite(parsedLimit) && parsedLimit > 0
+        ? Math.min(200, Math.floor(parsedLimit))
+        : 50;
+      if (list.length > effectiveLimit) {
+        list = list.slice(-effectiveLimit);
+      }
     }
     const reqMap = new Map((db.access_requests || []).map((r: any) => [r.id, r]));
+    const pollMap = new Map((db.polls || []).map((p: any) => [p.id, p]));
     list = list.map((m: any) => {
       const pollId = m.poll_id || m.poll?.id;
-      const foundPoll = pollId ? (db.polls || []).find((p: any) => p.id === pollId) || m.poll : null;
+      const foundPoll = pollId ? pollMap.get(pollId) || m.poll : null;
       return {
         ...m,
         type: foundPoll || m.poll_id ? "poll" : (m.type || "text"),
@@ -15440,15 +15624,94 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  const sanitizeTaskStatuses = (rawList: any) => {
+    if (!Array.isArray(rawList)) return [];
+    const seen = new Set<string>();
+    const cleaned: any[] = [];
+    rawList.forEach((s: any, idx: number) => {
+      if (!s) return;
+      const isStr = typeof s === "string";
+      const rawName = isStr ? s.replace(/_/g, " ") : String(s.name || "").trim();
+      const rawKey = isStr ? s.trim() : String(s.key || "").trim();
+      const key = rawKey || (rawName ? rawName.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") : `st_${idx + 1}`);
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      cleaned.push({
+        key,
+        name: rawName || key.replace(/_/g, " "),
+        color: (!isStr && typeof s.color === "string" && s.color.trim()) ? s.color.trim() : "#F0F4FA",
+        is_done: Boolean((!isStr && s.is_done) || key === "done"),
+      });
+    });
+    return cleaned;
+  };
+
   const handleTaskConfig = (req: any, res: any) => {
     const reqUser = getReqUser(req);
     if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
-    if (!["super_admin", "workspace_admin"].includes(reqUser.role)) {
-      return res.status(403).json({ detail: "Hanya Super Admin / Workspace Admin yang dapat mengubah konfigurasi tugas." });
+    const isSuperAdmin = reqUser.role === "super_admin";
+    const isAdminUser = ["super_admin", "workspace_admin"].includes(reqUser.role);
+
+    if (req.body?.task_fields !== undefined) {
+      if (!isAdminUser) {
+        return res.status(403).json({ detail: "Hanya Super Admin / Workspace Admin yang dapat mengubah kolom kustom tugas." });
+      }
+      db.workspace.task_fields = req.body.task_fields;
     }
-    if (req.body.task_statuses) db.workspace.task_statuses = req.body.task_statuses;
-    if (req.body.task_fields) db.workspace.task_fields = req.body.task_fields;
-    saveDbToFile();
+
+    const rawDivision = typeof req.body?.division === "string" ? req.body.division.trim() : "";
+    const isDefaultTarget = !rawDivision || rawDivision === "__default__";
+    const isReset = Boolean(req.body?.reset_to_default);
+
+    if (req.body?.task_statuses !== undefined || isReset) {
+      if (isDefaultTarget) {
+        if (!isSuperAdmin) {
+          return res.status(403).json({
+            detail: "Hanya Super Admin yang dapat mengubah status default untuk semua divisi."
+          });
+        }
+        const cleaned = sanitizeTaskStatuses(req.body?.task_statuses);
+        if (cleaned.length === 0) {
+          return res.status(400).json({ detail: "Minimal harus ada 1 status tugas." });
+        }
+        db.workspace.task_statuses = cleaned;
+      } else {
+        const userDept = String(reqUser.department || "").trim();
+        if (!isSuperAdmin) {
+          if (!userDept || userDept.toLowerCase() !== rawDivision.toLowerCase()) {
+            return res.status(403).json({
+              detail: "Anda hanya dapat mengubah status tugas untuk divisi Anda sendiri."
+            });
+          }
+        }
+        if (!db.workspace.division_task_statuses || typeof db.workspace.division_task_statuses !== "object") {
+          db.workspace.division_task_statuses = {};
+        }
+        // Remove any case-variant keys for this division
+        const targetLow = rawDivision.toLowerCase();
+        for (const existingKey of Object.keys(db.workspace.division_task_statuses)) {
+          if (String(existingKey || "").trim().toLowerCase() === targetLow) {
+            delete db.workspace.division_task_statuses[existingKey];
+          }
+        }
+        if (!isReset) {
+          const cleaned = sanitizeTaskStatuses(req.body?.task_statuses);
+          if (cleaned.length === 0) {
+            return res.status(400).json({ detail: "Minimal harus ada 1 status tugas." });
+          }
+          // Prefer canonical division name from workspace divisions / user department
+          const canonicalDiv =
+            (Array.isArray(db.workspace?.divisions)
+              ? db.workspace.divisions
+                  .map((d: any) => (typeof d === "string" ? d : d?.name))
+                  .find((n: any) => String(n || "").trim().toLowerCase() === targetLow)
+              : null) || rawDivision;
+          db.workspace.division_task_statuses[canonicalDiv] = cleaned;
+        }
+      }
+    }
+
+    saveDbToFile(true);
     broadcast({ type: "workspace:changed" });
     res.json(db.workspace);
   };
@@ -16379,6 +16642,453 @@ async function startServer() {
     }
 
     res.json({ success: true, message: msg, form_approval: msg.form_approval });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Arsip Dokumen Karyawan per Divisi (Lead+ & Approver Access)
+  // Auto-syncs chat Form Approval cards + supports manual document archiving
+  // ---------------------------------------------------------------------------
+  const ARCHIVE_APPROVER_DEPT_OR_TITLE_RE =
+    /\b(hr|hrd|human resource|people ops|finance|accounting|ga|general affair|procurement|legal|office manager|admin)\b/i;
+
+  function inferServerUserOrgLevel(user: any): { level: string; rank: number } {
+    const rankMap: Record<string, number> = {
+      "C Level": 1,
+      Direktur: 2,
+      Manager: 3,
+      Lead: 4,
+      Staff: 5,
+    };
+    const explicit = normalizeEmployeeOrgLevel(user?.org_level);
+    if (explicit && rankMap[explicit]) {
+      return { level: explicit, rank: rankMap[explicit] };
+    }
+    const title = String(user?.job_title || "").toLowerCase();
+    const role = String(user?.role || "").toLowerCase();
+    if (/\b(ceo|cto|cfo|coo|cmo|cio|cpo|chro|chief|c-level|c level|founder|co-founder|president|komisaris|commissioner)\b/i.test(title)) {
+      return { level: "C Level", rank: 1 };
+    }
+    if (/\b(direktur|director|vp|vice president|svp|evp|general manager|gm|head of)\b/i.test(title)) {
+      return { level: "Direktur", rank: 2 };
+    }
+    if (/\b(manager|manajer|pm)\b/i.test(title) || role === "department_manager" || role === "project_manager") {
+      return { level: "Manager", rank: 3 };
+    }
+    if (/\b(lead|leader|supervisor|spv|koordinator|coordinator|principal|head|senior)\b/i.test(title) || role === "workspace_admin") {
+      return { level: "Lead", rank: 4 };
+    }
+    return { level: "Staff", rank: 5 };
+  }
+
+  function getEmployeeArchiveAccess(reqUser: any) {
+    if (!reqUser?.user_id || reqUser.is_bot || reqUser.role === "assistant") {
+      return { allowed: false, canViewAllDivisions: false, level: "Staff", rank: 5, department: "" };
+    }
+    const role = String(reqUser.role || "").toLowerCase();
+    const isAdminRole = role === "super_admin" || role === "workspace_admin";
+    const isManagerRole = ["department_manager", "project_manager", "manager"].includes(role);
+    const { level, rank } = inferServerUserOrgLevel(reqUser);
+    const dept = String(reqUser.department || "").trim();
+    const title = String(reqUser.job_title || "").trim();
+    const isHrOrFinance = ARCHIVE_APPROVER_DEPT_OR_TITLE_RE.test(dept) || ARCHIVE_APPROVER_DEPT_OR_TITLE_RE.test(title);
+    const isDirectManager = (db.users || []).some((u: any) => u && u.manager_id === reqUser.user_id);
+    const isDesignatedApprover =
+      Boolean(reqUser.can_approve || reqUser.archive_access) ||
+      (db.messages || []).some(
+        (m: any) =>
+          m &&
+          !m.deleted &&
+          m.type === "form_approval" &&
+          Array.isArray(m.form_approval?.approver_ids) &&
+          m.form_approval.approver_ids.includes(reqUser.user_id)
+      ) ||
+      (db.employee_archives || []).some(
+        (a: any) => a && Array.isArray(a.approver_ids) && a.approver_ids.includes(reqUser.user_id)
+      );
+
+    const allowed = isAdminRole || isManagerRole || rank <= 4 || isHrOrFinance || isDirectManager || isDesignatedApprover;
+    const canViewAllDivisions = isAdminRole || rank <= 2 || isHrOrFinance;
+    return {
+      allowed,
+      canViewAllDivisions,
+      level,
+      rank,
+      department: dept || "Umum",
+      isAdmin: isAdminRole,
+      isDesignatedApprover,
+    };
+  }
+
+  function parseRupiahNumeric(raw: any): number {
+    if (typeof raw === "number" && Number.isFinite(raw)) return Math.max(0, raw);
+    const s = String(raw || "").trim();
+    if (!s) return 0;
+    // Strip currency text & thousand separators (dots/commas before 3 digits)
+    const cleaned = s.replace(/[^0-9.,]/g, "");
+    if (!cleaned) return 0;
+    const normalized = cleaned.replace(/\.(?=\d{3}(\D|$))/g, "").replace(/,(?=\d{3}(\D|$))/g, "").replace(",", ".");
+    const num = Number(normalized);
+    return Number.isFinite(num) && num > 0 ? Math.round(num) : 0;
+  }
+
+  function buildArchiveRefPrefix(category: string): string {
+    if (category === "leave") return "IZN";
+    if (category === "item_request") return "BRG";
+    if (category === "reimbursement") return "RMB";
+    return "ADM";
+  }
+
+  function buildUnifiedEmployeeArchives(reqUser: any) {
+    const access = getEmployeeArchiveAccess(reqUser);
+    const usersById = new Map<string, any>();
+    for (const u of db.users || []) {
+      if (u?.user_id) usersById.set(u.user_id, u);
+    }
+
+    const items: any[] = [];
+
+    // 1. Auto-archived chat Form Approval cards
+    const formMsgs = (db.messages || [])
+      .filter((m: any) => m && !m.deleted && m.type === "form_approval" && m.form_approval)
+      .sort((a: any, b: any) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime());
+
+    const autoSeq: Record<string, number> = { leave: 0, item_request: 0, reimbursement: 0, other: 0 };
+    for (const m of formMsgs) {
+      const fa = m.form_approval;
+      const cat = ["leave", "item_request", "reimbursement"].includes(fa.form_type) ? fa.form_type : "other";
+      autoSeq[cat] = (autoSeq[cat] || 0) + 1;
+      const refCode = `ARS-${buildArchiveRefPrefix(cat)}-${String(autoSeq[cat]).padStart(3, "0")}`;
+      const empId = fa.requester_id || m.sender_id || "";
+      const liveEmp = empId ? usersById.get(empId) : null;
+      const division = String(liveEmp?.department || fa.requester_department || "Umum").trim() || "Umum";
+      const fields = fa.fields && typeof fa.fields === "object" ? fa.fields : {};
+      const attachments = Array.isArray(fa.attachments) && fa.attachments.length > 0
+        ? fa.attachments
+        : Array.isArray(fields.attachments)
+        ? fields.attachments
+        : [];
+      const amountLabel = cat === "reimbursement"
+        ? String(fields.amount || "").trim()
+        : cat === "item_request"
+        ? String(fields.estimated_price || "").trim()
+        : "";
+      const amountNumeric = parseRupiahNumeric(amountLabel);
+
+      items.push({
+        id: `appr_${m.id}`,
+        source: "form_approval",
+        message_id: m.id,
+        conversation_id: m.conversation_id,
+        ref_code: refCode,
+        category: cat,
+        sub_category: String(fields.category || fa.form_label || "").trim(),
+        title: String(fa.title || fa.form_label || "Pengajuan").trim(),
+        employee_id: empId,
+        employee_name: liveEmp?.name || fa.requester_name || "Karyawan",
+        employee_job_title: liveEmp?.job_title || fa.requester_job_title || "",
+        division,
+        status: fa.status || "pending",
+        progress: Number(fa.progress || 0),
+        approver_ids: Array.isArray(fa.approver_ids) ? fa.approver_ids : [],
+        approvals: Array.isArray(fa.approvals) ? fa.approvals : [],
+        rejections: Array.isArray(fa.rejections) ? fa.rejections : [],
+        fields,
+        attachments,
+        amount_label: amountLabel,
+        amount_numeric: amountNumeric,
+        date_start: fields.start_date || fields.transaction_date || String(m.created_at || "").slice(0, 10),
+        date_end: fields.end_date || fields.start_date || fields.transaction_date || String(m.created_at || "").slice(0, 10),
+        duration_days: cat === "leave" ? Number(fields.duration_days || 1) : null,
+        reason: String(fields.reason || "").trim(),
+        archive_note: String(fa.archive_note || "").trim(),
+        created_by: empId,
+        created_at: fa.created_at || m.created_at,
+        updated_at: fa.updated_at || m.updated_at || m.created_at,
+      });
+    }
+
+    // 2. Manual Employee Archive entries
+    if (!Array.isArray(db.employee_archives)) db.employee_archives = [];
+    const manualList = [...db.employee_archives].sort(
+      (a: any, b: any) => new Date(a?.created_at || 0).getTime() - new Date(b?.created_at || 0).getTime()
+    );
+    const manualSeq: Record<string, number> = { leave: 0, item_request: 0, reimbursement: 0, other: 0 };
+    for (const rec of manualList) {
+      if (!rec || !rec.id) continue;
+      const cat = ["leave", "item_request", "reimbursement", "other"].includes(rec.category) ? rec.category : "other";
+      manualSeq[cat] = (manualSeq[cat] || 0) + 1;
+      const liveEmp = rec.employee_id ? usersById.get(rec.employee_id) : null;
+      const division = String(rec.division || liveEmp?.department || "Umum").trim() || "Umum";
+      const amountLabel = String(rec.amount_label || rec.fields?.amount || rec.fields?.estimated_price || "").trim();
+      const amountNumeric = parseRupiahNumeric(rec.amount_numeric ?? amountLabel);
+
+      items.push({
+        ...rec,
+        source: "manual",
+        ref_code: rec.ref_code || `ARS-${buildArchiveRefPrefix(cat)}-M${String(manualSeq[cat]).padStart(2, "0")}`,
+        category: cat,
+        employee_name: liveEmp?.name || rec.employee_name || "Karyawan",
+        employee_job_title: liveEmp?.job_title || rec.employee_job_title || "",
+        division,
+        status: rec.status || "approved",
+        progress: rec.status === "approved" ? 100 : Number(rec.progress || 0),
+        approver_ids: Array.isArray(rec.approver_ids) ? rec.approver_ids : [],
+        approvals: Array.isArray(rec.approvals) ? rec.approvals : [],
+        rejections: Array.isArray(rec.rejections) ? rec.rejections : [],
+        fields: rec.fields && typeof rec.fields === "object" ? rec.fields : {},
+        attachments: Array.isArray(rec.attachments) ? rec.attachments : [],
+        amount_label: amountLabel,
+        amount_numeric: amountNumeric,
+      });
+    }
+
+    // Scope by access level
+    const userDeptLower = String(access.department || "").toLowerCase();
+    const visibleItems = access.canViewAllDivisions
+      ? items
+      : items.filter((it) => {
+          const sameDiv = userDeptLower && String(it.division || "").toLowerCase() === userDeptLower;
+          const isAppr = Array.isArray(it.approver_ids) && it.approver_ids.includes(reqUser.user_id);
+          const isCreator = it.created_by === reqUser.user_id || it.employee_id === reqUser.user_id;
+          return sameDiv || isAppr || isCreator;
+        });
+
+    // Sort newest first
+    visibleItems.sort(
+      (a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+    );
+
+    // Build known divisions list (from workspace users + visible archive items)
+    const divisionSet = new Set<string>();
+    if (access.canViewAllDivisions) {
+      for (const u of db.users || []) {
+        if (!u || u.is_bot || u.role === "assistant") continue;
+        const d = String(u.department || "").trim();
+        if (d) divisionSet.add(d);
+      }
+      for (const b of db.boards || []) {
+        const d = String(b?.department || "").trim();
+        if (d && !/^(semua divisi|all|kolaborasi)$/i.test(d)) divisionSet.add(d);
+      }
+    } else if (access.department) {
+      divisionSet.add(access.department);
+    }
+    for (const it of visibleItems) {
+      if (it.division) divisionSet.add(it.division);
+    }
+    const divisions = Array.from(divisionSet).sort((a, b) => a.localeCompare(b));
+
+    return { access, divisions, items: visibleItems };
+  }
+
+  app.get("/api/employee-archives", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    const access = getEmployeeArchiveAccess(reqUser);
+    if (!access.allowed) {
+      return res.status(403).json({
+        detail: "Akses Arsip Dokumen khusus untuk level Lead ke atas atau pihak approver.",
+      });
+    }
+    const result = buildUnifiedEmployeeArchives(reqUser);
+    res.json(result);
+  });
+
+  app.post("/api/employee-archives", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    const access = getEmployeeArchiveAccess(reqUser);
+    if (!access.allowed) {
+      return res.status(403).json({
+        detail: "Hanya level Lead ke atas atau pihak approver yang dapat mengarsipkan dokumen.",
+      });
+    }
+
+    const body = req.body || {};
+    const category = ["leave", "item_request", "reimbursement", "other"].includes(body.category)
+      ? body.category
+      : "other";
+    const title = String(body.title || "").trim();
+    if (!title) {
+      return res.status(400).json({ detail: "Judul / perihal dokumen wajib diisi." });
+    }
+
+    const empUser = body.employee_id
+      ? (db.users || []).find((u: any) => u && u.user_id === body.employee_id)
+      : null;
+    const division = String(body.division || empUser?.department || reqUser.department || "Umum").trim() || "Umum";
+    if (!access.canViewAllDivisions && division.toLowerCase() !== String(access.department || "").toLowerCase()) {
+      return res.status(403).json({
+        detail: `Anda hanya dapat mengarsipkan dokumen untuk divisi ${access.department}.`,
+      });
+    }
+
+    const status = ["approved", "pending", "rejected"].includes(body.status) ? body.status : "approved";
+    const nowIso = new Date().toISOString();
+    const rawApprovers = Array.isArray(body.approver_ids) ? body.approver_ids : [];
+    const approverIds = Array.from(
+      new Set(
+        (rawApprovers.length > 0 ? rawApprovers : [reqUser.user_id])
+          .map((x: any) => String(x || "").trim())
+          .filter(Boolean)
+      )
+    );
+
+    const approvals = status === "approved"
+      ? [{ user_id: reqUser.user_id, name: reqUser.name || "Approver", note: String(body.archive_note || "Diarsipkan & disetujui").trim(), at: nowIso }]
+      : [];
+    const rejections = status === "rejected"
+      ? [{ user_id: reqUser.user_id, name: reqUser.name || "Approver", note: String(body.archive_note || "Ditolak").trim(), at: nowIso }]
+      : [];
+
+    const rawAttachments = Array.isArray(body.attachments) ? body.attachments : [];
+    const cleanAttachments = rawAttachments
+      .filter((a: any) => a && typeof a.id === "string" && a.id.trim().length > 0)
+      .slice(0, 12)
+      .map((a: any) => ({
+        id: String(a.id).trim(),
+        name: String(a.name || "Lampiran").trim(),
+        content_type: String(a.content_type || ""),
+        size: Number(a.size) || 0,
+      }));
+
+    if (!Array.isArray(db.employee_archives)) db.employee_archives = [];
+    const sameCatCount = db.employee_archives.filter((x: any) => x && x.category === category).length + 1;
+    const refCode = String(body.ref_code || "").trim() || `ARS-${buildArchiveRefPrefix(category)}-M${String(sameCatCount).padStart(3, "0")}`;
+
+    const amountLabel = String(body.amount_label || body.amount || "").trim();
+    const amountNumeric = parseRupiahNumeric(amountLabel);
+    const dateStart = String(body.date_start || nowIso.slice(0, 10)).slice(0, 10);
+    const dateEnd = String(body.date_end || dateStart).slice(0, 10);
+    let durationDays: number | null = null;
+    if (category === "leave") {
+      const sMs = new Date(dateStart).getTime();
+      const eMs = new Date(dateEnd).getTime();
+      durationDays = !Number.isNaN(sMs) && !Number.isNaN(eMs) ? Math.max(1, Math.round((eMs - sMs) / 86400000) + 1) : 1;
+    }
+
+    const record = {
+      id: `arch_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      source: "manual",
+      ref_code: refCode,
+      category,
+      sub_category: String(body.sub_category || "").trim(),
+      title,
+      employee_id: empUser?.user_id || String(body.employee_id || "").trim() || reqUser.user_id,
+      employee_name: empUser?.name || String(body.employee_name || "").trim() || reqUser.name || "Karyawan",
+      employee_job_title: empUser?.job_title || "",
+      division,
+      status,
+      progress: status === "approved" ? 100 : 0,
+      approver_ids: approverIds,
+      approvals,
+      rejections,
+      fields: body.fields && typeof body.fields === "object" ? body.fields : {},
+      attachments: cleanAttachments,
+      amount_label: amountLabel,
+      amount_numeric: amountNumeric,
+      date_start: dateStart,
+      date_end: dateEnd,
+      duration_days: durationDays,
+      reason: String(body.reason || "").trim().slice(0, 1500),
+      archive_note: String(body.archive_note || "").trim().slice(0, 500),
+      created_by: reqUser.user_id,
+      created_by_name: reqUser.name || "Approver",
+      created_at: nowIso,
+      updated_at: nowIso,
+    };
+
+    db.employee_archives.unshift(record);
+    saveDbToFile(true);
+    broadcast({ type: "employee_archives:changed", data: record });
+    res.status(201).json(record);
+  });
+
+  app.post("/api/employee-archives/:id/decide", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    const access = getEmployeeArchiveAccess(reqUser);
+    if (!access.allowed) {
+      return res.status(403).json({ detail: "Akses ditolak." });
+    }
+
+    if (!Array.isArray(db.employee_archives)) db.employee_archives = [];
+    const idx = db.employee_archives.findIndex((x: any) => x && x.id === req.params.id);
+    if (idx === -1) return res.status(404).json({ detail: "Arsip dokumen tidak ditemukan." });
+
+    const rec = db.employee_archives[idx];
+    const approverIds: string[] = Array.isArray(rec.approver_ids) ? rec.approver_ids : [];
+    const isAuthorized = access.isAdmin || access.canViewAllDivisions || approverIds.includes(reqUser.user_id);
+    if (!isAuthorized) {
+      return res.status(403).json({ detail: "Hanya approver yang ditunjuk atau pimpinan terkait yang dapat memutuskan." });
+    }
+
+    const decision = req.body?.decision === "reject" ? "reject" : "approve";
+    const note = String(req.body?.note || "").trim().slice(0, 500);
+    const nowIso = new Date().toISOString();
+
+    const nextApprovals = (Array.isArray(rec.approvals) ? rec.approvals : []).filter((a: any) => a?.user_id !== reqUser.user_id);
+    const nextRejections = (Array.isArray(rec.rejections) ? rec.rejections : []).filter((r: any) => r?.user_id !== reqUser.user_id);
+
+    if (decision === "approve") {
+      nextApprovals.push({ user_id: reqUser.user_id, name: reqUser.name || "Approver", note, at: nowIso });
+    } else {
+      nextRejections.push({ user_id: reqUser.user_id, name: reqUser.name || "Approver", note, at: nowIso });
+    }
+
+    const totalNeeded = Math.max(1, approverIds.length || 1);
+    const approvedCount = Math.min(totalNeeded, nextApprovals.length);
+    const progress = Math.min(100, Math.round((approvedCount / totalNeeded) * 100));
+    const status = nextRejections.length > 0 ? "rejected" : approvedCount >= totalNeeded ? "approved" : approvedCount > 0 ? "partial" : "pending";
+
+    db.employee_archives[idx] = {
+      ...rec,
+      approvals: nextApprovals,
+      rejections: nextRejections,
+      progress,
+      status,
+      updated_at: nowIso,
+    };
+    saveDbToFile(true);
+    broadcast({ type: "employee_archives:changed", data: db.employee_archives[idx] });
+
+    if (rec.employee_id && rec.employee_id !== reqUser.user_id) {
+      createNotification({
+        user_id: rec.employee_id,
+        title: decision === "approve"
+          ? `${reqUser.name || "Approver"} menyetujui arsip ${rec.title}`
+          : `${reqUser.name || "Approver"} menolak arsip ${rec.title}`,
+        body: note ? `Catatan: "${note}"` : `Status: ${status === "approved" ? "Disetujui" : "Ditolak"}`,
+        type: "approval_decision",
+        category: "system",
+        actor_id: reqUser.user_id,
+        sender: sanitizeUser(reqUser),
+        link: "/archives",
+      });
+    }
+
+    res.json({ success: true, item: db.employee_archives[idx] });
+  });
+
+  app.delete("/api/employee-archives/:id", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    const access = getEmployeeArchiveAccess(reqUser);
+    if (!access.allowed) return res.status(403).json({ detail: "Akses ditolak." });
+
+    if (!Array.isArray(db.employee_archives)) db.employee_archives = [];
+    const idx = db.employee_archives.findIndex((x: any) => x && x.id === req.params.id);
+    if (idx === -1) return res.status(404).json({ detail: "Dokumen arsip manual tidak ditemukan." });
+
+    const rec = db.employee_archives[idx];
+    if (!access.isAdmin && rec.created_by !== reqUser.user_id) {
+      return res.status(403).json({ detail: "Hanya pengarsip dokumen ini atau Admin yang dapat menghapusnya." });
+    }
+
+    db.employee_archives.splice(idx, 1);
+    saveDbToFile(true);
+    broadcast({ type: "employee_archives:changed", deleted_id: req.params.id });
+    res.json({ success: true });
   });
 
   app.get("/api/workspace", (req, res) => {

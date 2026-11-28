@@ -42,6 +42,28 @@ export {
 };
 
 const PREFETCH_TIMESTAMPS = new Map();
+const PREFETCH_INFLIGHT = new Map();
+
+function fetchMessagesDeduped(cid) {
+  if (!cid) return Promise.resolve([]);
+  const inflight = PREFETCH_INFLIGHT.get(cid);
+  if (inflight) return inflight;
+  const p = api
+    .get(`/conversations/${cid}/messages`, { params: { limit: 50 } })
+    .then((r) => {
+      const arr = Array.isArray(r.data) ? r.data : [];
+      arr.forEach((m) => { if (m?.poll) seedPollCache(m.poll); });
+      CHAT_CACHE[`msgs_${cid}`] = arr;
+      try { scheduleStorageWrite(`circle_msgs_cache_${cid}`, JSON.stringify(arr)); } catch {}
+      return arr;
+    })
+    .finally(() => {
+      PREFETCH_INFLIGHT.delete(cid);
+    });
+  PREFETCH_INFLIGHT.set(cid, p);
+  return p;
+}
+
 export function prefetchConversation(cid) {
   if (!cid) return;
   const now = Date.now();
@@ -50,14 +72,7 @@ export function prefetchConversation(cid) {
   if (CHAT_CACHE[`msgs_${cid}`] && CHAT_CACHE[`conv_${cid}`] && now - lastAt < 25000) return;
   PREFETCH_TIMESTAMPS.set(cid, now);
   if (!CHAT_CACHE[`msgs_${cid}`]) {
-    api.get(`/conversations/${cid}/messages`).then((r) => {
-      const arr = Array.isArray(r.data) ? r.data : null;
-      if (arr) {
-        arr.forEach((m) => { if (m?.poll) seedPollCache(m.poll); });
-        CHAT_CACHE[`msgs_${cid}`] = arr;
-        try { scheduleStorageWrite(`circle_msgs_cache_${cid}`, JSON.stringify(arr)); } catch {}
-      }
-    }).catch(() => {});
+    fetchMessagesDeduped(cid).catch(() => {});
   }
 }
 
@@ -490,10 +505,15 @@ export default function ChatView({ cid, initialConv = null, onChange, onRead, on
   const { me, ws, userMap, subscribe, online, t: tr } = useApp();
   const [conv, setConv] = useState(() => getInitialConv(cid, me, initialConv));
   const [msgs, setMsgs] = useState(() => getInitialMsgs(cid));
-  const [more, setMore] = useState(false);
+  const [loadingMsgs, setLoadingMsgs] = useState(() => {
+    const initM = getInitialMsgs(cid);
+    const initC = getInitialConv(cid, me, initialConv);
+    return initM.length === 0 && Boolean(initC?.last_message_preview || initC?.last_message_at);
+  });
+  const [more, setMore] = useState(() => getInitialMsgs(cid).length >= 50);
   const [reply, setReply] = useState(null);
   const [typing, setTyping] = useState({});
-  const [panel, setPanel] = useState(window.innerWidth >= 1280);
+  const [panel, setPanel] = useState(false);
   const [mobilePanel, setMobilePanel] = useState(false);
   const [poll, setPoll] = useState(false);
   const [approvalOpen, setApprovalOpen] = useState(false);
@@ -509,15 +529,30 @@ export default function ChatView({ cid, initialConv = null, onChange, onRead, on
   onLeftRef.current = onLeft;
   const bottom = useRef(null);
   const scroller = useRef(null);
+  const messagesContentRef = useRef(null);
+  const shouldPinBottomRef = useRef(true);
+  const openedAtRef = useRef(Date.now());
   const composerRef = useRef(null);
   const dragDepthRef = useRef(0);
   const [dragActive, setDragActive] = useState(false);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
+  const scrollToBottomInstant = useCallback(() => {
+    const el = scroller.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, []);
+
   useEffect(() => {
     dragDepthRef.current = 0;
     setDragActive(false);
+    setPanel(false);
+    setMobilePanel(false);
+    setReply(null);
+    setSearch(null);
+    setResults([]);
+    setTyping({});
   }, [cid]);
 
   useEffect(() => {
@@ -633,50 +668,101 @@ export default function ChatView({ cid, initialConv = null, onChange, onRead, on
     }
   };
 
+  // Pin to bottom immediately on conversation switch, message count changes, and loading completion
+  const msgCount = Array.isArray(msgs) ? msgs.length : 0;
+  const lastMsgId = msgCount > 0 ? msgs[msgCount - 1]?.id : "";
+
   useLayoutEffect(() => {
-    if (scroller.current) {
-      scroller.current.scrollTop = scroller.current.scrollHeight;
-    }
-  }, [cid]);
+    shouldPinBottomRef.current = true;
+    openedAtRef.current = Date.now();
+    scrollToBottomInstant();
+  }, [cid, scrollToBottomInstant]);
+
+  useLayoutEffect(() => {
+    if (!shouldPinBottomRef.current) return;
+    scrollToBottomInstant();
+    const raf1 = requestAnimationFrame(() => {
+      if (shouldPinBottomRef.current) scrollToBottomInstant();
+    });
+    return () => cancelAnimationFrame(raf1);
+  }, [cid, msgCount, lastMsgId, loadingMsgs, scrollToBottomInstant]);
+
+  // Keep pinned to bottom as async images, stickers, or approval cards settle, or when mobile keyboard resizes the viewport
+  useEffect(() => {
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const scrollerEl = scroller.current;
+    const contentEl = messagesContentRef.current;
+    if (!scrollerEl && !contentEl) return undefined;
+    const ro = new ResizeObserver(() => {
+      if (shouldPinBottomRef.current) {
+        scrollToBottomInstant();
+      }
+    });
+    if (scrollerEl) ro.observe(scrollerEl);
+    if (contentEl) ro.observe(contentEl);
+    return () => ro.disconnect();
+  }, [cid, scrollToBottomInstant]);
+
+  const handleScrollerScroll = useCallback(() => {
+    const el = scroller.current;
+    if (!el) return;
+    // Do not unpin during initial settle right after opening a conversation
+    if (Date.now() - openedAtRef.current < 450) return;
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    shouldPinBottomRef.current = distFromBottom <= 100;
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
     let cancelled = false;
     const targetCid = cid;
+    shouldPinBottomRef.current = true;
+    openedAtRef.current = Date.now();
     const initialConvData = getInitialConv(targetCid, me, initialConv);
     const initialMsgs = getInitialMsgs(targetCid);
     setConv((prev) => (prev?.id === targetCid ? prev : initialConvData));
     setMsgs((prev) => (areMessagesEquivalent(prev, initialMsgs) ? prev : initialMsgs));
+    setMore(initialMsgs.length >= 50);
+    setLoadingMsgs(initialMsgs.length === 0 && Boolean(initialConvData?.last_message_preview || initialConvData?.last_message_at));
     markRead();
-    loadConv(controller.signal);
 
-    api.get(`/conversations/${targetCid}/messages`, { signal: controller.signal }).then((r) => {
+    // Only eagerly fetch /conversations/:cid when metadata is incomplete (e.g. direct deep link or restricted group check).
+    // When clicking from sidebar, initialConvData already has members/type/name/reads — full files/pinned load when Detail Panel opens!
+    const hasBasicMeta = Boolean(
+      initialConvData?.id === targetCid &&
+      Array.isArray(initialConvData?.member_ids) &&
+      initialConvData.member_ids.length > 0 &&
+      initialConvData?.is_member !== false
+    );
+    if (!hasBasicMeta) {
+      loadConv(controller.signal);
+    }
+
+    fetchMessagesDeduped(targetCid).then((arr) => {
       if (cancelled || activeCidRef.current !== targetCid) return;
-      const arr = Array.isArray(r.data) ? r.data : [];
+      setLoadingMsgs(false);
       if (arr.length === 0 && initialMsgs.length > 0 && !hasCompletedInitialHydrate()) {
         rehydrateIfServerRestarted(api).catch(() => {});
         return;
       }
-      arr.forEach((m) => { if (m?.poll) seedPollCache(m.poll); });
-      writeMsgsCacheDeferred(targetCid, arr);
       setMore(arr.length >= 50);
-      let updated = false;
-      setMsgs((prev) => {
-        if (areMessagesEquivalent(prev, arr)) return prev;
-        updated = true;
-        return arr;
-      });
-      if (updated) {
+      setMsgs((prev) => (areMessagesEquivalent(prev, arr) ? prev : arr));
+      if (shouldPinBottomRef.current) {
         requestAnimationFrame(() => {
-          if (!cancelled && scroller.current) {
-            scroller.current.scrollTop = scroller.current.scrollHeight;
+          if (!cancelled && shouldPinBottomRef.current) {
+            scrollToBottomInstant();
+            requestAnimationFrame(() => {
+              if (!cancelled && shouldPinBottomRef.current) scrollToBottomInstant();
+            });
           }
         });
       }
     }).catch((err) => {
       if (cancelled || err?.code === "ERR_CANCELED" || err?.name === "CanceledError" || err?.name === "AbortError") return;
+      setLoadingMsgs(false);
       if (err?.response?.status === 403 && activeCidRef.current === targetCid) {
         setMsgs([]);
+        loadConv();
       }
     });
 
@@ -840,6 +926,7 @@ export default function ChatView({ cid, initialConv = null, onChange, onRead, on
   }, [search, cid]);
 
   const older = async () => {
+    shouldPinBottomRef.current = false;
     const h = scroller.current.scrollHeight;
     const { data } = await api.get(`/conversations/${cid}/messages`, { params: { before: msgs[0]?.created_at } });
     const arr = Array.isArray(data) ? data : [];
@@ -918,7 +1005,18 @@ export default function ChatView({ cid, initialConv = null, onChange, onRead, on
     return readerSet.size;
   }, [lastMineMsg, activeConv.reads, safeMsgs, myUserId]);
 
-  const openPanel = useCallback(() => (window.innerWidth >= 1280 ? setPanel((p) => !p) : setMobilePanel(true)), []);
+  const openPanel = useCallback(() => {
+    if (window.innerWidth >= 1280) {
+      setPanel((p) => {
+        const next = !p;
+        if (next) loadConv();
+        return next;
+      });
+    } else {
+      setMobilePanel(true);
+      loadConv();
+    }
+  }, [loadConv]);
 
   const handleSent = (m, replaceId) => {
     setMsgs((x) => {
@@ -936,6 +1034,7 @@ export default function ChatView({ cid, initialConv = null, onChange, onRead, on
       return next;
     });
     if (m !== null) {
+      shouldPinBottomRef.current = true;
       requestAnimationFrame(() => bottom.current?.scrollIntoView({ behavior: "smooth" }));
     }
   };
@@ -1085,15 +1184,50 @@ export default function ChatView({ cid, initialConv = null, onChange, onRead, on
             {results.length > 0 && <div className="mt-2 max-h-48 overflow-y-auto">{results.map((m, i) => <div key={m.id || i} className="rounded-lg p-2 text-sm hover:bg-surface2"><b>{userMap[m.sender_id]?.name}</b> <span className="text-xs text-sub">{fmtDate(m.created_at, "d MMM HH:mm")}</span><p className="truncate">{m.text}</p></div>)}</div>}
           </div>
         )}
-        <div ref={scroller} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-y-contain px-2.5 py-3 sm:px-6 sm:py-4 scroll-thin" data-testid="message-list">
+        <div
+          ref={scroller}
+          onScroll={handleScrollerScroll}
+          className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-y-contain px-2.5 py-3 sm:px-6 sm:py-4 scroll-thin"
+          data-testid="message-list"
+        >
+          <div ref={messagesContentRef}>
           {more && safeMsgs.length > 0 && <div className="text-center"><button onClick={older} className="rounded-full bg-surface2 px-3 py-1 text-xs font-semibold text-sub" data-testid="load-older-btn">{tr("chat_load_older_btn", "Muat pesan sebelumnya")}</button></div>}
           {safeMsgs.map((m, i) => {
             const prev = safeMsgs[i - 1];
+            const isCardMsg = (msg) => Boolean(
+              msg && (
+                msg.type === "poll" || msg.poll_id || msg.poll ||
+                msg.type === "sticky_note" || msg.sticky_note ||
+                msg.type === "form_approval" || msg.form_approval ||
+                msg.type === "task_assignment_approval" || msg.task_assignment ||
+                msg.type === "task" || msg.type === "approval_card" ||
+                msg.type === "access_request_card" || msg.assistant_report
+              )
+            );
+            const prevIsCard = isCardMsg(prev);
             const grouped = prev && prev.sender_id === m.sender_id && prev.type !== "call" && new Date(m.created_at) - new Date(prev.created_at) < 300000;
             const mine = Boolean(myUserId && (m.sender_id === myUserId || m.user_id === myUserId));
-            return <MessageItem key={m.id || i} m={m} mine={mine} grouped={grouped} conv={activeConv} onReply={setReply} onCreateTask={setTaskFrom} readBy={m.id === lastMine ? lastMineReadBy : undefined} />;
+            return <MessageItem key={m.id || i} m={m} mine={mine} grouped={grouped} prevIsCard={prevIsCard} conv={activeConv} onReply={setReply} onCreateTask={setTaskFrom} readBy={m.id === lastMine ? lastMineReadBy : undefined} />;
           })}
-          {!safeMsgs.length && (() => {
+          {!safeMsgs.length && loadingMsgs && (
+            <div className="space-y-4 py-6" aria-busy="true">
+              <div className="flex items-start gap-2.5">
+                <div className="h-8 w-8 shrink-0 rounded-full bg-surface2 animate-pulse" />
+                <div className="space-y-2 max-w-[65%] w-64">
+                  <div className="h-3 w-24 rounded-full bg-surface2 animate-pulse" />
+                  <div className="h-12 w-full rounded-2xl bg-surface2 animate-pulse" />
+                </div>
+              </div>
+              <div className="flex justify-end">
+                <div className="h-11 w-52 rounded-2xl bg-brand/15 animate-pulse" />
+              </div>
+              <div className="flex items-start gap-2.5">
+                <div className="h-8 w-8 shrink-0 rounded-full bg-surface2 animate-pulse" />
+                <div className="h-10 w-44 rounded-2xl bg-surface2 animate-pulse" />
+              </div>
+            </div>
+          )}
+          {!safeMsgs.length && !loadingMsgs && (() => {
             const isDeptLocked = (activeConv.group_type === "department" || String(activeConv.id || "").startsWith("group_official_")) && activeConv.is_member === false;
             return (
               <div className="mx-auto max-w-md py-16 text-center">
@@ -1125,6 +1259,7 @@ export default function ChatView({ cid, initialConv = null, onChange, onRead, on
             );
           })()}
           <div ref={bottom} />
+          </div>
         </div>
         {isCircleAssistantConv && activeConv.is_member !== false && (
           <div className="border-t bg-surface/80 px-2.5 py-1.5 sm:px-4 sm:py-2" data-testid="circle-quick-prompts">

@@ -219,7 +219,7 @@ try {
 } catch {}
 
 export function TaskWorkspace({ projectId, compactHeader }) {
-  const { me, isAdmin, isManager, users, userMap, labels, labelMap, statuses, subscribe, prefs, savePrefs, ws, t, tasks: ctxTasks, boards: ctxBoards } = useApp();
+  const { me, isAdmin, isManager, users, userMap, labels, labelMap, statuses, getStatusesForDivision, subscribe, prefs, savePrefs, ws, t, tasks: ctxTasks, boards: ctxBoards } = useApp();
   const [params, setParams] = useSearchParams();
   const [boards, setBoards] = useState(() => {
     if (Array.isArray(ctxBoards) && ctxBoards.length > 0) {
@@ -708,6 +708,11 @@ export function TaskWorkspace({ projectId, compactHeader }) {
 
   const activeBoardObj = useMemo(() => boards.find((b) => b.id === boardId), [boards, boardId]);
   const activeBoardName = activeBoardObj?.name || t("tasks_all_boards", "Semua Board");
+  const activeDivisionName = activeBoardObj?.department || (!boardId && !isAdmin ? me?.department : "") || "";
+  const activeStatuses = useMemo(
+    () => (getStatusesForDivision ? getStatusesForDivision(activeDivisionName) : statuses),
+    [getStatusesForDivision, activeDivisionName, statuses]
+  );
   const activeTaskObj = useMemo(() => (openId ? tasks.find((x) => x.id === openId) || null : null), [openId, tasks]);
   const handleInviteBoard = useCallback(() => {
     if (activeBoardObj) setManagingMembersBoard(activeBoardObj);
@@ -1219,7 +1224,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
       {selected.length > 0 && (
         <div className="sticky top-14 md:top-2 z-30 mb-4 flex flex-wrap items-center gap-2 rounded-2xl border bg-surface p-2.5 shadow-lg print:hidden" data-testid="bulk-actions-bar">
           <span className="px-2 text-sm font-semibold">{selected.length} {t("tasks_bulk_selected_suffix", "dipilih")}</span>
-          <AppSelect onChange={(e) => e.target.value && bulk({ status: e.target.value })} value="" className="h-10 rounded-xl border border-border bg-surface2/75 px-3.5 text-xs sm:text-sm font-semibold" data-testid="bulk-status"><option value="">{t("tasks_bulk_set_status", "Atur status…")}</option>{statuses.map((s) => <option key={s.key} value={s.key}>{s.name}</option>)}</AppSelect>
+          <AppSelect onChange={(e) => e.target.value && bulk({ status: e.target.value })} value="" className="h-10 rounded-xl border border-border bg-surface2/75 px-3.5 text-xs sm:text-sm font-semibold" data-testid="bulk-status"><option value="">{t("tasks_bulk_set_status", "Atur status…")}</option>{activeStatuses.map((s) => <option key={s.key} value={s.key}>{s.name}</option>)}</AppSelect>
           <AppSelect onChange={(e) => e.target.value && bulk({ priority: e.target.value })} value="" className="h-10 rounded-xl border border-border bg-surface2/75 px-3.5 text-xs sm:text-sm font-semibold" data-testid="bulk-priority"><option value="">{t("tasks_bulk_set_priority", "Atur prioritas…")}</option>{Object.entries(PRIORITY).map(([k, p]) => <option key={k} value={k}>{p.name}</option>)}</AppSelect>
           <AppSelect onChange={(e) => e.target.value && bulk({ assignee_id: e.target.value, assignee_ids: [e.target.value] })} value="" className="h-10 rounded-xl border border-border bg-surface2/75 px-3.5 text-xs sm:text-sm font-semibold" data-testid={`bulk-assignee`}>
             <option value="">{t("tasks_bulk_assign_to", "Tugaskan ke…")}</option>
@@ -1243,6 +1248,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
             <Board
               tasks={visibleTasks}
               board={activeBoardObj}
+              statuses={activeStatuses}
               onInvite={handleInviteBoard}
               onOpen={open}
               onNew={handleNewFromBoard}
@@ -1250,7 +1256,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
               onMoveTask={updateTaskLocally}
             />
           )
-          : view === "list" ? <ListView tasks={visibleTasks} projects={projects} boards={boards} projectId={projectId} onOpen={open} selected={selected} setSelected={setSelected} reload={load} onPatchTask={updateTaskLocally} groupBy={groupBy} boardId={boardId} reportMode={reportMode} onReportModeChange={setReportMode} />
+          : view === "list" ? <ListView tasks={visibleTasks} projects={projects} boards={boards} statuses={activeStatuses} projectId={projectId} onOpen={open} selected={selected} setSelected={setSelected} reload={load} onPatchTask={updateTaskLocally} groupBy={groupBy} boardId={boardId} reportMode={reportMode} onReportModeChange={setReportMode} />
           : view === "timeline" ? <Timeline tasks={visibleTasks} onOpen={open} onPatchTask={updateTaskLocally} reload={load} initialFilterMode={urlBottleneckParam ? "bottleneck" : "all"} /> : <Calendar tasks={visibleTasks} onOpen={open} />}
         </div>
 
@@ -1353,7 +1359,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
         reportMode={reportMode}
         userMap={userMap}
         labelMap={labelMap}
-        statuses={statuses}
+        statuses={activeStatuses}
       />
     </div>
   );

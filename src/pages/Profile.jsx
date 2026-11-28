@@ -122,8 +122,10 @@ function EditProfile({ open, onOpenChange, p, onSaved }) {
     }
   };
   const photo = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
     try {
-      const up = await uploadFile(e.target.files[0]);
+      const up = await uploadFile(file, { maxDim: 256, quality: 0.82 });
       const url = fileUrl(up.id);
       setF((prev) => ({ ...prev, picture: url, avatar: url }));
     } catch (er) { toast.error(errMsg(er)); }

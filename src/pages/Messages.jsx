@@ -7,13 +7,14 @@ import { api, errMsg } from "../lib/api";
 import { playSound } from "../lib/sound";
 import { Avatar, Empty, fmtTime, GroupIcon } from "../components/common";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../components/ui/dialog";
-import ChatView, { hydrateConversationsCache, upsertConversationInCache, appendMessageToCache, updateMessageInCache, prefetchConversation } from "./chat/ChatView";
+import ChatView, { CHAT_CACHE, hydrateConversationsCache, upsertConversationInCache, appendMessageToCache, updateMessageInCache, prefetchConversation } from "./chat/ChatView";
 import { removeConversationFromCache, clearConversationMessagesCache, removeGroupFromCache, saveConversationListCache, getCachedConversationList, getLastConvsHydratedAt } from "../lib/workspaceCaches";
 
 const ConversationRow = memo(function ConversationRow({ c, active, onSelect, onContextMenu, emptyLabel }) {
   return (
     <button
       onClick={() => onSelect(c)}
+      onPointerDown={() => prefetchConversation(c.id)}
       onMouseEnter={() => prefetchConversation(c.id)}
       onFocus={() => prefetchConversation(c.id)}
       onContextMenu={(e) => onContextMenu(e, c)}
@@ -366,6 +367,17 @@ export default function Messages() {
 
   const activeConvHint = useMemo(() => (cid ? named.find((c) => c.id === cid) || null : null), [cid, named]);
 
+  // Proactively warm top visible conversations so clicking any recent chat renders in 0ms
+  useEffect(() => {
+    if (!Array.isArray(list) || list.length === 0) return;
+    const topIds = list.slice(0, 6).map((c) => c?.id).filter(Boolean);
+    for (const id of topIds) {
+      if (!CHAT_CACHE[`msgs_${id}`]) {
+        prefetchConversation(id);
+      }
+    }
+  }, [list]);
+
   const handleSelectConv = useCallback((c) => {
     if (!c?.id) return;
     if (c.id === cidRef.current) {
@@ -373,9 +385,11 @@ export default function Messages() {
       return;
     }
     playSound("click");
-    upsertConversationInCache(c, me?.user_id);
+    // Fast RAM-only cache handoff (avoid sync localStorage JSON.parse/stringify on click critical path)
+    CHAT_CACHE[`conv_${c.id}`] = { ...(CHAT_CACHE[`conv_${c.id}`] || {}), ...c };
+    prefetchConversation(c.id);
     navigate(`/messages/${c.id}`);
-  }, [me?.user_id, navigate]);
+  }, [navigate]);
 
   useEffect(() => {
     if (!cid && searchParams.get("reviseTask") && named.length > 0) {
@@ -482,7 +496,7 @@ export default function Messages() {
   const emptyMsgLabel = t("messages_no_messages_yet", "Belum ada pesan");
 
   return (
-    <div className={`flex w-full max-w-full min-w-0 overflow-hidden overscroll-none ${cid ? "h-[100dvh] max-h-[100dvh]" : "h-full max-h-full pb-[calc(3.5rem+env(safe-area-inset-bottom))] md:pb-0"} md:h-[100dvh] md:max-h-[100dvh]`} data-testid="messages-page">
+    <div className={`flex w-full max-w-full min-w-0 overflow-hidden overscroll-none ${cid ? "h-full max-h-full" : "h-full max-h-full pb-[calc(3.5rem+env(safe-area-inset-bottom))] md:pb-0"} md:h-[100dvh] md:max-h-[100dvh]`} data-testid="messages-page">
       <aside className={`${cid ? "hidden lg:flex" : "flex"} h-full max-h-full w-full max-w-full min-w-0 lg:w-[320px] shrink-0 flex-col overflow-hidden border-r bg-surface`}>
         <div className="shrink-0 p-3 sm:p-4 pb-2">
           <div className="flex items-center justify-between"><h1 className="text-xl sm:text-2xl font-bold tracking-tight">{t("messages_title", "Pesan")}</h1>
@@ -507,7 +521,7 @@ export default function Messages() {
         </div>
       </aside>
       <section className={`${cid ? "flex" : "hidden lg:flex"} h-full max-h-full min-w-0 flex-1 overflow-hidden`}>
-        {cid ? <ChatView key={cid} cid={cid} initialConv={activeConvHint} onChange={load} onRead={handleRead} onLeft={handleLeftGroup} /> : <div className="flex flex-1 items-center justify-center"><Empty icon={MessageCircle} title={t("messages_empty_title", "Pilih obrolan")} text={t("messages_empty_desc", "Pesan Anda bersifat privat untuk anggota dalam obrolan terkait.")} /></div>}
+        {cid ? <ChatView cid={cid} initialConv={activeConvHint} onChange={load} onRead={handleRead} onLeft={handleLeftGroup} /> : <div className="flex flex-1 items-center justify-center"><Empty icon={MessageCircle} title={t("messages_empty_title", "Pilih obrolan")} text={t("messages_empty_desc", "Pesan Anda bersifat privat untuk anggota dalam obrolan terkait.")} /></div>}
       </section>
       <NewDM open={dm} onOpenChange={setDm} convs={convs} onCreated={(newConv) => setConvs((prev) => [newConv, ...(prev || []).filter((c) => c.id !== newConv.id)])} />
 

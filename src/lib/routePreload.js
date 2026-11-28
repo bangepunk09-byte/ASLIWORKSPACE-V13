@@ -15,6 +15,7 @@ export const routeLoaders = {
   "/schedule": () => import("../pages/Schedule"),
   "/projects": () => import("../pages/Projects"),
   "/marketplace": () => import("../pages/Marketplace"),
+  "/archives": () => import("../pages/EmployeeArchives"),
   "/settings": () => import("../pages/Settings"),
   "/onboarding": () => import("../pages/Onboarding"),
 };
@@ -81,6 +82,9 @@ export function prefetchRouteData(path) {
     case "/marketplace":
       warm("/marketplace/state");
       break;
+    case "/archives":
+      warm("/employee-archives");
+      break;
     case "/":
       warm("/meetings");
       warm("/boards");
@@ -107,6 +111,7 @@ export function preloadAllRoutes() {
     "/tasks",
     "/beranda",
     "/",
+    "/archives",
     "/groups",
     "/schedule",
     "/employee",

@@ -485,7 +485,7 @@ export async function tryExecuteCircleCommand(params: {
     const activePicNames = immediateAssigneeIds.map((uid) => findHumanUserByRef(db, uid)?.name || uid).join(", ");
     const pendingPicNames = pendingInviteIds.map((uid) => findHumanUserByRef(db, uid)?.name || uid).join(", ");
     const picSummary = pendingPicNames
-      ? (activePicNames ? `${activePicNames} · Menunggu konfirmasi japri: ${pendingPicNames}` : `Menunggu konfirmasi japri (${pendingPicNames})`)
+      ? (activePicNames ? `${activePicNames} · Menunggu konfirmasi: ${pendingPicNames}` : `Menunggu konfirmasi (${pendingPicNames})`)
       : (activePicNames || "Belum di-assign");
     return {
       handled: true,
@@ -506,7 +506,7 @@ export async function tryExecuteCircleCommand(params: {
         ...(labelIds.length ? [`• Brand/Label: **${labelIds.map((id) => (db.labels || []).find((l: any) => l.id === id)?.name || id).join(", ")}**`] : []),
         ``,
         pendingPicNames
-          ? `💡 _Kartu tugas sudah dibuat tanpa nama PIC. Box approval terima/tolak telah dikirim lewat japri ke ${pendingPicNames}._`
+          ? `💡 _Kartu tugas telah dibuat tanpa nama PIC. Permintaan konfirmasi penugasan telah dikirim melalui pesan langsung ke ${pendingPicNames}._`
           : `💡 _Kartu tugas sudah langsung masuk ke menu Tugas secara real-time._`
       ].join("\n")
     };
@@ -667,7 +667,7 @@ export async function tryExecuteCircleCommand(params: {
       };
     }
     task.updated_at = now.toISOString();
-    addTaskActivity(db, task, actorId, `mengirim konfirmasi penugasan via japri ke ${targetUser.name} via Asli`);
+    addTaskActivity(db, task, actorId, `mengirim konfirmasi penugasan melalui pesan langsung ke ${targetUser.name} via Asli`);
     return {
       handled: true,
       effects: {
@@ -676,7 +676,7 @@ export async function tryExecuteCircleCommand(params: {
         needsSave: true,
         pendingAssignmentInvite: { task, userIds: [targetUser.user_id] },
       },
-      text: `📨 Box approval terima/tolak untuk **${task.number_str}: ${task.title}** telah dikirim lewat japri ke **${targetUser.name}** (${targetUser.department}). Tugas akan aktif atas nama **${targetUser.name}** setelah diterima.`
+      text: `📨 Permintaan konfirmasi penugasan untuk **${task.number_str}: ${task.title}** telah dikirim melalui pesan langsung ke **${targetUser.name}** (${targetUser.department}). Tugas akan aktif atas nama **${targetUser.name}** setelah disetujui.`
     };
   }
 
