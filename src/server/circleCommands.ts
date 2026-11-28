@@ -1,5 +1,10 @@
 import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 import { CIRCLE_FEATURE_CATALOG } from "./circleCatalog";
+import {
+  buildTaskReportPayload,
+  buildSummaryReportPayload,
+  type AssistantReportPayload
+} from "./assistantReports";
 
 const WIB_OFFSET_MS = 7 * 3600000;
 
@@ -16,6 +21,7 @@ export interface CircleReplyEffects {
   pollsChanged?: boolean;
   notificationsChanged?: boolean;
   needsSave?: boolean;
+  pendingAssignmentInvite?: { task: any; userIds: string[] };
 }
 
 export interface CircleCommandResult {
@@ -23,6 +29,7 @@ export interface CircleCommandResult {
   text: string;
   createdTask?: any;
   effects?: CircleReplyEffects;
+  report?: AssistantReportPayload | null;
 }
 
 function getWibParts(dt: Date) {
@@ -439,7 +446,9 @@ export async function tryExecuteCircleCommand(params: {
     }
     const nextNum = Math.max(maxTsk + 1, (db.tasks?.length || 0) + 1);
     const newTaskId = `tsk_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-    const primaryPic = assigneeIds[0] || null;
+    const immediateAssigneeIds = assigneeIds.filter((uid: string) => uid === actorId);
+    const pendingInviteIds = assigneeIds.filter((uid: string) => uid !== actorId);
+    const primaryPic = immediateAssigneeIds[0] || null;
     const newTask = {
       id: newTaskId,
       number: nextNum,
@@ -451,7 +460,8 @@ export async function tryExecuteCircleCommand(params: {
       board_id: matchedBoard?.id || db.boards?.[0]?.id || "brd_div_marketing",
       department: matchedBoard?.department || senderUser?.department || "Marketing",
       assignee_id: primaryPic,
-      assignee_ids: assigneeIds,
+      assignee_ids: immediateAssigneeIds,
+      pending_assignees: [],
       requestor_id: actorId,
       requestor_ids: [actorId],
       reviewer_ids: [actorId],
@@ -472,21 +482,32 @@ export async function tryExecuteCircleCommand(params: {
     addTaskActivity(db, newTask, actorId, `membuat tugas baru "${newTask.title}" melalui Asisten ASLI`);
     db.tasks.unshift(newTask);
 
-    const picNames = assigneeIds.map((uid) => findHumanUserByRef(db, uid)?.name || uid).join(", ") || "Belum di-assign";
+    const activePicNames = immediateAssigneeIds.map((uid) => findHumanUserByRef(db, uid)?.name || uid).join(", ");
+    const pendingPicNames = pendingInviteIds.map((uid) => findHumanUserByRef(db, uid)?.name || uid).join(", ");
+    const picSummary = pendingPicNames
+      ? (activePicNames ? `${activePicNames} · Menunggu konfirmasi japri: ${pendingPicNames}` : `Menunggu konfirmasi japri (${pendingPicNames})`)
+      : (activePicNames || "Belum di-assign");
     return {
       handled: true,
       createdTask: newTask,
-      effects: { createdTask: newTask, tasksChanged: true, needsSave: true },
+      effects: {
+        createdTask: newTask,
+        tasksChanged: true,
+        needsSave: true,
+        ...(pendingInviteIds.length > 0 ? { pendingAssignmentInvite: { task: newTask, userIds: pendingInviteIds } } : {}),
+      },
       text: [
         `✨ **Tugas Baru Berhasil Dibuat oleh Asli!**`,
         ``,
         `📌 **${newTask.number_str}: ${newTask.title}**`,
         `• Status: **To Do** · Prioritas: **${priority.toUpperCase()}**`,
-        `• Board: **${matchedBoard?.name || newTask.department}** · PIC: **${picNames}**`,
+        `• Board: **${matchedBoard?.name || newTask.department}** · PIC: **${picSummary}**`,
         ...(deadlineIso ? [`• Deadline: **${formatWibDateTime(deadlineIso)}**`] : []),
         ...(labelIds.length ? [`• Brand/Label: **${labelIds.map((id) => (db.labels || []).find((l: any) => l.id === id)?.name || id).join(", ")}**`] : []),
         ``,
-        `💡 _Kartu tugas sudah langsung masuk ke menu Tugas secara real-time._`
+        pendingPicNames
+          ? `💡 _Kartu tugas sudah dibuat tanpa nama PIC. Box approval terima/tolak telah dikirim lewat japri ke ${pendingPicNames}._`
+          : `💡 _Kartu tugas sudah langsung masuk ke menu Tugas secara real-time._`
       ].join("\n")
     };
   }
@@ -633,14 +654,29 @@ export async function tryExecuteCircleCommand(params: {
     if (!task || !targetUser) {
       return { handled: true, text: `⚠️ Tugas atau nama employee tidak ditemukan. Format: \`/assign TSK-001 | Nama Employee\`` };
     }
-    task.assignee_id = targetUser.user_id;
-    task.assignee_ids = Array.from(new Set([...(Array.isArray(task.assignee_ids) ? task.assignee_ids : []), targetUser.user_id]));
+    const existingAssignees = Array.isArray(task.assignee_ids) ? task.assignee_ids : (task.assignee_id ? [task.assignee_id] : []);
+    if (targetUser.user_id === actorId || existingAssignees.includes(targetUser.user_id)) {
+      task.assignee_ids = Array.from(new Set([...existingAssignees, targetUser.user_id]));
+      task.assignee_id = task.assignee_ids[0] || targetUser.user_id;
+      task.updated_at = now.toISOString();
+      addTaskActivity(db, task, actorId, `menugaskan kepada ${targetUser.name} via Asli`);
+      return {
+        handled: true,
+        effects: { tasksChanged: true, updatedTask: task, needsSave: true },
+        text: `👤 **${targetUser.name}** (${targetUser.department}) berhasil ditetapkan sebagai PIC untuk **${task.number_str}: ${task.title}**.`
+      };
+    }
     task.updated_at = now.toISOString();
-    addTaskActivity(db, task, actorId, `menugaskan kepada ${targetUser.name} via Asli`);
+    addTaskActivity(db, task, actorId, `mengirim konfirmasi penugasan via japri ke ${targetUser.name} via Asli`);
     return {
       handled: true,
-      effects: { tasksChanged: true, updatedTask: task, needsSave: true },
-      text: `👤 **${targetUser.name}** (${targetUser.department}) berhasil ditetapkan sebagai PIC untuk **${task.number_str}: ${task.title}**.`
+      effects: {
+        tasksChanged: true,
+        updatedTask: task,
+        needsSave: true,
+        pendingAssignmentInvite: { task, userIds: [targetUser.user_id] },
+      },
+      text: `📨 Box approval terima/tolak untuk **${task.number_str}: ${task.title}** telah dikirim lewat japri ke **${targetUser.name}** (${targetUser.department}). Tugas akan aktif atas nama **${targetUser.name}** setelah diterima.`
     };
   }
 
@@ -736,6 +772,13 @@ export async function tryExecuteCircleCommand(params: {
     const nextUp = ranked.slice(5, 10);
     return {
       handled: true,
+      report: buildTaskReportPayload({
+        title: "Rencana Prioritas Sprint",
+        subtitle: intel.generated_at_wib,
+        tasks: ranked.slice(0, 12),
+        doneCount: intel.tasks.done,
+        totalCount: intel.tasks.total
+      }),
       text: [
         `🧭 **Rencana Prioritas Sprint Otomatis (${intel.generated_at_wib})**`,
         `Berdasarkan urgensi deadline, status overdue, & bobot prioritas dari **${ranked.length} tugas aktif**:`,
@@ -771,12 +814,42 @@ export async function tryExecuteCircleCommand(params: {
       if (rank[a.status] !== rank[b.status]) return rank[a.status] - rank[b.status];
       return a.active - b.active;
     });
-    const top = candidates.slice(0, 5);
+    const top = candidates.slice(0, 8);
+    const readyCount = candidates.filter((p: any) => p.status === "optimal").length;
+    const readyPct = candidates.length > 0 ? Math.round((readyCount / candidates.length) * 100) : 100;
     return {
       handled: true,
+      report: buildSummaryReportPayload({
+        title: `Rekomendasi PIC Paling Siap${divFilter ? ` · ${argRaw}` : ""}`,
+        subtitle: `${candidates.length} employee dianalisis`,
+        progressPercent: readyPct,
+        progressLabel: "Kapasitas optimal",
+        progressTone: readyPct >= 60 ? "good" : "brand",
+        metrics: [
+          { label: `${readyCount} optimal`, tone: "good" },
+          { label: `${candidates.filter((p: any) => p.status === "stabil").length} stabil` },
+          ...(candidates.filter((p: any) => p.status === "pressure").length > 0
+            ? [{ label: `${candidates.filter((p: any) => p.status === "pressure").length} padat`, tone: "danger" as const }]
+            : [])
+        ],
+        rows: top.map((p: any, idx: number) => ({
+          id: p.user_id,
+          code: `#${idx + 1}`,
+          title: p.name,
+          subtitle: `${p.department || "Umum"} · ${p.active} aktif${p.overdue > 0 ? ` · ${p.overdue} terlambat` : ""}${p.online ? " · Online" : ""}`,
+          status_label: p.status_label,
+          status_tone: p.status === "optimal" ? "good" : p.status === "pressure" ? "danger" : "warn",
+          user_ids: [p.user_id],
+          user_names: [p.name],
+          href: `/people/${p.user_id}`
+        })),
+        footerNote: top[0] ? `Gunakan /assign TSK-xxx | ${top[0].name} untuk menetapkan PIC langsung.` : undefined,
+        ctaLabel: "Buka Employee",
+        ctaHref: "/people"
+      }),
       text: [
         `🎯 **Rekomendasi PIC Paling Siap${divFilter ? ` (Filter: ${argRaw})` : ""}:**`,
-        ...top.map((p: any, idx: number) =>
+        ...top.slice(0, 5).map((p: any, idx: number) =>
           `${idx + 1}. **${p.name}** (${p.department}) — Load: **${p.status_label}** (${p.active} aktif, ${p.overdue} telat)${p.online ? " 🟢" : ""}`
         ),
         ``,
@@ -789,35 +862,90 @@ export async function tryExecuteCircleCommand(params: {
   // 15. /rebalance — Rebalance Workload Planner
   // =========================================================================
   if (cmdToken === "/rebalance" || /(seimbangkan beban|rebalance)/i.test(lower)) {
+    const totalPeople = intel.workload_summary.people.length || 1;
     const overloaded = intel.workload_summary.people
       .filter((p: any) => p.status === "pressure" || p.active >= 5)
       .sort((a: any, b: any) => b.overdue - a.overdue || b.active - a.active);
     const available = intel.workload_summary.people
       .filter((p: any) => p.status === "optimal")
       .sort((a: any, b: any) => a.active - b.active);
+    const balancedPct = Math.round(((totalPeople - overloaded.length) / totalPeople) * 100);
 
     if (overloaded.length === 0) {
       return {
         handled: true,
+        report: buildSummaryReportPayload({
+          title: "Penyeimbang Beban Kerja Tim",
+          subtitle: intel.workspace_name,
+          progressPercent: 100,
+          progressLabel: "Keseimbangan tim",
+          progressTone: "good",
+          metrics: [
+            { label: `${intel.workload_summary.optimal_count} optimal`, tone: "good" },
+            { label: `${intel.workload_summary.stabil_count} stabil` },
+            { label: "0 under pressure", tone: "good" }
+          ],
+          rows: [],
+          emptyNote: "Beban kerja tim sudah seimbang — tidak ada anggota dalam kategori Under Pressure.",
+          ctaLabel: "Buka Employee",
+          ctaHref: "/people"
+        }),
         text: `⚖️ **Beban Tim Sudah Seimbang!**\nTidak ada anggota yang masuk kategori *Under Pressure* atau kelebihan beban saat ini.`
       };
     }
 
     const suggestions: string[] = [];
-    overloaded.slice(0, 4).forEach((p: any, idx: number) => {
+    const rebalanceRows: any[] = [];
+    overloaded.slice(0, 6).forEach((p: any, idx: number) => {
       const target = available.find((a: any) => a.department === p.department) || available[idx % Math.max(1, available.length)];
       const sampleTask = p.tasks?.[0];
       if (target && sampleTask) {
         suggestions.push(
           `• Pindahkan **${sampleTask.number_str || sampleTask.title}** dari **${p.name}** (${p.active} aktif, ${p.overdue} telat) → ke **${target.name}** (${target.active} aktif, ${target.status_label})\n  ↳ _Perintah cepat:_ \`/assign ${sampleTask.number_str || sampleTask.id} | ${target.name}\``
         );
+        rebalanceRows.push({
+          id: sampleTask.id || `${p.user_id}-${idx}`,
+          code: sampleTask.number_str || "REASSIGN",
+          title: `${p.name} → ${target.name}`,
+          subtitle: `${sampleTask.title || "Tugas aktif"} · ${p.active} aktif (${p.overdue} telat) ke ${target.active} aktif`,
+          status_label: target.status_label,
+          status_tone: "good",
+          user_ids: [p.user_id, target.user_id],
+          user_names: [p.name, target.name],
+          href: sampleTask.id ? `/tasks?task=${sampleTask.id}` : "/tasks"
+        });
       } else {
         suggestions.push(`• **${p.name}** (${p.status_label}) membutuhkan relaksasi deadline pada ${p.active} tugas aktif.`);
+        rebalanceRows.push({
+          id: p.user_id,
+          title: p.name,
+          subtitle: `${p.department || "Umum"} · ${p.active} aktif · ${p.overdue} terlambat — perlu relaksasi deadline`,
+          status_label: p.status_label,
+          status_tone: "danger",
+          user_ids: [p.user_id],
+          user_names: [p.name],
+          href: `/people/${p.user_id}`
+        });
       }
     });
 
     return {
       handled: true,
+      report: buildSummaryReportPayload({
+        title: "Planner Penyeimbang Beban Kerja",
+        subtitle: `${overloaded.length} anggota terdeteksi padat`,
+        progressPercent: balancedPct,
+        progressLabel: "Keseimbangan tim",
+        progressTone: balancedPct >= 75 ? "good" : balancedPct >= 50 ? "warn" : "danger",
+        metrics: [
+          { label: `${overloaded.length} padat`, tone: "danger" },
+          { label: `${available.length} kapasitas luang`, tone: "good" },
+          { label: `${intel.workload_summary.total_active_tasks} tugas aktif` }
+        ],
+        rows: rebalanceRows,
+        ctaLabel: "Buka Tugas",
+        ctaHref: "/tasks"
+      }),
       text: [
         `⚖️ **Planner Penyeimbang Beban Kerja (${overloaded.length} orang terdeteksi padat)**`,
         ``,
@@ -832,19 +960,92 @@ export async function tryExecuteCircleCommand(params: {
   if (cmdToken === "/blockers" || /(kendala tim|ada kendala|bottleneck|blocker)/i.test(lower)) {
     const rawTasks = Array.isArray(db.tasks) ? db.tasks : [];
     const issueItems: string[] = [];
+    const issueRows: any[] = [];
     rawTasks.forEach((t: any) => {
       if (t.archived || t.status === "done") return;
       (t.comments || []).forEach((c: any) => {
         if (c.kind === "issue" && !c.resolved) {
           issueItems.push(`• **${t.number_str || t.id}** (${t.title}): _"${String(c.text || "").slice(0, 120)}"_`);
+          issueRows.push({
+            id: `${t.id}_${c.id || issueRows.length}`,
+            code: t.number_str || "ISSUE",
+            title: t.title || "Tugas Terkendala",
+            subtitle: String(c.text || "").slice(0, 110),
+            status_label: "Kendala",
+            status_tone: "danger",
+            href: `/tasks?task=${t.id}`
+          });
         }
       });
     });
     const stuckReview = intel.tasks.all_active.filter((t: any) => t.status === "in_review");
     const unassigned = intel.tasks.all_active.filter((t: any) => t.assignee_ids.length === 0);
+    const overdueCount = intel.tasks.overdue_count || 0;
+    const totalBottlenecks = issueItems.length + stuckReview.length + unassigned.length + overdueCount;
+    const activeBase = Math.max(intel.tasks.active || 0, totalBottlenecks, 1);
+    const healthScore = totalBottlenecks === 0
+      ? 100
+      : Math.max(0, Math.min(99, Math.round(((activeBase - Math.min(activeBase, totalBottlenecks)) / activeBase) * 100)));
+
+    const summaryRows = [
+      {
+        id: "blk_issues",
+        title: "Kendala / Issue Terbuka",
+        subtitle: issueItems.length > 0 ? `${issueItems.length} laporan kendala pada kartu tugas` : "Belum ada kendala terbuka yang dilaporkan",
+        right_value: String(issueItems.length),
+        status_label: issueItems.length > 0 ? "Perlu aksi" : "Aman",
+        status_tone: issueItems.length > 0 ? ("danger" as const) : ("good" as const),
+        href: "/tasks"
+      },
+      {
+        id: "blk_review",
+        title: "Tugas Menunggu Review",
+        subtitle: stuckReview.length > 0 ? "Menunggu approval di kolom In Review" : "Tidak ada antrean review menumpuk",
+        right_value: String(stuckReview.length),
+        status_label: stuckReview.length > 0 ? "Antre" : "Aman",
+        status_tone: stuckReview.length > 0 ? ("warn" as const) : ("good" as const),
+        href: "/tasks"
+      },
+      {
+        id: "blk_unassigned",
+        title: "Tugas Aktif Tanpa PIC",
+        subtitle: unassigned.length > 0 ? "Belum memiliki penanggung jawab" : "Seluruh tugas aktif sudah memiliki PIC",
+        right_value: String(unassigned.length),
+        status_label: unassigned.length > 0 ? "Unassigned" : "Aman",
+        status_tone: unassigned.length > 0 ? ("warn" as const) : ("good" as const),
+        href: "/tasks"
+      },
+      {
+        id: "blk_overdue",
+        title: "Tugas Terlambat (Overdue)",
+        subtitle: overdueCount > 0 ? "Melewati tenggat waktu berjalan" : "Semua tugas berada dalam tenggat waktu",
+        right_value: String(overdueCount),
+        status_label: overdueCount > 0 ? "Terlambat" : "Aman",
+        status_tone: overdueCount > 0 ? ("danger" as const) : ("good" as const),
+        href: "/tasks"
+      },
+      ...issueRows.slice(0, 6)
+    ];
 
     return {
       handled: true,
+      report: buildSummaryReportPayload({
+        title: "Scanner Bottleneck & Kendala Workspace",
+        subtitle: intel.workspace_name,
+        progressPercent: healthScore,
+        progressLabel: "Skor kelancaran",
+        progressTone: healthScore >= 85 ? "good" : healthScore >= 60 ? "warn" : "danger",
+        metrics: [
+          { label: `${issueItems.length} kendala`, tone: issueItems.length > 0 ? "danger" : "good" },
+          { label: `${stuckReview.length} review`, tone: stuckReview.length > 0 ? "warn" : "default" },
+          { label: `${unassigned.length} tanpa PIC`, tone: unassigned.length > 0 ? "warn" : "default" },
+          { label: `${overdueCount} terlambat`, tone: overdueCount > 0 ? "danger" : "good" }
+        ],
+        rows: summaryRows,
+        footerNote: issueItems.length === 0 ? "Belum ada kendala (issue) terbuka yang dilaporkan di kartu tugas." : undefined,
+        ctaLabel: "Buka Tugas",
+        ctaHref: "/tasks"
+      }),
       text: [
         `🚧 **Scanner Bottleneck & Kendala Workspace**`,
         `• Kendala/Issue Terbuka: **${issueItems.length}**`,
@@ -894,6 +1095,46 @@ export async function tryExecuteCircleCommand(params: {
       const s = computeScorecard(targetUser);
       return {
         handled: true,
+        report: buildSummaryReportPayload({
+          title: `KPI & Scorecard · ${s.name}`,
+          subtitle: s.dept,
+          progressPercent: s.completionRate,
+          progressLabel: "Penyelesaian",
+          progressTone: s.completionRate >= 80 ? "good" : "brand",
+          metrics: [
+            { label: `${s.done}/${s.total} selesai`, tone: "strong" },
+            { label: `${s.active} aktif` },
+            { label: `SLA ${s.slaRate}%`, tone: s.slaRate >= 85 ? "good" : "warn" },
+            ...(s.overdue > 0 ? [{ label: `${s.overdue} terlambat`, tone: "danger" as const }] : [])
+          ],
+          rows: [
+            {
+              id: "kpi_completion",
+              title: "Tingkat Penyelesaian Tugas",
+              subtitle: `${s.done} dari ${s.total} tugas selesai`,
+              progress: s.completionRate,
+              href: `/people/${targetUser.user_id}`
+            },
+            {
+              id: "kpi_sla",
+              title: "Ketepatan Waktu (SLA)",
+              subtitle: `${s.onTime} dari ${s.evaluatedDue} tugas tepat waktu`,
+              progress: s.slaRate,
+              href: `/people/${targetUser.user_id}`
+            },
+            {
+              id: "kpi_active",
+              title: "Beban Tugas Berjalan",
+              subtitle: `${s.active} tugas aktif · ${s.overdue} melewati tenggat`,
+              right_value: `${s.active} aktif`,
+              status_label: s.overdue > 0 ? `${s.overdue} terlambat` : "Terkendali",
+              status_tone: s.overdue > 0 ? "danger" : "good",
+              href: `/people/${targetUser.user_id}`
+            }
+          ],
+          ctaLabel: "Buka Profil",
+          ctaHref: `/people/${targetUser.user_id}`
+        }),
         text: [
           `🏅 **KPI & Scorecard: ${s.name}** (${s.dept})`,
           `• Total Tugas Ditangani: **${s.total}** (${s.done} selesai · ${s.active} aktif · ${s.overdue} telat)`,
@@ -904,9 +1145,39 @@ export async function tryExecuteCircleCommand(params: {
     }
 
     const humans = (db.users || []).filter((u: any) => !u.is_bot && u.role !== "assistant" && u.user_id !== "user_circle_assistant");
-    const cards = humans.map(computeScorecard).sort((a: any, b: any) => b.done - a.done || b.slaRate - a.slaRate);
+    const cards = humans.map((u: any) => ({ ...computeScorecard(u), user_id: u.user_id })).sort((a: any, b: any) => b.done - a.done || b.slaRate - a.slaRate);
+    const totalDoneAll = cards.reduce((acc: number, c: any) => acc + c.done, 0);
+    const totalAll = cards.reduce((acc: number, c: any) => acc + c.total, 0);
+    const avgCompletion = totalAll > 0 ? Math.round((totalDoneAll / totalAll) * 100) : 0;
+    const totalOnTimeAll = cards.reduce((acc: number, c: any) => acc + c.onTime, 0);
+    const totalEvalAll = cards.reduce((acc: number, c: any) => acc + c.evaluatedDue, 0);
+    const teamSla = totalEvalAll > 0 ? Math.round((totalOnTimeAll / totalEvalAll) * 100) : 0;
     return {
       handled: true,
+      report: buildSummaryReportPayload({
+        title: "Scorecard KPI Seluruh Tim",
+        subtitle: `${cards.length} employee`,
+        progressPercent: avgCompletion,
+        progressLabel: "Rata-rata selesai",
+        progressTone: avgCompletion >= 80 ? "good" : "brand",
+        metrics: [
+          { label: `${totalDoneAll}/${totalAll} selesai`, tone: "strong" },
+          { label: `SLA ${teamSla}%`, tone: teamSla >= 85 ? "good" : "warn" },
+          { label: `${cards.length} anggota` }
+        ],
+        rows: cards.slice(0, 15).map((c: any, idx: number) => ({
+          id: c.user_id,
+          code: `#${idx + 1}`,
+          title: c.name,
+          subtitle: `${c.dept} · ${c.done}/${c.total} selesai · SLA ${c.slaRate}%${c.overdue > 0 ? ` · ${c.overdue} telat` : ""}`,
+          progress: c.completionRate,
+          user_ids: [c.user_id],
+          user_names: [c.name],
+          href: `/people/${c.user_id}`
+        })),
+        ctaLabel: "Buka Employee",
+        ctaHref: "/people"
+      }),
       text: [
         `🏅 **Scorecard KPI Seluruh Tim (${cards.length} Anggota)**`,
         ...cards.slice(0, 12).map((c: any) =>
@@ -929,8 +1200,9 @@ export async function tryExecuteCircleCommand(params: {
     });
     const activeOverdueCount = intel.tasks.overdue_count || 0;
     const evaluatedTotal = doneTasks.length + activeOverdueCount;
-    const overallSla = evaluatedTotal > 0 ? Math.round((doneOnTime.length / evaluatedTotal) * 100) : 0;
+    const overallSla = evaluatedTotal > 0 ? Math.round((doneOnTime.length / evaluatedTotal) * 100) : 100;
 
+    const divRows: any[] = [];
     const divLines = intel.divisions.map((d: any) => {
       const divDoneCount = d.done_tasks_count || 0;
       const divOverdueCount = d.overdue_tasks.length || 0;
@@ -945,12 +1217,34 @@ export async function tryExecuteCircleCommand(params: {
         const compAt = t.completed_at || t.submit_date || t.archived_at || t.updated_at;
         return !compAt || new Date(compAt) <= new Date(t.deadline);
       }).length;
-      const rate = divEvaluated > 0 ? Math.round((divOnTimeCount / divEvaluated) * 100) : 0;
+      const rate = divEvaluated > 0 ? Math.round((divOnTimeCount / divEvaluated) * 100) : 100;
+      divRows.push({
+        id: d.key || d.name,
+        title: d.name,
+        subtitle: `${divOnTimeCount}/${divEvaluated} tepat waktu · ${d.active_tasks_count} aktif${divOverdueCount > 0 ? ` · ${divOverdueCount} terlambat` : ""}`,
+        progress: rate,
+        href: "/tasks"
+      });
       return `• **${d.name}**: Ketepatan Waktu **${rate}%** (${divOnTimeCount} dari ${divEvaluated} tugas tepat waktu · ${divOverdueCount} overdue · ${d.active_tasks_count} aktif)`;
     });
 
     return {
       handled: true,
+      report: buildSummaryReportPayload({
+        title: "Laporan Ketepatan Waktu & SLA",
+        subtitle: intel.workspace_name,
+        progressPercent: overallSla,
+        progressLabel: "Ketepatan waktu",
+        progressTone: overallSla >= 85 ? "good" : overallSla >= 65 ? "warn" : "danger",
+        metrics: [
+          { label: `${doneOnTime.length}/${evaluatedTotal} tepat waktu`, tone: "strong" },
+          { label: `${doneTasks.length} selesai`, tone: "good" },
+          ...(activeOverdueCount > 0 ? [{ label: `${activeOverdueCount} terlambat`, tone: "danger" as const }] : [{ label: "0 terlambat", tone: "good" as const }])
+        ],
+        rows: divRows,
+        ctaLabel: "Buka Tugas",
+        ctaHref: "/tasks"
+      }),
       text: [
         `📏 **Laporan Ketepatan Waktu & Kepatuhan SLA Workspace**`,
         `• Ketepatan Waktu: **${overallSla}%** (${doneOnTime.length} dari ${evaluatedTotal} tugas tepat waktu)`,
@@ -969,8 +1263,46 @@ export async function tryExecuteCircleCommand(params: {
   if (cmdToken === "/leaderboard" || /(leaderboard|ranking produktivitas)/i.test(lower)) {
     const divRank = [...intel.divisions].sort((a: any, b: any) => b.done_tasks_count - a.done_tasks_count);
     const peopleRank = [...intel.workload_summary.people].sort((a: any, b: any) => b.done - a.done || a.overdue - b.overdue);
+    const wsCompletion = intel.tasks.total > 0 ? Math.round((intel.tasks.done / intel.tasks.total) * 100) : 0;
+    const lbRows = [
+      ...peopleRank.slice(0, 5).map((p: any, i: number) => {
+        const tot = p.done + p.active;
+        return {
+          id: p.user_id,
+          code: `#${i + 1}`,
+          title: p.name,
+          subtitle: `${p.department || "Umum"} · ${p.done} selesai · ${p.active} aktif · Load ${p.status_label}`,
+          progress: tot > 0 ? Math.round((p.done / tot) * 100) : 0,
+          user_ids: [p.user_id],
+          user_names: [p.name],
+          href: `/people/${p.user_id}`
+        };
+      }),
+      ...divRank.slice(0, 6).map((d: any, i: number) => ({
+        id: `div_${d.key || d.name}`,
+        code: `DIV #${i + 1}`,
+        title: `Divisi ${d.name}`,
+        subtitle: `${d.done_tasks_count} selesai · ${d.active_tasks_count} aktif · ${d.member_count} anggota`,
+        progress: d.total_tasks > 0 ? Math.round((d.done_tasks_count / d.total_tasks) * 100) : 0,
+        href: "/tasks"
+      }))
+    ];
     return {
       handled: true,
+      report: buildSummaryReportPayload({
+        title: "Leaderboard Produktivitas Workspace",
+        subtitle: `${intel.divisions.length} divisi · ${intel.employees.active} employee`,
+        progressPercent: wsCompletion,
+        progressLabel: "Penyelesaian total",
+        progressTone: wsCompletion >= 75 ? "good" : "brand",
+        metrics: [
+          { label: `${intel.tasks.done}/${intel.tasks.total} selesai`, tone: "strong" },
+          { label: `Top: ${peopleRank[0]?.name || "-"}`, tone: "good" }
+        ],
+        rows: lbRows,
+        ctaLabel: "Buka Employee",
+        ctaHref: "/people"
+      }),
       text: [
         `🏆 **Leaderboard Produktivitas Workspace**`,
         ``,
@@ -992,6 +1324,13 @@ export async function tryExecuteCircleCommand(params: {
     );
     return {
       handled: true,
+      report: buildTaskReportPayload({
+        title: "Matriks Risiko Keterlambatan",
+        subtitle: `${highRisk.length} tugas berisiko tinggi`,
+        tasks: highRisk,
+        doneCount: 0,
+        totalCount: highRisk.length
+      }),
       text: [
         `⚠️ **Matriks Risiko Keterlambatan (${highRisk.length} Tugas Berisiko Tinggi)**`,
         ...(highRisk.length
@@ -1011,6 +1350,14 @@ export async function tryExecuteCircleCommand(params: {
     const best = [...intel.workload_summary.people].sort((a: any, b: any) => a.active - b.active)[0];
     return {
       handled: true,
+      report: buildTaskReportPayload({
+        title: "Radar Tugas Aktif Tanpa PIC",
+        subtitle: intel.workspace_name,
+        tasks: list,
+        doneCount: 0,
+        totalCount: list.length,
+        footerNote: list.length > 0 && best ? `Saran PIC paling luang: ${best.name} (${best.active} aktif)` : undefined
+      }),
       text: [
         `🕳️ **Radar Tugas Aktif Tanpa PIC (${list.length} Tugas)**`,
         ...(list.length
@@ -1030,6 +1377,13 @@ export async function tryExecuteCircleCommand(params: {
     const queue = intel.tasks.all_active.filter((t: any) => t.status === "in_review");
     return {
       handled: true,
+      report: buildTaskReportPayload({
+        title: "Antrean Review & Approval",
+        subtitle: intel.workspace_name,
+        tasks: queue,
+        doneCount: 0,
+        totalCount: queue.length
+      }),
       text: [
         `👀 **Antrean Review & Approval (${queue.length} Tugas)**`,
         ...(queue.length
@@ -1046,8 +1400,48 @@ export async function tryExecuteCircleCommand(params: {
     const myDone = (intel.my_summary?.tasks_done || []).slice(0, 4);
     const myActive = (intel.my_summary?.tasks_active || []).slice(0, 5);
     const myOverdue = intel.my_summary?.tasks_overdue || [];
+    const totalMine = (intel.my_summary?.tasks_done?.length || 0) + (intel.my_summary?.tasks_active?.length || 0);
+    const myPct = totalMine > 0 ? Math.round(((intel.my_summary?.tasks_done?.length || 0) / totalMine) * 100) : 100;
+    const standupRows = [
+      ...myActive.map((t: any) => ({
+        id: t.id,
+        code: t.number_str,
+        title: t.title,
+        subtitle: `Fokus Hari Ini · ${t.board_name} · ${t.is_overdue ? `Terlambat ${t.late_duration}` : (t.deadline ? t.deadline_wib : "Tanpa deadline")}`,
+        progress: t.progress,
+        status_label: t.is_overdue ? "Blocker" : "Fokus",
+        status_tone: t.is_overdue ? ("danger" as const) : ("default" as const),
+        href: `/tasks?task=${t.id}`
+      })),
+      ...myDone.map((t: any) => ({
+        id: `done_${t.id}`,
+        code: t.number_str,
+        title: t.title,
+        subtitle: `Selesai terbaru · ${t.board_name}`,
+        progress: 100,
+        status_label: "Selesai",
+        status_tone: "good" as const,
+        href: `/tasks?task=${t.id}`
+      }))
+    ];
     return {
       handled: true,
+      report: buildSummaryReportPayload({
+        title: `Draft Daily Standup · ${actorName}`,
+        subtitle: formatWibDateTime(now.toISOString()),
+        progressPercent: myPct,
+        progressLabel: "Penyelesaian",
+        progressTone: myPct >= 75 ? "good" : "brand",
+        metrics: [
+          { label: `${intel.my_summary?.tasks_done?.length || 0} selesai`, tone: "good" },
+          { label: `${intel.my_summary?.tasks_active?.length || 0} fokus` },
+          { label: `${myOverdue.length} blocker`, tone: myOverdue.length > 0 ? "danger" : "good" }
+        ],
+        rows: standupRows,
+        emptyNote: "Tidak ada tugas aktif — siap menerima tugas baru dari board divisi.",
+        ctaLabel: "Buka Tugas",
+        ctaHref: "/tasks"
+      }),
       text: [
         `📋 **Draft Daily Standup — ${actorName} (${formatWibDateTime(now.toISOString())})**`,
         ``,
@@ -1127,6 +1521,38 @@ export async function tryExecuteCircleCommand(params: {
     const todayDeadlines = intel.tasks.due_today_list || [];
     return {
       handled: true,
+      report: buildSummaryReportPayload({
+        title: `Agenda & Deadline Hari Ini`,
+        subtitle: todayStr,
+        progressPercent: todayDeadlines.length === 0 ? 100 : Math.round((todayDeadlines.reduce((a: number, t: any) => a + (t.progress || 0), 0)) / todayDeadlines.length),
+        progressLabel: todayDeadlines.length === 0 ? "Jadwal terkendali" : "Progres hari ini",
+        progressTone: todayDeadlines.length === 0 ? "good" : "brand",
+        metrics: [
+          { label: `${todayMeetings.length} meeting`, tone: "strong" },
+          { label: `${todayDeadlines.length} deadline hari ini`, tone: todayDeadlines.length > 0 ? "warn" : "good" }
+        ],
+        rows: [
+          ...todayMeetings.map((m: any) => ({
+            id: m.id,
+            code: m.start_time || "10:00",
+            title: m.title,
+            subtitle: `Meeting · ${m.location || "Meet"}`,
+            status_label: "Meeting",
+            href: "/schedule"
+          })),
+          ...todayDeadlines.map((t: any) => ({
+            id: t.id,
+            code: t.number_str,
+            title: t.title,
+            subtitle: `${t.board_name} · ${t.deadline_wib}`,
+            progress: t.progress,
+            href: `/tasks?task=${t.id}`
+          }))
+        ],
+        emptyNote: "Tidak ada meeting maupun deadline tugas yang jatuh tempo hari ini.",
+        ctaLabel: "Buka Jadwal",
+        ctaHref: "/schedule"
+      }),
       text: [
         `🗓️ **Agenda & Deadline Hari Ini (${todayStr})**`,
         ``,
@@ -1155,8 +1581,17 @@ export async function tryExecuteCircleCommand(params: {
       : intel.tasks.all_active;
     const overdueOnes = matchedTasks.filter((t: any) => t.is_overdue);
     const upcomingOnes = matchedTasks.slice(0, 5);
+    const prepTasks = Array.from(new Map([...overdueOnes, ...upcomingOnes].map((t: any) => [t.id, t])).values());
     return {
       handled: true,
+      report: buildTaskReportPayload({
+        title: `Persiapan Meeting${argRaw ? ` · ${argRaw}` : ""}`,
+        subtitle: `${overdueOnes.length} terlambat · ${matchedTasks.length} tugas terkait`,
+        tasks: prepTasks,
+        doneCount: 0,
+        totalCount: prepTasks.length,
+        footerNote: "Konfirmasi ulang target deadline & kebutuhan resource antar divisi."
+      }),
       text: [
         `🗒️ **Brief & Agenda Persiapan Meeting${argRaw ? ` — Topik: ${argRaw}` : ""}**`,
         ``,
@@ -1183,9 +1618,34 @@ export async function tryExecuteCircleCommand(params: {
       dayMeetings.map((m: any) => parseInt(String(m.start_time || "10:00").split(":")[0], 10))
     );
     const workHours = [9, 10, 11, 13, 14, 15, 16];
-    const freeSlots = workHours.filter((h) => !busyHours.has(h)).map((h) => `• **${String(h).padStart(2, "0")}:00 – ${String(h + 1).padStart(2, "0")}:00 WIB**`);
+    const freeHours = workHours.filter((h) => !busyHours.has(h));
+    const freeSlots = freeHours.map((h) => `• **${String(h).padStart(2, "0")}:00 – ${String(h + 1).padStart(2, "0")}:00 WIB**`);
+    const freePct = Math.round((freeHours.length / workHours.length) * 100);
     return {
       handled: true,
+      report: buildSummaryReportPayload({
+        title: `Slot Jam Kosong Rapat`,
+        subtitle: dateStr,
+        progressPercent: freePct,
+        progressLabel: "Ketersediaan slot",
+        progressTone: freePct >= 50 ? "good" : "warn",
+        metrics: [
+          { label: `${freeHours.length}/${workHours.length} slot tersedia`, tone: "strong" },
+          { label: `${dayMeetings.length} meeting terjadwal` }
+        ],
+        rows: freeHours.map((h) => ({
+          id: `slot_${h}`,
+          code: `${String(h).padStart(2, "0")}:00`,
+          title: `${String(h).padStart(2, "0")}:00 – ${String(h + 1).padStart(2, "0")}:00 WIB`,
+          subtitle: "Tersedia untuk jadwal meeting",
+          status_label: "Tersedia",
+          status_tone: "good",
+          href: "/schedule"
+        })),
+        emptyNote: "Jadwal penuh sepanjang jam kerja pada tanggal ini.",
+        ctaLabel: "Buka Jadwal",
+        ctaHref: "/schedule"
+      }),
       text: [
         `🕰️ **Slot Jam Kosong Rapat — ${dateStr}**`,
         `• Terjadwal ${dayMeetings.length} meeting pada tanggal ini.`,
@@ -1240,15 +1700,43 @@ export async function tryExecuteCircleCommand(params: {
   if (cmdToken === "/deadline-calendar" || /(kalender deadline|jadwal deadline 7 hari)/i.test(lower)) {
     const baseWib = getWibParts(now);
     const days: string[] = [];
+    const dayRows: any[] = [];
+    let totalUpcoming = 0;
     for (let i = 0; i < 7; i++) {
       const d = new Date(Date.UTC(baseWib.year, baseWib.month - 1, baseWib.day + i));
       const dStr = d.toISOString().slice(0, 10);
       const count = intel.tasks.all_active.filter((t: any) => String(t.deadline || "").slice(0, 10) === dStr);
+      totalUpcoming += count.length;
       const tag = i === 0 ? " (Hari Ini)" : i === 1 ? " (Besok)" : "";
       days.push(`• **${dStr}${tag}**: ${count.length} tugas${count.length ? ` (${count.slice(0, 2).map((t: any) => t.number_str).join(", ")}${count.length > 2 ? ", ..." : ""})` : ""}`);
+      dayRows.push({
+        id: `dl_${dStr}`,
+        code: dStr.slice(5),
+        title: `${dStr}${tag}`,
+        subtitle: count.length > 0 ? count.slice(0, 3).map((t: any) => `${t.number_str} ${t.title}`).join(" · ") : "Tidak ada tenggat terjadwal",
+        right_value: `${count.length} tugas`,
+        status_label: count.length === 0 ? "Luang" : i <= 1 ? "Mendesak" : "Terjadwal",
+        status_tone: count.length === 0 ? "good" : i <= 1 ? "warn" : "default",
+        href: count[0]?.id ? `/tasks?task=${count[0].id}` : "/tasks"
+      });
     }
+    const freeDays = dayRows.filter((r) => r.right_value === "0 tugas").length;
     return {
       handled: true,
+      report: buildSummaryReportPayload({
+        title: "Kalender Deadline 7 Hari ke Depan",
+        subtitle: intel.workspace_name,
+        progressPercent: Math.round((freeDays / 7) * 100),
+        progressLabel: "Hari tanpa tenggat",
+        progressTone: totalUpcoming === 0 ? "good" : "brand",
+        metrics: [
+          { label: `${totalUpcoming} tugas terjadwal`, tone: "strong" },
+          { label: `${freeDays}/7 hari luang`, tone: "good" }
+        ],
+        rows: dayRows,
+        ctaLabel: "Buka Tugas",
+        ctaHref: "/tasks"
+      }),
       text: [`📆 **Kalender Deadline 7 Hari ke Depan**`, ``, ...days].join("\n")
     };
   }
@@ -1281,9 +1769,34 @@ export async function tryExecuteCircleCommand(params: {
   // 32. /reminders
   // =========================================================================
   if (cmdToken === "/reminders") {
-    const mine = (db.reminders || []).filter((r: any) => !r.done && (!r.user_id || r.user_id === actorId));
+    const allMine = (db.reminders || []).filter((r: any) => !r.user_id || r.user_id === actorId);
+    const mine = allMine.filter((r: any) => !r.done);
+    const doneMine = allMine.length - mine.length;
+    const remPct = allMine.length > 0 ? Math.round((doneMine / allMine.length) * 100) : 100;
     return {
       handled: true,
+      report: buildSummaryReportPayload({
+        title: `Pengingat Aktif · ${actorName}`,
+        subtitle: `${mine.length} aktif · ${doneMine} selesai`,
+        progressPercent: remPct,
+        progressLabel: "Penyelesaian",
+        progressTone: mine.length === 0 ? "good" : "brand",
+        metrics: [
+          { label: `${mine.length} aktif`, tone: "strong" },
+          { label: `${doneMine} selesai`, tone: "good" }
+        ],
+        rows: mine.slice(0, 12).map((r: any, i: number) => ({
+          id: r.id || `rem_${i}`,
+          code: `#${i + 1}`,
+          title: r.title,
+          subtitle: r.due ? formatWibDateTime(r.due) : "Tanpa tenggat",
+          status_label: "Aktif",
+          href: "/schedule"
+        })),
+        emptyNote: "Tidak ada pengingat aktif. Buat baru dengan /remind [pesan] | besok 09:00.",
+        ctaLabel: "Buka Jadwal",
+        ctaHref: "/schedule"
+      }),
       text: [
         `🔔 **Pengingat Aktif Anda (${mine.length} item):**`,
         ...(mine.length
@@ -1324,6 +1837,13 @@ export async function tryExecuteCircleCommand(params: {
     const top3 = myTasks.slice(0, 3);
     return {
       handled: true,
+      report: buildTaskReportPayload({
+        title: `Mode Fokus Top 3 · ${actorName}`,
+        subtitle: "Sesi deep work 25 menit per prioritas",
+        tasks: top3,
+        doneCount: 0,
+        totalCount: top3.length
+      }),
       text: [
         `🎯 **Mode Fokus Kerja — Top 3 Most Important Tasks (${actorName})**`,
         ``,
@@ -1361,6 +1881,21 @@ export async function tryExecuteCircleCommand(params: {
     const mine = (db.circle_notes || []).filter((n: any) => n.user_id === actorId);
     return {
       handled: true,
+      report: buildSummaryReportPayload({
+        title: `Catatan Tersimpan · ${actorName}`,
+        subtitle: `${mine.length} memo tersimpan`,
+        progressPercent: mine.length > 0 ? 100 : 0,
+        progressLabel: "Tersinkronisasi",
+        progressTone: "good",
+        metrics: [{ label: `${mine.length} catatan`, tone: "strong" }],
+        rows: mine.slice(0, 12).map((n: any, i: number) => ({
+          id: n.id || `note_${i}`,
+          code: `#${i + 1}`,
+          title: n.title,
+          subtitle: `${formatWibDateTime(n.created_at)} · ${String(n.content || "").slice(0, 90)}`
+        })),
+        emptyNote: "Belum ada catatan tersimpan. Gunakan /note Judul | Isi untuk mencatat cepat."
+      }),
       text: [
         `📒 **Catatan Tersimpan Milik ${actorName} (${mine.length} memo):**`,
         ...(mine.length
@@ -1469,8 +2004,42 @@ export async function tryExecuteCircleCommand(params: {
       });
     });
     const sortedTags = Array.from(tagMap.entries()).sort((a, b) => b[1] - a[1]);
+    const engagementPct = intel.feed.posts_count > 0 ? Math.min(100, Math.round((intel.feed.comments_count / Math.max(intel.feed.posts_count, 1)) * 25)) : 0;
     return {
       handled: true,
+      report: buildSummaryReportPayload({
+        title: "Analisa Topik Trending Beranda",
+        subtitle: intel.workspace_name,
+        progressPercent: engagementPct,
+        progressLabel: "Aktivitas interaksi",
+        metrics: [
+          { label: `${intel.feed.posts_count} postingan`, tone: "strong" },
+          { label: `${intel.feed.comments_count} komentar` },
+          { label: `${sortedTags.length} hashtag` }
+        ],
+        rows: [
+          ...sortedTags.slice(0, 8).map(([tag, cnt], idx) => ({
+            id: `tag_${idx}`,
+            code: `#${idx + 1}`,
+            title: tag,
+            subtitle: `Muncul di ${cnt} postingan Beranda`,
+            right_value: `${cnt} post`,
+            href: "/beranda"
+          })),
+          ...(intel.feed.top_post ? [{
+            id: "top_post",
+            code: "TOP",
+            title: String(intel.feed.top_post.content || "Postingan Terpopuler").slice(0, 72),
+            subtitle: `Oleh ${intel.feed.top_post.author} · ${intel.feed.top_post.likes} suka`,
+            status_label: "Terpopuler",
+            status_tone: "good" as const,
+            href: "/beranda"
+          }] : [])
+        ],
+        emptyNote: "Belum ada hashtag trending di postingan Beranda.",
+        ctaLabel: "Buka Beranda",
+        ctaHref: "/beranda"
+      }),
       text: [
         `🔥 **Analisa Topik Trending Beranda**`,
         `• Total Postingan: **${intel.feed.posts_count}** · Total Interaksi Komentar: **${intel.feed.comments_count}**`,
@@ -1487,8 +2056,41 @@ export async function tryExecuteCircleCommand(params: {
   // =========================================================================
   if (cmdToken === "/poll-summary" || /(analisa hasil polling|rekap polling)/i.test(lower)) {
     const polls = intel.polls || [];
+    const totalVotesAll = polls.reduce((acc: number, pl: any) => acc + (pl.total_votes || 0), 0);
+    const activePolls = polls.filter((pl: any) => !pl.closed).length;
+    const participationPct = polls.length > 0 && intel.employees.active > 0
+      ? Math.min(100, Math.round((totalVotesAll / (polls.length * intel.employees.active)) * 100))
+      : 0;
     return {
       handled: true,
+      report: buildSummaryReportPayload({
+        title: "Rekap Hasil Seluruh Polling",
+        subtitle: `${polls.length} polling tercatat`,
+        progressPercent: participationPct,
+        progressLabel: "Partisipasi suara",
+        metrics: [
+          { label: `${totalVotesAll} total suara`, tone: "strong" },
+          { label: `${activePolls} aktif` },
+          { label: `${polls.length - activePolls} selesai` }
+        ],
+        rows: polls.map((pl: any, idx: number) => {
+          const sorted = [...(pl.options || [])].sort((a: any, b: any) => b.votes - a.votes);
+          const leader = sorted[0];
+          const leaderPct = pl.total_votes && leader ? Math.round((leader.votes / pl.total_votes) * 100) : 0;
+          return {
+            id: pl.id || `poll_${idx}`,
+            title: pl.question,
+            subtitle: leader ? `Unggul: ${leader.text} (${leader.votes}/${pl.total_votes} suara)` : `${pl.total_votes} suara`,
+            progress: leaderPct,
+            status_label: pl.closed ? "Selesai" : "Aktif",
+            status_tone: pl.closed ? "good" : "default",
+            href: "/beranda"
+          };
+        }),
+        emptyNote: "Belum ada polling yang dibuat di workspace.",
+        ctaLabel: "Buka Beranda",
+        ctaHref: "/beranda"
+      }),
       text: [
         `📊 **Rekap Hasil Seluruh Polling (${polls.length} polling):**`,
         ...(polls.length
@@ -1597,6 +2199,27 @@ export async function tryExecuteCircleCommand(params: {
       .reverse();
     return {
       handled: true,
+      report: buildSummaryReportPayload({
+        title: "Recap Aktivitas Chat & Grup",
+        subtitle: intel.workspace_name,
+        progressPercent: intel.employees.active > 0 ? Math.round((intel.employees.online / intel.employees.active) * 100) : 100,
+        progressLabel: "Employee online",
+        metrics: [
+          { label: `${intel.chat.groups_count} grup`, tone: "strong" },
+          { label: `${intel.chat.dm_count} DM` },
+          { label: `${intel.chat.messages_count} pesan` }
+        ],
+        rows: (intel.chat.groups || []).map((g: any, idx: number) => ({
+          id: g.id || `grp_${idx}`,
+          title: g.name,
+          subtitle: `Grup percakapan aktif`,
+          right_value: `${g.members_count} anggota`,
+          href: "/messages"
+        })),
+        emptyNote: "Belum ada grup chat aktif.",
+        ctaLabel: "Buka Pesan",
+        ctaHref: "/messages"
+      }),
       text: [
         `💬 **Recap Aktivitas Chat & Grup Workspace**`,
         `• Grup Chat Aktif: **${intel.chat.groups_count}** · DM: **${intel.chat.dm_count}** · Total Pesan: **${intel.chat.messages_count}**`,
@@ -1647,8 +2270,35 @@ export async function tryExecuteCircleCommand(params: {
   // =========================================================================
   if (cmdToken === "/project-health" || /(kesehatan proyek|status rag proyek)/i.test(lower)) {
     const prjs = intel.projects || [];
+    const avgProj = prjs.length > 0 ? Math.round(prjs.reduce((a: number, p: any) => a + (p.progress_percent || 0), 0) / prjs.length) : 0;
+    const healthyCount = prjs.filter((p: any) => p.overdue_tasks === 0).length;
+    const criticalCount = prjs.filter((p: any) => p.overdue_tasks >= 2).length;
     return {
       handled: true,
+      report: buildSummaryReportPayload({
+        title: "Monitor Kesehatan Proyek",
+        subtitle: `${prjs.length} proyek terdaftar`,
+        progressPercent: avgProj,
+        progressLabel: "Rata-rata progres",
+        progressTone: criticalCount > 0 ? "warn" : "good",
+        metrics: [
+          { label: `${healthyCount} sehat`, tone: "good" },
+          ...(criticalCount > 0 ? [{ label: `${criticalCount} kritis`, tone: "danger" as const }] : []),
+          { label: `${prjs.length} total proyek` }
+        ],
+        rows: prjs.map((p: any) => ({
+          id: p.id,
+          title: p.name,
+          subtitle: `${p.done_tasks}/${p.total_tasks} selesai${p.overdue_tasks > 0 ? ` · ${p.overdue_tasks} terlambat` : ""}`,
+          status_label: p.overdue_tasks >= 2 ? "Kritis" : p.overdue_tasks === 1 ? "Waspada" : "Sehat",
+          status_tone: p.overdue_tasks >= 2 ? "danger" : p.overdue_tasks === 1 ? "warn" : "good",
+          progress: p.progress_percent,
+          href: "/projects"
+        })),
+        emptyNote: "Belum ada proyek yang terdaftar di workspace.",
+        ctaLabel: "Buka Proyek",
+        ctaHref: "/projects"
+      }),
       text: [
         `🩺 **Monitor Kesehatan Proyek (${prjs.length} Proyek):**`,
         ...(prjs.length
@@ -1669,8 +2319,31 @@ export async function tryExecuteCircleCommand(params: {
     const list = kw
       ? intel.tasks.by_label.filter((l: any) => l.name.toLowerCase().includes(kw))
       : intel.tasks.by_label;
+    const sumDone = list.reduce((a: number, l: any) => a + (l.done || 0), 0);
+    const sumTotal = list.reduce((a: number, l: any) => a + (l.total || 0), 0);
+    const sumOverdue = list.reduce((a: number, l: any) => a + (l.overdue || 0), 0);
     return {
       handled: true,
+      report: buildSummaryReportPayload({
+        title: `Laporan Performa Brand / Label${argRaw ? ` · ${argRaw}` : ""}`,
+        subtitle: `${list.length} label terpantau`,
+        progressPercent: sumTotal > 0 ? Math.round((sumDone / sumTotal) * 100) : 0,
+        progressLabel: "Penyelesaian",
+        metrics: [
+          { label: `${sumDone}/${sumTotal} selesai`, tone: "strong" },
+          ...(sumOverdue > 0 ? [{ label: `${sumOverdue} terlambat`, tone: "danger" as const }] : [])
+        ],
+        rows: list.map((l: any, idx: number) => ({
+          id: l.id || `lbl_${idx}`,
+          title: l.name,
+          subtitle: `${l.done}/${l.total} selesai · ${l.active} aktif${l.overdue > 0 ? ` · ${l.overdue} terlambat` : ""}`,
+          progress: l.total > 0 ? Math.round((l.done / l.total) * 100) : 0,
+          href: "/tasks"
+        })),
+        emptyNote: `Label/Brand "${argRaw}" belum memiliki data tugas.`,
+        ctaLabel: "Buka Tugas",
+        ctaHref: "/tasks"
+      }),
       text: [
         `🏷️ **Laporan Performa Brand / IP (${list.length} label):**`,
         ...(list.length
@@ -1684,19 +2357,43 @@ export async function tryExecuteCircleCommand(params: {
   // 47. /content-matrix
   // =========================================================================
   if (cmdToken === "/content-matrix" || /(rekap jenis item|matriks konten)/i.test(lower)) {
-    const countByType: Record<string, number> = {};
+    const countByType: Record<string, { total: number; done: number }> = {};
     (db.tasks || []).forEach((t: any) => {
       if (t.archived) return;
       const it = t.item_type || "Lainnya";
-      countByType[it] = (countByType[it] || 0) + 1;
+      if (!countByType[it]) countByType[it] = { total: 0, done: 0 };
+      countByType[it].total += 1;
+      if (t.status === "done") countByType[it].done += 1;
     });
-    const sorted = Object.entries(countByType).sort((a, b) => b[1] - a[1]);
+    const sorted = Object.entries(countByType).sort((a, b) => b[1].total - a[1].total);
+    const totalAll = sorted.reduce((acc, [, v]) => acc + v.total, 0);
+    const doneAll = sorted.reduce((acc, [, v]) => acc + v.done, 0);
     return {
       handled: true,
+      report: buildSummaryReportPayload({
+        title: "Matriks Volume Produksi per Jenis Item",
+        subtitle: `${sorted.length} kategori item`,
+        progressPercent: totalAll > 0 ? Math.round((doneAll / totalAll) * 100) : 0,
+        progressLabel: "Penyelesaian",
+        metrics: [
+          { label: `${totalAll} total tugas`, tone: "strong" },
+          { label: `${doneAll} selesai`, tone: "good" }
+        ],
+        rows: sorted.map(([k, v]) => ({
+          id: `item_${k}`,
+          title: k,
+          subtitle: `${v.done}/${v.total} selesai · ${v.total - v.done} berjalan`,
+          progress: v.total > 0 ? Math.round((v.done / v.total) * 100) : 0,
+          href: "/tasks"
+        })),
+        emptyNote: "Belum ada data tugas berdasarkan jenis item.",
+        ctaLabel: "Buka Tugas",
+        ctaHref: "/tasks"
+      }),
       text: [
         `🎬 **Matriks Volume Produksi per Jenis Item:**`,
         ...(sorted.length
-          ? sorted.map(([k, v]) => `• **${k}**: **${v} tugas aktif/tercatat**`)
+          ? sorted.map(([k, v]) => `• **${k}**: **${v.total} tugas aktif/tercatat**`)
           : ["• Belum ada data tugas berdasarkan jenis item."])
       ].join("\n")
     };
@@ -1898,6 +2595,24 @@ export async function tryExecuteCircleCommand(params: {
     );
     return {
       handled: true,
+      report: buildSummaryReportPayload({
+        title: `Shortcut Google Drive${argRaw ? ` · ${argRaw}` : ""}`,
+        subtitle: `${items.length} folder ditemukan`,
+        progressPercent: items.length > 0 ? 100 : 0,
+        progressLabel: "Tersedia",
+        progressTone: "good",
+        metrics: [{ label: `${items.length} folder`, tone: "strong" }],
+        rows: items.map((d: any, idx: number) => ({
+          id: d.id || `drv_${idx}`,
+          title: d.title || d.name || "Folder Drive",
+          subtitle: d.division || d.department || "Umum",
+          status_label: "Drive",
+          href: "/drive"
+        })),
+        emptyNote: `Tidak ada shortcut Drive yang cocok dengan "${argRaw}".`,
+        ctaLabel: "Buka Drive",
+        ctaHref: "/drive"
+      }),
       text: [
         `📁 **Shortcut Google Drive${argRaw ? ` (Filter: ${argRaw})` : ""} — ${items.length} Folder:**`,
         ...(items.length
@@ -1913,8 +2628,38 @@ export async function tryExecuteCircleCommand(params: {
   if (cmdToken === "/audit") {
     const logs = (db.audit_logs || []).slice(0, 8);
     const acts = (db.activity || []).slice(0, 6);
+    const auditRows = [
+      ...logs.map((l: any, i: number) => ({
+        id: l.id || `aud_${i}`,
+        code: "AUDIT",
+        title: l.actor_name || l.actor_id || "Admin",
+        subtitle: `${formatWibDateTime(l.created_at)} · ${l.action || l.detail || "Perubahan konfigurasi"}`,
+        href: "/settings"
+      })),
+      ...acts.map((a: any, i: number) => ({
+        id: a.id || `act_${i}`,
+        code: "LOG",
+        title: `${a.action || a.text || "Aktivitas"}${a.task_title ? ` — ${a.task_title}` : ""}`,
+        subtitle: a.created_at ? formatWibDateTime(a.created_at) : "Aktivitas terbaru"
+      }))
+    ];
     return {
       handled: true,
+      report: buildSummaryReportPayload({
+        title: "Log Audit & Aktivitas Keamanan",
+        subtitle: intel.workspace_name,
+        progressPercent: 100,
+        progressLabel: "Terpantau",
+        progressTone: "good",
+        metrics: [
+          { label: `${logs.length} log audit`, tone: "strong" },
+          { label: `${acts.length} aktivitas terbaru` }
+        ],
+        rows: auditRows,
+        emptyNote: "Belum ada log audit administratif tercatat.",
+        ctaLabel: "Buka Pengaturan",
+        ctaHref: "/settings"
+      }),
       text: [
         `🛡️ **Log Audit & Aktivitas Keamanan Terkini**`,
         ...(logs.length
@@ -1932,8 +2677,31 @@ export async function tryExecuteCircleCommand(params: {
   // =========================================================================
   if (cmdToken === "/access-pending") {
     const reqs = intel.access_requests.pending_list || [];
+    const totalPending = (intel.access_requests.pending_count || 0) + (intel.access_requests.pending_invitations_count || 0);
     return {
       handled: true,
+      report: buildSummaryReportPayload({
+        title: "Permintaan Akses & Undangan Pending",
+        subtitle: intel.workspace_name,
+        progressPercent: totalPending === 0 ? 100 : Math.max(20, 100 - totalPending * 15),
+        progressLabel: totalPending === 0 ? "Semua diproses" : "Antrean persetujuan",
+        progressTone: totalPending === 0 ? "good" : "warn",
+        metrics: [
+          { label: `${intel.access_requests.pending_count} permintaan akses`, tone: intel.access_requests.pending_count > 0 ? "warn" : "good" },
+          { label: `${intel.access_requests.pending_invitations_count} undangan pending` }
+        ],
+        rows: reqs.map((r: any, idx: number) => ({
+          id: r.id || `req_${idx}`,
+          title: r.name,
+          subtitle: `${r.email} · Divisi ${r.department}`,
+          status_label: r.type || "Pending",
+          status_tone: "warn",
+          href: "/settings"
+        })),
+        emptyNote: "Semua permintaan akses sudah diproses (0 pending).",
+        ctaLabel: "Buka Pengaturan",
+        ctaHref: "/settings"
+      }),
       text: [
         `🔐 **Monitor Permintaan Akses & Undangan Pending**`,
         `• Permintaan Masuk / Reset PW Pending: **${intel.access_requests.pending_count}**`,
@@ -1955,8 +2723,32 @@ export async function tryExecuteCircleCommand(params: {
     const rows = intel.divisions.map(
       (d: any) => `| ${d.name} | ${d.member_count} | ${d.active_tasks_count} | ${d.done_tasks_count} | ${d.overdue_tasks.length} | ${d.load_status_label} |`
     );
+    const totalDone = intel.tasks.done || 0;
+    const totalAll = intel.tasks.total || 0;
     return {
       handled: true,
+      report: buildSummaryReportPayload({
+        title: "Ringkasan Performa Divisi",
+        subtitle: intel.generated_at_wib,
+        progressPercent: totalAll > 0 ? Math.round((totalDone / totalAll) * 100) : 0,
+        progressLabel: "Penyelesaian total",
+        metrics: [
+          { label: `${intel.divisions.length} divisi`, tone: "strong" },
+          { label: `${totalDone}/${totalAll} selesai` },
+          ...(intel.tasks.overdue_count > 0 ? [{ label: `${intel.tasks.overdue_count} terlambat`, tone: "danger" as const }] : [])
+        ],
+        rows: intel.divisions.map((d: any) => ({
+          id: d.key || d.name,
+          title: d.name,
+          subtitle: `${d.member_count} anggota · ${d.done_tasks_count}/${d.total_tasks} selesai · ${d.active_tasks_count} aktif${d.overdue_tasks.length > 0 ? ` · ${d.overdue_tasks.length} telat` : ""}`,
+          status_label: d.load_status_label,
+          status_tone: d.load_status === "pressure" ? "danger" : d.load_status === "stabil" ? "warn" : "good",
+          progress: d.total_tasks > 0 ? Math.round((d.done_tasks_count / d.total_tasks) * 100) : 0,
+          href: "/tasks"
+        })),
+        ctaLabel: "Buka Tugas",
+        ctaHref: "/tasks"
+      }),
       text: [
         `📊 **Ringkasan Ekspor Performa Divisi (${intel.generated_at_wib})**`,
         ``,
@@ -1976,9 +2768,64 @@ export async function tryExecuteCircleCommand(params: {
     const pressureList = intel.workload_summary.people.filter((p: any) => p.status === "pressure");
     const todayStr = getWibParts(now).isoDate;
     const todayMeetings = (db.meetings || []).filter((m: any) => String(m.date || "").slice(0, 10) === todayStr);
+    const completionPct = intel.tasks.total > 0 ? Math.round((intel.tasks.done / intel.tasks.total) * 100) : 0;
+
+    const briefRows = [
+      {
+        id: "mb_pulse",
+        title: "Pulse Organisasi",
+        subtitle: `${intel.employees.online}/${intel.employees.active} online · ${intel.workload_summary.optimal_count} Optimal · ${intel.workload_summary.stabil_count} Stabil · ${intel.workload_summary.pressure_count} Under Pressure`,
+        status_label: pressureList.length > 0 ? `${pressureList.length} padat` : "Optimal",
+        status_tone: pressureList.length > 0 ? ("danger" as const) : ("good" as const),
+        href: "/people"
+      },
+      {
+        id: "mb_tasks",
+        title: "Status Tugas Workspace",
+        subtitle: `${intel.tasks.active} aktif · ${intel.tasks.done} selesai · ${intel.tasks.overdue_count} overdue · ${intel.tasks.due_today_count} jatuh tempo hari ini`,
+        progress: completionPct,
+        href: "/tasks"
+      },
+      {
+        id: "mb_agenda",
+        title: "Agenda & Persetujuan Hari Ini",
+        subtitle: `${todayMeetings.length} meeting terjadwal · ${intel.access_requests.pending_count} approval akses pending`,
+        right_value: `${todayMeetings.length} meeting`,
+        href: "/schedule"
+      },
+      ...overdueTop.map((t: any) => ({
+        id: t.id,
+        code: t.number_str,
+        title: t.title,
+        subtitle: `${t.board_name} · Terlambat ${t.late_duration || ""}`.trim(),
+        progress: t.progress,
+        status_label: "Eskalasi",
+        status_tone: "danger" as const,
+        href: `/tasks?task=${t.id}`
+      }))
+    ];
 
     return {
       handled: true,
+      report: buildSummaryReportPayload({
+        title: isWeekly ? "Executive Weekly Digest" : "Executive Morning Brief",
+        subtitle: `${intel.workspace_name} · ${intel.generated_at_wib}`,
+        progressPercent: completionPct,
+        progressLabel: "Penyelesaian",
+        progressTone: intel.tasks.overdue_count === 0 ? "good" : "brand",
+        metrics: [
+          { label: `${intel.tasks.done}/${intel.tasks.total} selesai`, tone: "strong" },
+          { label: `${intel.tasks.active} aktif` },
+          ...(intel.tasks.overdue_count > 0 ? [{ label: `${intel.tasks.overdue_count} terlambat`, tone: "danger" as const }] : [{ label: "0 terlambat", tone: "good" as const }]),
+          { label: `${todayMeetings.length} meeting` }
+        ],
+        rows: briefRows,
+        footerNote: pressureList.length > 0
+          ? `Perhatian khusus (Under Pressure): ${pressureList.map((p: any) => `${p.name} (${p.active} aktif)`).join(", ")}`
+          : undefined,
+        ctaLabel: "Buka Tugas",
+        ctaHref: "/tasks"
+      }),
       text: [
         `${isWeekly ? "📈" : "☀️"} **${isWeekly ? "Executive Weekly Digest" : "Executive Morning Brief"} — ${intel.workspace_name}**`,
         `_${intel.generated_at_wib}_`,
@@ -2023,8 +2870,65 @@ export async function tryExecuteCircleCommand(params: {
     ).slice(0, 3);
 
     const total = matchedTasks.length + matchedUsers.length + matchedProjects.length + matchedMeetings.length + matchedPosts.length + matchedDrive.length;
+    const searchRows = [
+      ...matchedTasks.map((t: any) => ({
+        id: t.id,
+        code: t.number_str || "TSK",
+        title: t.title,
+        subtitle: `Tugas · ${t.status || "todo"}`,
+        href: `/tasks?task=${t.id}`
+      })),
+      ...matchedUsers.map((u: any) => ({
+        id: u.user_id,
+        code: "EMP",
+        title: u.name,
+        subtitle: `${u.department || "Umum"} · ${u.job_title || "Member"}`,
+        user_ids: [u.user_id],
+        user_names: [u.name],
+        href: `/people/${u.user_id}`
+      })),
+      ...matchedProjects.map((p: any) => ({
+        id: p.id,
+        code: "PRJ",
+        title: p.name,
+        subtitle: `Proyek · ${p.status}`,
+        href: "/projects"
+      })),
+      ...matchedMeetings.map((m: any) => ({
+        id: m.id,
+        code: "MEET",
+        title: m.title,
+        subtitle: `Meeting · ${m.date} ${m.start_time || ""}`.trim(),
+        href: "/schedule"
+      })),
+      ...matchedDrive.map((d: any, i: number) => ({
+        id: d.id || `drv_${i}`,
+        code: "DRIVE",
+        title: d.title || d.name,
+        subtitle: `Drive · ${d.division || "Umum"}`,
+        href: "/drive"
+      }))
+    ];
     return {
       handled: true,
+      report: buildSummaryReportPayload({
+        title: `Hasil Pencarian · "${argRaw}"`,
+        subtitle: `${total} temuan teratas`,
+        progressPercent: total > 0 ? 100 : 0,
+        progressLabel: total > 0 ? "Ditemukan" : "Kosong",
+        progressTone: total > 0 ? "good" : "brand",
+        metrics: [
+          ...(matchedTasks.length ? [{ label: `${matchedTasks.length} tugas`, tone: "strong" as const }] : []),
+          ...(matchedUsers.length ? [{ label: `${matchedUsers.length} employee` }] : []),
+          ...(matchedProjects.length ? [{ label: `${matchedProjects.length} proyek` }] : []),
+          ...(matchedMeetings.length ? [{ label: `${matchedMeetings.length} meeting` }] : []),
+          ...(total === 0 ? [{ label: "0 temuan" }] : [])
+        ],
+        rows: searchRows,
+        emptyNote: `Tidak ditemukan data yang cocok dengan "${argRaw}".`,
+        ctaLabel: "Buka Tugas",
+        ctaHref: "/tasks"
+      }),
       text: [
         `🔎 **Hasil Pencarian Global: "${argRaw}" (${total} temuan teratas)**`,
         ...(matchedTasks.length ? [`\n📌 **Tugas:**\n${matchedTasks.map((t: any) => `• **${t.number_str || t.id}** — ${t.title} [${t.status}]`).join("\n")}`] : []),

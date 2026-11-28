@@ -43,7 +43,7 @@ export function hydrateTasksWorkspaceCache({ tasks, boards, allBoards, projects 
 
 // ---- Shared Org Units Cache ----
 export const INITIAL_UNITS = [
-  { id: "unit_mgmt", name: "Management", division: "Management", description: "Board of Directors & Executive Leadership", level: "Executive", color: "#FF5364", head_id: "user_superadmin_saeful", parent_id: null, order: 0 },
+  { id: "unit_mgmt", name: "Management", division: "Management", description: "Board of Directors & C-Level Leadership", level: "Executive", color: "#FF5364", head_id: "user_superadmin_saeful", parent_id: null, order: 0 },
   { id: "unit_mkt", name: "Marketing", division: "Marketing", description: "Brand Marketing, Campaign & Social Media Growth", level: "Division", color: "#10B981", head_id: null, parent_id: "unit_mgmt", order: 1 },
   { id: "unit_sales", name: "Sales", division: "Sales", description: "Enterprise Sales, Partnership & Business Development", level: "Division", color: "#F59E0B", head_id: null, parent_id: "unit_mgmt", order: 2 },
   { id: "unit_it", name: "IT", division: "IT", description: "IT Infrastructure, Security & Internal Support", level: "Division", color: "#06B6D4", head_id: "user_admin1", parent_id: "unit_mgmt", order: 3 },
@@ -51,6 +51,20 @@ export const INITIAL_UNITS = [
   { id: "unit_legal", name: "Legal", division: "Legal", description: "Corporate Legal, Compliance & Contracts", level: "Division", color: "#6366F1", head_id: null, parent_id: "unit_mgmt", order: 5 },
   { id: "unit_hrga", name: "HRGA", division: "HRGA", description: "Human Resources, Talent & General Affairs", level: "Division", color: "#F97316", head_id: null, parent_id: "unit_mgmt", order: 6 },
 ];
+
+const RESTORE_UNIT_LEVEL_MAP = {
+  "c level": "Executive",
+  direktur: "Division",
+  manager: "Department",
+  lead: "Team",
+};
+
+const restoreCachedUnits = (arr) =>
+  arr.map((u) => {
+    if (!u) return u;
+    const restored = RESTORE_UNIT_LEVEL_MAP[String(u.level || "").trim().toLowerCase()];
+    return restored ? { ...u, level: restored } : u;
+  });
 
 export const ORG_UNITS_CACHE_BOX = {
   units: INITIAL_UNITS,
@@ -61,7 +75,7 @@ try {
     const saved = localStorage.getItem("circle_org_units_cache");
     if (saved) {
       const parsed = JSON.parse(saved);
-      if (Array.isArray(parsed) && parsed.length > 0) ORG_UNITS_CACHE_BOX.units = parsed;
+      if (Array.isArray(parsed) && parsed.length > 0) ORG_UNITS_CACHE_BOX.units = restoreCachedUnits(parsed);
     }
   }
 } catch {}

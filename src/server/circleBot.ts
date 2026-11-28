@@ -1,6 +1,17 @@
 import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 import { tryExecuteCircleCommand, type CircleReplyEffects } from "./circleCommands";
 import { CIRCLE_FEATURE_CATALOG } from "./circleCatalog";
+import {
+  computeTaskProgressPercent,
+  extractTaskCheckpointInfo,
+  buildTaskReportPayload,
+  buildSummaryReportPayload,
+  type AssistantReportItem,
+  type AssistantReportPayload
+} from "./assistantReports";
+
+export { computeTaskProgressPercent, extractTaskCheckpointInfo };
+export type { AssistantReportItem, AssistantReportPayload };
 
 export const CIRCLE_BOT_ID = "user_circle_assistant";
 
@@ -48,71 +59,6 @@ export function isHumanUser(u: any): boolean {
 export function isUserAssignedToTask(t: any, uid: string): boolean {
   if (!t || !uid) return false;
   return (Array.isArray(t.assignee_ids) && t.assignee_ids.includes(uid)) || t.assignee_id === uid;
-}
-
-export function computeTaskProgressPercent(t: any): number {
-  if (!t) return 0;
-  const isDone = t.status === "done" || Boolean(t.archived);
-  const approvedBy = t.approvals?.approved_by || t.approval?.approved_by || [];
-  const approvalCount = Array.isArray(approvedBy) ? approvedBy.length : 0;
-  if (isDone || approvalCount >= 2) return 100;
-  const approvalPct = approvalCount === 1 ? 50 : 0;
-  const cps = Array.isArray(t.checkpoints) ? t.checkpoints : [];
-  if (cps.length > 0) {
-    if (typeof t.progress === "number" && Number.isFinite(t.progress)) {
-      return Math.min(100, Math.max(0, Math.round(t.progress)));
-    }
-    const doneCp = cps.filter((c: any) => c?.done || c?.completed || c?.status === "done").length;
-    return Math.min(100, Math.max(0, Math.round((doneCp / cps.length) * 100)));
-  }
-  const explicitProgress = typeof t.progress === "number" && Number.isFinite(t.progress) ? t.progress : null;
-  if (explicitProgress !== null) {
-    return Math.min(100, Math.max(0, Math.round(Math.max(explicitProgress, approvalPct))));
-  }
-  const st = String(t.status || "").toLowerCase();
-  if (st === "in_review" || st === "review") return Math.max(80, approvalPct);
-  if (st === "in_progress" || st === "doing") return Math.max(40, approvalPct);
-  return approvalPct;
-}
-
-export interface AssistantReportItem {
-  id: string;
-  number_str: string;
-  title: string;
-  status: string;
-  priority: string;
-  progress: number;
-  board_id: string | null;
-  board_name: string;
-  assignee_ids: string[];
-  assignee_names: string[];
-  deadline: string | null;
-  deadline_wib: string;
-  is_done: boolean;
-  is_overdue: boolean;
-  is_under_6h: boolean;
-  is_due_today: boolean;
-  is_due_tomorrow: boolean;
-  late_duration: string | null;
-}
-
-export interface AssistantReportPayload {
-  kind: "task_report";
-  title: string;
-  subtitle?: string;
-  load_status?: "optimal" | "stabil" | "pressure" | null;
-  load_label?: string | null;
-  summary: {
-    total: number;
-    done: number;
-    active: number;
-    overdue: number;
-    due_soon: number;
-    progress_percent: number;
-    progress_mode: "completion" | "average";
-  };
-  items: AssistantReportItem[];
-  total_items: number;
 }
 
 export interface PersonWorkload {
@@ -320,6 +266,8 @@ export function buildWorkspaceIntelligence(db: Record<string, any>, senderUser?:
       .map((lid: string) => allLabels.find((l: any) => l.id === lid || l.name === lid)?.name || lid)
       .filter(Boolean);
 
+    const cpInfo = extractTaskCheckpointInfo(t);
+
     return {
       id: t.id,
       number_str: t.number_str || (t.number ? `TSK-${String(t.number).padStart(3, "0")}` : t.id),
@@ -327,6 +275,9 @@ export function buildWorkspaceIntelligence(db: Record<string, any>, senderUser?:
       status: t.status || "todo",
       priority: t.priority || "medium",
       progress: computeTaskProgressPercent(t),
+      checkpoints_done: cpInfo.checkpoints_done,
+      checkpoints_total: cpInfo.checkpoints_total,
+      current_checkpoint: cpInfo.current_checkpoint,
       archived: Boolean(t.archived),
       is_done: isDone,
       board_id: t.board_id || null,
@@ -1172,89 +1123,14 @@ function getGeminiClient(): GoogleGenAI | null {
   });
 }
 
-function toReportItem(t: any): AssistantReportItem {
-  return {
-    id: String(t.id || ""),
-    number_str: String(t.number_str || t.id || "TSK"),
-    title: String(t.title || "Tanpa Judul"),
-    status: String(t.status || "todo"),
-    priority: String(t.priority || "medium"),
-    progress: typeof t.progress === "number" ? Math.min(100, Math.max(0, Math.round(t.progress))) : computeTaskProgressPercent(t),
-    board_id: t.board_id || null,
-    board_name: String(t.board_name || "Tanpa Board"),
-    assignee_ids: Array.isArray(t.assignee_ids) ? t.assignee_ids.slice(0, 8) : [],
-    assignee_names: Array.isArray(t.assignee_names) ? t.assignee_names.slice(0, 8) : [],
-    deadline: t.deadline || null,
-    deadline_wib: String(t.deadline_wib || "-"),
-    is_done: Boolean(t.is_done),
-    is_overdue: Boolean(t.is_overdue),
-    is_under_6h: Boolean(t.is_under_6h),
-    is_due_today: Boolean(t.is_due_today),
-    is_due_tomorrow: Boolean(t.is_due_tomorrow),
-    late_duration: t.late_duration || null
-  };
-}
-
-function buildTaskReportPayload(params: {
-  title: string;
-  subtitle?: string;
-  loadStatus?: "optimal" | "stabil" | "pressure" | null;
-  loadLabel?: string | null;
-  tasks: any[];
-  doneCount?: number;
-  totalCount?: number;
-  maxItems?: number;
-}): AssistantReportPayload {
-  const { title, subtitle, loadStatus = null, loadLabel = null, tasks, maxItems = 25 } = params;
-  const list = Array.isArray(tasks) ? tasks : [];
-  const activeCount = list.filter((t) => !t.is_done).length;
-  const overdueCount = list.filter((t) => t.is_overdue).length;
-  const dueSoonCount = list.filter((t) => !t.is_overdue && (t.is_under_6h || t.is_due_today || t.is_due_tomorrow)).length;
-  const doneCount = typeof params.doneCount === "number" ? params.doneCount : list.filter((t) => t.is_done).length;
-  const totalCount = typeof params.totalCount === "number" ? params.totalCount : doneCount + activeCount;
-
-  let progressPercent = 0;
-  let progressMode: "completion" | "average" = "completion";
-  if (totalCount > 0 && doneCount > 0) {
-    progressPercent = Math.min(100, Math.max(0, Math.round((doneCount / totalCount) * 100)));
-    progressMode = "completion";
-  } else if (list.length > 0) {
-    const sum = list.reduce((acc, t) => acc + (typeof t.progress === "number" ? t.progress : computeTaskProgressPercent(t)), 0);
-    progressPercent = Math.min(100, Math.max(0, Math.round(sum / list.length)));
-    progressMode = "average";
-  } else if (totalCount > 0 && activeCount === 0) {
-    progressPercent = 100;
-    progressMode = "completion";
-  }
-
-  return {
-    kind: "task_report",
-    title,
-    subtitle,
-    load_status: loadStatus,
-    load_label: loadLabel,
-    summary: {
-      total: totalCount,
-      done: doneCount,
-      active: activeCount,
-      overdue: overdueCount,
-      due_soon: dueSoonCount,
-      progress_percent: progressPercent,
-      progress_mode: progressMode
-    },
-    items: list.slice(0, maxItems).map(toReportItem),
-    total_items: list.length
-  };
-}
-
-function extractStructuredTaskReport(
+function extractStructuredReport(
   question: string,
   intel: ReturnType<typeof buildWorkspaceIntelligence>
 ): AssistantReportPayload | null {
   const norm = normalizeText(question);
   if (!norm) return null;
 
-  // Do not turn general creative/copywriting/brainstorming prompts into task cards
+  // Do not turn general creative/copywriting/brainstorming prompts into report cards
   const isCreativeOrFreeform = /(buatin|buatkan|bikin|tulis|caption|strategi|ide|brainstorm|sop|translate|terjemah|ringkas|rangkum|email|surat|coding|script|hitung|kalkulasi)/i.test(norm);
   if (isCreativeOrFreeform) return null;
 
@@ -1269,6 +1145,42 @@ function extractStructuredTaskReport(
   const hasLoadKw = /(\bload\b|beban|kapasitas|workload|optimal|stabil|pressure|under pressure|sibuk|padat|luang|santai|kosong|overload|performa tim|kondisi tim)/i.test(norm);
   const hasEmployeeKw = /(employee|karyawan|pegawai|karyawati|staff|staf|\bmbr\b|member|anggota|orang|personil|sdm|headcount|siapa saja|siapa aja|online|hadir)/i.test(norm);
   const hasTaskKw = /(task|tugas|pekerjaan|kerjaan|todo|progress|progres|review|done|selesai|prioritas|urgent|high|medium|low|kanban)/i.test(norm);
+  const hasOverviewKw = /(ringkasan|overview|summary|laporan|briefing|semua data|rekap|statistik|dashboard|apa kabar workspace|kondisi workspace)/i.test(norm);
+  const hasProjectKw = /(proyek|project)/i.test(norm);
+  const hasBoardKw = /(board|papan|divisi|departemen|struktur|organisasi|org)/i.test(norm);
+  const hasAccessKw = /(akses|permintaan|request|approval|setuju|undangan|invite|pending)/i.test(norm);
+  const hasPollKw = /(poll|polling|voting|vote|suara|survey|survei)/i.test(norm);
+  const hasMeetingKw = /(meeting|rapat|jadwal|agenda|kalender|event)/i.test(norm);
+  const hasDriveKw = /(drive|dokumen|file|folder|shortcut)/i.test(norm);
+
+  // 0. Full Workspace Overview
+  if (hasOverviewKw && !targetDiv && !targetPerson && !hasOverdueKw && !hasLoadKw && !hasEmployeeKw && !hasTaskKw) {
+    const completionPct = intel.tasks.total > 0 ? Math.round((intel.tasks.done / intel.tasks.total) * 100) : 0;
+    return buildSummaryReportPayload({
+      title: `Ringkasan Lengkap Workspace`,
+      subtitle: `${intel.workspace_name} · ${intel.generated_at_wib}`,
+      progressPercent: completionPct,
+      progressLabel: "Penyelesaian tugas",
+      progressTone: intel.tasks.overdue_count === 0 ? "good" : "brand",
+      metrics: [
+        { label: `${intel.employees.online}/${intel.employees.active} online`, tone: "good" },
+        { label: `${intel.tasks.done}/${intel.tasks.total} selesai`, tone: "strong" },
+        ...(intel.tasks.overdue_count > 0 ? [{ label: `${intel.tasks.overdue_count} terlambat`, tone: "danger" as const }] : [{ label: "0 terlambat", tone: "good" as const }]),
+        { label: `${intel.projects.length} proyek` }
+      ],
+      rows: intel.divisions.map((d) => ({
+        id: d.key || d.name,
+        title: `Divisi ${d.name}`,
+        subtitle: `${d.member_count} anggota · ${d.done_tasks_count}/${d.total_tasks} selesai · ${d.active_tasks_count} aktif${d.overdue_tasks.length > 0 ? ` · ${d.overdue_tasks.length} telat` : ""}`,
+        status_label: d.load_status_label,
+        status_tone: d.load_status === "pressure" ? "danger" : d.load_status === "stabil" ? "warn" : "good",
+        progress: d.total_tasks > 0 ? Math.round((d.done_tasks_count / d.total_tasks) * 100) : 0,
+        href: "/tasks"
+      })),
+      ctaLabel: "Buka Tugas",
+      ctaHref: "/tasks"
+    });
+  }
 
   // 1. Specific Person (or "tugas saya")
   if ((targetPerson || (asksAboutMe && intel.my_summary)) && (hasTaskKw || hasOverdueKw || hasDeadlineKw || hasLoadKw)) {
@@ -1299,8 +1211,8 @@ function extractStructuredTaskReport(
     }
   }
 
-  // 2. Specific Division task / overdue / deadline report
-  if (targetDiv && !hasEmployeeKw) {
+  // 2. Specific Division queries (overdue, deadline, tasks, load, or members)
+  if (targetDiv) {
     if (hasOverdueKw) {
       return buildTaskReportPayload({
         title: `Tugas Terlambat · Tim ${targetDiv.name}`,
@@ -1323,7 +1235,7 @@ function extractStructuredTaskReport(
         totalCount: uniqueUrgent.length
       });
     }
-    if (hasTaskKw && !hasLoadKw) {
+    if (hasTaskKw && !hasLoadKw && !hasEmployeeKw) {
       return buildTaskReportPayload({
         title: `Tugas Aktif · Tim ${targetDiv.name}`,
         loadStatus: targetDiv.load_status,
@@ -1333,6 +1245,37 @@ function extractStructuredTaskReport(
         totalCount: targetDiv.total_tasks
       });
     }
+    const divPct = targetDiv.total_tasks > 0 ? Math.round((targetDiv.done_tasks_count / targetDiv.total_tasks) * 100) : 100;
+    return buildSummaryReportPayload({
+      title: `Beban Kerja & Anggota · Tim ${targetDiv.name}`,
+      subtitle: `${targetDiv.member_count} anggota · Load ${targetDiv.load_status_label}`,
+      progressPercent: divPct,
+      progressLabel: "Penyelesaian tim",
+      progressTone: targetDiv.load_status === "pressure" ? "danger" : targetDiv.load_status === "stabil" ? "warn" : "good",
+      metrics: [
+        { label: `${targetDiv.done_tasks_count}/${targetDiv.total_tasks} selesai`, tone: "strong" },
+        { label: `${targetDiv.active_tasks_count} aktif` },
+        ...(targetDiv.overdue_tasks.length > 0 ? [{ label: `${targetDiv.overdue_tasks.length} terlambat`, tone: "danger" as const }] : [{ label: "0 terlambat", tone: "good" as const }]),
+        { label: `${targetDiv.online_count} online`, tone: "good" }
+      ],
+      rows: targetDiv.members.map((m) => {
+        const tot = m.done + m.active;
+        return {
+          id: m.user_id,
+          title: m.name,
+          subtitle: `${m.job_title || "Member"} · ${m.active} aktif · ${m.done} selesai${m.overdue > 0 ? ` · ${m.overdue} telat` : ""}`,
+          status_label: m.status_label,
+          status_tone: m.status === "pressure" ? "danger" : m.status === "stabil" ? "warn" : "good",
+          progress: tot > 0 ? Math.round((m.done / tot) * 100) : 100,
+          user_ids: [m.user_id],
+          user_names: [m.name],
+          href: `/people/${m.user_id}`
+        };
+      }),
+      emptyNote: "Belum ada anggota terdaftar di divisi ini.",
+      ctaLabel: "Buka Employee",
+      ctaHref: "/people"
+    });
   }
 
   // 3. Specific Project
@@ -1382,14 +1325,225 @@ function extractStructuredTaskReport(
     });
   }
 
-  // 7. General task breakdown
-  if (hasTaskKw && !hasEmployeeKw && !hasLoadKw && !hasOverdueKw && !hasDeadlineKw) {
+  // 7. Global Workload / Load
+  if (hasLoadKw) {
+    const totalPeople = intel.workload_summary.people.length || 1;
+    const healthyPeople = intel.workload_summary.optimal_count + intel.workload_summary.stabil_count;
+    const balancePct = Math.round((healthyPeople / totalPeople) * 100);
+    const sortedPeople = [...intel.workload_summary.people].sort((a, b) => {
+      const rank = { pressure: 3, stabil: 2, optimal: 1 };
+      return (rank[b.status] - rank[a.status]) || (b.active - a.active);
+    });
+    return buildSummaryReportPayload({
+      title: "Analisa Load & Beban Kerja Workspace",
+      subtitle: `${intel.workload_summary.total_active_tasks} tugas aktif berjalan`,
+      progressPercent: balancePct,
+      progressLabel: "Kapasitas sehat",
+      progressTone: balancePct >= 75 ? "good" : balancePct >= 50 ? "warn" : "danger",
+      metrics: [
+        { label: `${intel.workload_summary.optimal_count} optimal`, tone: "good" },
+        { label: `${intel.workload_summary.stabil_count} stabil`, tone: "warn" },
+        { label: `${intel.workload_summary.pressure_count} under pressure`, tone: intel.workload_summary.pressure_count > 0 ? "danger" : "good" }
+      ],
+      rows: sortedPeople.slice(0, 15).map((p) => {
+        const tot = p.done + p.active;
+        return {
+          id: p.user_id,
+          title: p.name,
+          subtitle: `${p.department || "Umum"} · ${p.active} aktif (${p.share}%)${p.overdue > 0 ? ` · ${p.overdue} terlambat` : ""}`,
+          status_label: p.status_label,
+          status_tone: p.status === "pressure" ? "danger" : p.status === "stabil" ? "warn" : "good",
+          progress: tot > 0 ? Math.round((p.done / tot) * 100) : 100,
+          user_ids: [p.user_id],
+          user_names: [p.name],
+          href: `/people/${p.user_id}`
+        };
+      }),
+      ctaLabel: "Buka Employee",
+      ctaHref: "/people"
+    });
+  }
+
+  // 8. Employees directory
+  if (hasEmployeeKw) {
+    const onlinePct = intel.employees.active > 0 ? Math.round((intel.employees.online / intel.employees.active) * 100) : 0;
+    return buildSummaryReportPayload({
+      title: `Data Employee · ${intel.workspace_name}`,
+      subtitle: `${intel.employees.total} terdaftar · ${intel.employees.online} sedang online`,
+      progressPercent: onlinePct,
+      progressLabel: "Sedang online",
+      progressTone: "good",
+      metrics: [
+        { label: `${intel.employees.active} aktif`, tone: "strong" },
+        { label: `${intel.employees.online} online`, tone: "good" },
+        { label: `${intel.divisions.filter((d) => d.member_count > 0).length} divisi` }
+      ],
+      rows: intel.divisions.filter((d) => d.member_count > 0).map((d) => ({
+        id: d.key || d.name,
+        title: d.name,
+        subtitle: d.members.map((m) => m.name).join(", "),
+        right_value: `${d.member_count} orang`,
+        status_label: d.online_count > 0 ? `${d.online_count} online` : "Offline",
+        status_tone: d.online_count > 0 ? "good" : "default",
+        user_ids: d.members.slice(0, 3).map((m) => m.user_id),
+        user_names: d.members.slice(0, 3).map((m) => m.name),
+        href: "/people"
+      })),
+      ctaLabel: "Buka Employee",
+      ctaHref: "/people"
+    });
+  }
+
+  // 9. Projects list
+  if (hasProjectKw) {
+    const prjs = intel.projects || [];
+    const avgProj = prjs.length > 0 ? Math.round(prjs.reduce((a, p) => a + (p.progress_percent || 0), 0) / prjs.length) : 0;
+    return buildSummaryReportPayload({
+      title: "Daftar Proyek Workspace",
+      subtitle: `${prjs.length} proyek terdaftar`,
+      progressPercent: avgProj,
+      progressLabel: "Rata-rata progres",
+      metrics: [{ label: `${prjs.length} proyek`, tone: "strong" }],
+      rows: prjs.map((p) => ({
+        id: p.id,
+        title: p.name,
+        subtitle: `${p.done_tasks}/${p.total_tasks} selesai${p.overdue_tasks > 0 ? ` · ${p.overdue_tasks} terlambat` : ""}`,
+        progress: p.progress_percent,
+        status_label: p.status,
+        href: "/projects"
+      })),
+      emptyNote: "Belum ada proyek yang dibuat.",
+      ctaLabel: "Buka Proyek",
+      ctaHref: "/projects"
+    });
+  }
+
+  // 10. General task breakdown
+  if (hasTaskKw) {
     return buildTaskReportPayload({
       title: `Ringkasan Tugas Workspace`,
       subtitle: intel.workspace_name,
       tasks: intel.tasks.all_active,
       doneCount: intel.tasks.done,
       totalCount: intel.tasks.total
+    });
+  }
+
+  // 11. Boards list
+  if (hasBoardKw) {
+    const totalDone = intel.tasks.done || 0;
+    const totalAll = intel.tasks.total || 0;
+    return buildSummaryReportPayload({
+      title: "Daftar Board & Divisi",
+      subtitle: `${intel.boards.length} board aktif`,
+      progressPercent: totalAll > 0 ? Math.round((totalDone / totalAll) * 100) : 0,
+      progressLabel: "Penyelesaian",
+      metrics: [
+        { label: `${intel.boards.length} board`, tone: "strong" },
+        { label: `${intel.tasks.active} aktif` }
+      ],
+      rows: intel.boards.map((b) => ({
+        id: b.id,
+        title: b.name,
+        subtitle: `Divisi ${b.department} · ${b.tasks_active} aktif${b.tasks_overdue > 0 ? ` · ${b.tasks_overdue} telat` : ""}`,
+        right_value: `${b.tasks_total} tugas`,
+        href: "/tasks"
+      })),
+      ctaLabel: "Buka Tugas",
+      ctaHref: "/tasks"
+    });
+  }
+
+  // 12. Access requests
+  if (hasAccessKw) {
+    const reqs = intel.access_requests.pending_list || [];
+    return buildSummaryReportPayload({
+      title: "Permintaan Akses & Undangan",
+      subtitle: intel.workspace_name,
+      progressPercent: reqs.length === 0 ? 100 : Math.max(20, 100 - reqs.length * 15),
+      progressLabel: reqs.length === 0 ? "Semua diproses" : "Menunggu approval",
+      progressTone: reqs.length === 0 ? "good" : "warn",
+      metrics: [
+        { label: `${intel.access_requests.pending_count} permintaan`, tone: intel.access_requests.pending_count > 0 ? "warn" : "good" },
+        { label: `${intel.access_requests.pending_invitations_count} undangan pending` }
+      ],
+      rows: reqs.map((r, i) => ({
+        id: `acc_${i}`,
+        title: r.name,
+        subtitle: `${r.email} · Divisi ${r.department}`,
+        status_label: r.type,
+        status_tone: "warn",
+        href: "/settings"
+      })),
+      emptyNote: "Tidak ada permintaan akses yang menunggu approval.",
+      ctaLabel: "Buka Pengaturan",
+      ctaHref: "/settings"
+    });
+  }
+
+  // 13. Polls / Meetings / Drive
+  if (hasPollKw) {
+    const polls = intel.polls || [];
+    return buildSummaryReportPayload({
+      title: "Data Polling Workspace",
+      subtitle: `${polls.length} polling`,
+      progressPercent: polls.length > 0 ? 100 : 0,
+      progressLabel: "Tercatat",
+      metrics: [{ label: `${polls.length} polling`, tone: "strong" }],
+      rows: polls.map((pl, idx) => ({
+        id: `pl_${idx}`,
+        title: pl.question,
+        subtitle: `${pl.total_votes} suara`,
+        status_label: pl.closed ? "Selesai" : "Aktif",
+        status_tone: pl.closed ? "good" : "default",
+        href: "/beranda"
+      })),
+      emptyNote: "Belum ada polling yang dibuat.",
+      ctaLabel: "Buka Beranda",
+      ctaHref: "/beranda"
+    });
+  }
+
+  if (hasMeetingKw) {
+    const upcoming = intel.meetings.upcoming || [];
+    return buildSummaryReportPayload({
+      title: "Jadwal & Meeting Mendatang",
+      subtitle: `${intel.meetings.total} total meeting`,
+      progressPercent: upcoming.length > 0 ? 100 : 0,
+      progressLabel: "Terjadwal",
+      metrics: [{ label: `${upcoming.length} mendatang`, tone: "strong" }],
+      rows: upcoming.map((m, idx) => ({
+        id: `mt_${idx}`,
+        title: m.title,
+        subtitle: `${m.when}${m.location && m.location !== "-" ? ` · ${m.location}` : ""}`,
+        status_label: "Meeting",
+        href: "/schedule"
+      })),
+      emptyNote: "Tidak ada jadwal meeting mendatang.",
+      ctaLabel: "Buka Jadwal",
+      ctaHref: "/schedule"
+    });
+  }
+
+  if (hasDriveKw) {
+    const items = intel.drive.items || [];
+    return buildSummaryReportPayload({
+      title: "Shortcut Google Drive & Dokumen",
+      subtitle: `${intel.drive.total} item tersimpan`,
+      progressPercent: items.length > 0 ? 100 : 0,
+      progressLabel: "Tersedia",
+      progressTone: "good",
+      metrics: [{ label: `${intel.drive.total} shortcut`, tone: "strong" }],
+      rows: items.map((d, idx) => ({
+        id: `dr_${idx}`,
+        title: d.title,
+        subtitle: `Divisi ${d.division}`,
+        status_label: "Drive",
+        href: "/drive"
+      })),
+      emptyNote: "Belum ada shortcut Drive.",
+      ctaLabel: "Buka Drive",
+      ctaHref: "/drive"
     });
   }
 
@@ -1423,15 +1577,16 @@ export async function generateCircleBotReply(params: {
     return {
       text: cmdResult.text,
       createdTask: cmdResult.createdTask,
-      effects: cmdResult.effects
+      effects: cmdResult.effects,
+      report: cmdResult.report ?? null
     };
   }
 
-  const structuredReport = extractStructuredTaskReport(trimmed, intel);
+  const structuredReport = extractStructuredReport(trimmed, intel);
   const deterministicReply = answerWorkspaceQuestionDeterministically(trimmed, db, senderUser, now);
 
-  // If this is a structured task report query, return instant deterministic + structured payload
-  // so it renders immediately in the interactive Executive Summary + Compact List card without AI latency.
+  // If this is a structured report query, return instant deterministic + structured payload
+  // so it renders immediately in the unified Executive Summary + Compact List card.
   if (structuredReport) {
     return { text: deterministicReply, report: structuredReport };
   }

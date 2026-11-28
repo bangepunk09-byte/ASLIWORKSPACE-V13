@@ -773,10 +773,19 @@ const ListView = memo(function ListView({ tasks, projects, boards = [], projectI
   const visible = cols.filter((c) => !(cfg.hidden || []).includes(c[0]));
   const total = 4 + visible.reduce((s, c) => s + c[2], 0);
   const patch = useCallback(async (taskObj, body) => {
-    onPatchTask?.(taskObj.id, body);
+    const involvesAssigneeChange =
+      body.assignee_ids !== undefined || body.assignee_id !== undefined || body.checkpoints !== undefined;
+    if (!involvesAssigneeChange) {
+      onPatchTask?.(taskObj.id, body);
+    }
     try {
       const { data } = await api.patch(`/tasks/${taskObj.id}`, body);
       if (data) onPatchTask?.(taskObj.id, data);
+      const invited = Array.isArray(data?.newly_invited_assignees) ? data.newly_invited_assignees : [];
+      if (invited.length > 0) {
+        const names = invited.map((x) => x.name).filter(Boolean).join(", ");
+        toast.info(`Box approval penugasan dikirim lewat japri ke ${names}. Nama PIC akan aktif setelah diterima.`);
+      }
     } catch (e) {
       toast.error(errMsg(e));
       reload();

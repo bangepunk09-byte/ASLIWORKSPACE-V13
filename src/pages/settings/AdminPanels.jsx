@@ -22,6 +22,7 @@ import {
 } from "../marketplace/marketplaceStore";
 import { syncWorkspaceMirror } from "../../lib/persistentMirror";
 import { ADMIN_PANELS_CACHE_BOX, hydrateAdminPanelsCache } from "../../lib/bootstrapCaches";
+import { DEFAULT_ORG_LEVELS, inferUserOrgLevel } from "../../lib/orgLevels";
 import { googleGmailOAuthSignIn, getGmailAccessToken, clearGmailAuth } from "../../lib/auth";
 import {
   BANNER_IMAGE_PRESETS,
@@ -660,6 +661,21 @@ export function PeopleAccess() {
                       <SelectContent>
                         {allDivs.map((d) => (
                           <SelectItem key={d} value={d}>{d}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+
+                    <Select
+                      value={inferUserOrgLevel(u, DEFAULT_ORG_LEVELS)}
+                      onValueChange={(val) => upd(u.user_id, { org_level: val })}
+                      disabled={!canManageTarget}
+                    >
+                      <SelectTrigger className="h-8 w-auto min-w-[116px] shrink-0 rounded-xl bg-surface2 border-slate-200 dark:border-slate-800 px-3 text-xs font-medium" data-testid={`level-select-${u.user_id}`}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {DEFAULT_ORG_LEVELS.map((lvl, idx) => (
+                          <SelectItem key={lvl} value={lvl}>{idx + 1}. {lvl}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>

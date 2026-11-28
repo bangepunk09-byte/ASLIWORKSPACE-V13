@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/
 import { AppSelect } from "../components/ui/select";
 import { DatePicker } from "../components/ui/date-picker";
 import { Switch } from "../components/ui/switch";
+import { DEFAULT_ORG_LEVELS, inferUserOrgLevel, getOrgLevelMeta } from "../lib/orgLevels";
 
 const MODES = ["Office", "Remote", "Hybrid", "On-site", "Kustom"];
 const EMPLOYMENT_OPTIONS = [
@@ -60,12 +61,14 @@ function CustomInput({ f, value, onChange }) {
 
 function EditProfile({ open, onOpenChange, p, onSaved }) {
   const { ws, isAdmin, users, t: tr } = useApp();
+  const orgLevels = DEFAULT_ORG_LEVELS;
   const [f, setF] = useState(p);
   const wasOpenRef = useRef(false);
   useEffect(() => {
     if (open && !wasOpenRef.current) {
       setF({
         ...p,
+        org_level: inferUserOrgLevel(p, orgLevels),
         custom: { ...(p?.custom_fields || {}), ...(p?.custom || {}) },
         skillsText: (p.skills || []).join(", "),
       });
@@ -97,7 +100,7 @@ function EditProfile({ open, onOpenChange, p, onSaved }) {
       "location_status",
       "share_location",
       "custom",
-      ...(isAdmin ? ["job_title", "department", "division", "team", "manager_id"] : []),
+      ...(isAdmin ? ["job_title", "org_level", "department", "division", "team", "manager_id"] : []),
     ];
     const body = Object.fromEntries(keys.filter((k) => f[k] !== undefined).map((k) => [k, f[k]]));
     if (body.picture && !body.avatar) body.avatar = body.picture;
@@ -179,6 +182,13 @@ function EditProfile({ open, onOpenChange, p, onSaved }) {
           <Field label={tr("profile_field_join", "Tanggal Bergabung")}><DatePicker showQuickPresets={false} value={f.join_date || ""} onChange={(val) => setF({ ...f, join_date: val })} placeholder="Pilih tanggal bergabung" className={inp} data-testid="profile-join-date-input" /></Field>
           {isAdmin && <>
             <Field label={tr("profile_field_job", "Jabatan")}><input value={f.job_title || ""} onChange={set("job_title")} className={inp} data-testid="profile-title-input" /></Field>
+            <Field label={tr("profile_field_level", "Level Hierarki")}>
+              <AppSelect value={f.org_level || inferUserOrgLevel(f, orgLevels)} onChange={set("org_level")} placeholder="Pilih level" className={inp} data-testid="profile-org-level-select">
+                {orgLevels.map((lvl, idx) => (
+                  <option key={lvl} value={lvl}>{idx + 1}. {lvl}</option>
+                ))}
+              </AppSelect>
+            </Field>
             <Field label={tr("profile_field_division", "Divisi")}><input value={f.department || ""} onChange={set("department")} className={inp} /></Field>
             <Field label={tr("profile_field_team", "Tim")}><input value={f.team || ""} onChange={set("team")} className={inp} /></Field>
             <Field label={tr("profile_field_manager", "Atasan Langsung")}><AppSelect value={f.manager_id || ""} onChange={set("manager_id")} placeholder={tr("profile_field_no_manager", "Tidak ada")} className={inp}><option value="">{tr("profile_field_no_manager", "Tidak ada")}</option>{users.filter((u) => u.user_id !== p.user_id).map((u) => <option key={u.user_id} value={u.user_id}>{u.name}</option>)}</AppSelect></Field>
@@ -849,7 +859,24 @@ export default function Profile() {
                   <span>{p.name}</span>
                   <VerifiedBadge user={p} size={22} />
                 </h1>
-                <p className="text-sub" data-testid="profile-job-title">{p.job_title || tr("profile_no_job_title", "Belum ada jabatan")}{p.department && ` · ${p.department}`}</p>
+                <div className="mt-0.5 flex flex-wrap items-center gap-2">
+                  <p className="text-sub" data-testid="profile-job-title">
+                    {p.job_title || tr("profile_no_job_title", "Belum ada jabatan")}{p.department && ` · ${p.department}`}
+                  </p>
+                  {(() => {
+                    const lvl = inferUserOrgLevel(p, DEFAULT_ORG_LEVELS);
+                    const meta = getOrgLevelMeta(lvl, DEFAULT_ORG_LEVELS);
+                    return (
+                      <span
+                        className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-semibold ${meta.badge}`}
+                        data-testid="profile-org-level-badge"
+                      >
+                        <span className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} />
+                        {meta.rank}. {meta.label}
+                      </span>
+                    );
+                  })()}
+                </div>
                 <p className="mt-1.5 flex flex-wrap items-center gap-2 text-xs">
                   {(() => {
                     const statusMeta = getAvailabilityStatusMeta(p.availability_status);

@@ -139,6 +139,8 @@ const isSameTaskDetail = (a, b) => {
     (a.comments?.length || 0) === (b.comments?.length || 0) &&
     (a.activity?.length || 0) === (b.activity?.length || 0) &&
     (a.checkpoints?.length || 0) === (b.checkpoints?.length || 0) &&
+    JSON.stringify(a.assignee_ids || []) === JSON.stringify(b.assignee_ids || []) &&
+    JSON.stringify(a.pending_assignees || []) === JSON.stringify(b.pending_assignees || []) &&
     Boolean(a.board) === Boolean(b.board)
   );
 };
@@ -235,7 +237,11 @@ export default function TaskDetail({ id, initialTask = null, boards: propBoards 
   }, [id, subscribe]);
 
   const patch = async (body, msg) => {
-    setT((prev) => (prev ? { ...prev, ...body, updated_at: new Date().toISOString() } : prev));
+    const involvesAssigneeChange =
+      body.assignee_ids !== undefined || body.assignee_id !== undefined || body.checkpoints !== undefined;
+    if (!involvesAssigneeChange) {
+      setT((prev) => (prev ? { ...prev, ...body, updated_at: new Date().toISOString() } : prev));
+    }
     try {
       const { data } = await api.patch(`/tasks/${id}`, body);
       setT(data);
@@ -245,10 +251,29 @@ export default function TaskDetail({ id, initialTask = null, boards: propBoards 
         playSound("click");
       }
       onChanged?.(data);
-      if (msg) toast.success(msg);
+      const invited = Array.isArray(data?.newly_invited_assignees) ? data.newly_invited_assignees : [];
+      if (invited.length > 0) {
+        const names = invited.map((x) => x.name).filter(Boolean).join(", ");
+        toast.info(`Box approval penugasan dikirim lewat japri ke ${names}. Nama PIC akan aktif setelah diterima.`);
+      } else if (msg) {
+        toast.success(msg);
+      }
     } catch (e) {
       toast.error(errMsg(e));
       load();
+    }
+  };
+
+  const cancelPendingInvite = async (targetUid, targetName) => {
+    try {
+      const { data } = await api.delete(`/tasks/${id}/pending-assignees/${encodeURIComponent(targetUid)}`);
+      if (data?.task) {
+        setT(data.task);
+        onChanged?.(data.task);
+      }
+      toast.info(`Undangan penugasan ke ${targetName || "anggota"} dibatalkan.`);
+    } catch (e) {
+      toast.error(errMsg(e, "Gagal membatalkan undangan"));
     }
   };
   const setAtt = (fn) => patch({ attachments: fn(t.attachments) });
@@ -622,32 +647,66 @@ export default function TaskDetail({ id, initialTask = null, boards: propBoards 
                 </Row>
 
                 <Row label={tr("task_field_assignee", "Assignee")}>
-                  <MultiUserSelect
-                    value={t.assignee_ids && t.assignee_ids.length ? t.assignee_ids : (t.assignee_id ? [t.assignee_id] : [])}
-                    ids={members}
-                    scopeLabel={assigneeScope.scopeLabel}
-                    emptyMessage={assigneeScope.emptyMessage}
-                    onChange={(ids) => {
-                      const nextIds = Array.isArray(ids) ? ids : [];
-                      const nextPrimary = nextIds[0] || null;
-                      const prevPrimary = t.assignee_ids?.[0] || t.assignee_id || null;
-                      const patchBody = {
-                        assignee_ids: nextIds,
-                        assignee_id: nextPrimary
-                      };
-                      if (Array.isArray(t.checkpoints) && t.checkpoints.length > 0 && nextPrimary) {
-                        patchBody.checkpoints = t.checkpoints.map((c) => {
-                          if (!c || c.unassigned) return c;
-                          if (!c.assignee_id || (prevPrimary && c.assignee_id === prevPrimary && !nextIds.includes(prevPrimary))) {
-                            return { ...c, assignee_id: nextPrimary };
-                          }
-                          return c;
-                        });
-                      }
-                      patch(patchBody);
-                    }}
-                    testid="task-detail-assignee"
-                  />
+                  <div className="space-y-1.5">
+                    <MultiUserSelect
+                      value={t.assignee_ids && t.assignee_ids.length ? t.assignee_ids : (t.assignee_id ? [t.assignee_id] : [])}
+                      ids={members}
+                      scopeLabel={assigneeScope.scopeLabel}
+                      emptyMessage={assigneeScope.emptyMessage}
+                      onChange={(ids) => {
+                        const nextIds = Array.isArray(ids) ? ids : [];
+                        const nextPrimary = nextIds[0] || null;
+                        const prevPrimary = t.assignee_ids?.[0] || t.assignee_id || null;
+                        const patchBody = {
+                          assignee_ids: nextIds,
+                          assignee_id: nextPrimary
+                        };
+                        if (Array.isArray(t.checkpoints) && t.checkpoints.length > 0 && nextPrimary) {
+                          patchBody.checkpoints = t.checkpoints.map((c) => {
+                            if (!c || c.unassigned) return c;
+                            if (!c.assignee_id || (prevPrimary && c.assignee_id === prevPrimary && !nextIds.includes(prevPrimary))) {
+                              return { ...c, assignee_id: nextPrimary };
+                            }
+                            return c;
+                          });
+                        }
+                        patch(patchBody);
+                      }}
+                      testid="task-detail-assignee"
+                    />
+                    {(() => {
+                      const pendingInvites = (Array.isArray(t.pending_assignees) ? t.pending_assignees : []).filter(
+                        (p) => p && p.status === "pending"
+                      );
+                      if (pendingInvites.length === 0) return null;
+                      return (
+                        <div className="flex flex-wrap items-center gap-1.5 pt-0.5 text-[11px] text-amber-700 dark:text-amber-300" data-testid="task-detail-pending-assignees">
+                          <span className="font-semibold">Menunggu konfirmasi japri:</span>
+                          {pendingInvites.map((inv) => {
+                            const nm = userMap?.[inv.user_id]?.name || inv.name || "Anggota";
+                            return (
+                              <span
+                                key={inv.id || inv.user_id}
+                                className="inline-flex items-center gap-1 rounded-full border border-amber-200 dark:border-amber-800/70 bg-amber-50/80 dark:bg-amber-950/35 px-2 py-0.5 font-medium"
+                              >
+                                <span className="max-w-[140px] truncate">{nm}</span>
+                                {!ro && (
+                                  <button
+                                    type="button"
+                                    onClick={() => cancelPendingInvite(inv.user_id, nm)}
+                                    title="Batalkan undangan penugasan"
+                                    className="rounded-full p-0.5 text-amber-700/70 hover:bg-amber-200/60 hover:text-amber-900 dark:text-amber-300/80 dark:hover:bg-amber-900/50 cursor-pointer"
+                                  >
+                                    <X size={10} />
+                                  </button>
+                                )}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
+                  </div>
                 </Row>
                 <Row label={tr("task_field_priority", "Prioritas")}><PrioritySelect value={t.priority} onChange={(v) => patch({ priority: v })} testid="task-detail-priority" /></Row>
                 <Row label={tr("task_field_start_date", "Tanggal Mulai")}><DatePicker disabled={ro} value={t.start_date || (t.created_at ? fmtDate(t.created_at, "yyyy-MM-dd") : "")} onChange={(val) => { const nextVal = val || (t.created_at ? fmtDate(t.created_at, "yyyy-MM-dd") : null); if (nextVal !== (t.start_date || null)) patch({ start_date: nextVal }); }} placeholder={tr("task_start_date_ph_detail", "Pilih tanggal mulai")} className={inp} data-testid="task-detail-start-date" /></Row>

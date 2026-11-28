@@ -12,6 +12,7 @@ import { AppSelect } from "../../components/ui/select";
 import PollCard from "./PollCard";
 import ApprovalRequestCard from "./ApprovalRequestCard";
 import AssistantReportCard, { detectAssistantReport } from "./AssistantReportCard";
+import TaskAssignmentApprovalCard from "./TaskAssignmentApprovalCard";
 import { StickerTile } from "./Composer";
 
 const STICKY_THEMES = {
@@ -895,13 +896,14 @@ function MessageItem({ m, mine, grouped, conv, onReply, onCreateTask, readBy }) 
   const isPoll = m.type === "poll" || Boolean(m.poll_id || m.poll);
   const isStickyNote = m.type === "sticky_note" || Boolean(m.sticky_note);
   const isFormApproval = m.type === "form_approval" || Boolean(m.form_approval);
+  const isTaskAssignApproval = m.type === "task_assignment_approval" || Boolean(m.task_assignment);
   const isAssistantReport = useMemo(() => detectAssistantReport(m), [m]);
-  const plain = m.type === "sticker" || isPoll || isStickyNote || isFormApproval || isAssistantReport || m.type === "task" || m.type === "approval_card" || m.type === "access_request_card";
+  const plain = m.type === "sticker" || isPoll || isStickyNote || isFormApproval || isTaskAssignApproval || isAssistantReport || m.type === "task" || m.type === "approval_card" || m.type === "access_request_card";
   const renderedBody = useMemo(
-    () => (m.text && !isPoll && !isStickyNote && !isFormApproval && !isAssistantReport && m.type !== "access_request_card"
+    () => (m.text && !isPoll && !isStickyNote && !isFormApproval && !isTaskAssignApproval && !isAssistantReport && m.type !== "access_request_card"
       ? renderText(m.text, userMap, isMine, m.mention_ids)
       : null),
-    [m.text, m.type, isPoll, isStickyNote, isFormApproval, isAssistantReport, userMap, isMine, m.mention_ids]
+    [m.text, m.type, isPoll, isStickyNote, isFormApproval, isTaskAssignApproval, isAssistantReport, userMap, isMine, m.mention_ids]
   );
   return (
     <div className={`group flex w-full gap-2 sm:gap-2.5 ${isMine ? "flex-row-reverse justify-start" : "flex-row justify-start"} ${grouped ? "mt-0.5" : "mt-3.5 sm:mt-4"}`} data-testid={`message-${m.id}`}>
@@ -910,7 +912,7 @@ function MessageItem({ m, mine, grouped, conv, onReply, onCreateTask, readBy }) 
           {!grouped && senderId && <Link to={`/people/${senderId}`} className="block w-fit rounded-full"><Avatar user={sender} size={28} /></Link>}
         </div>
       )}
-      <div className={`flex min-w-0 ${isFormApproval || isAssistantReport ? "max-w-[92%] sm:max-w-[84%] lg:max-w-[78%]" : "max-w-[86%] sm:max-w-[70%]"} flex-col ${isMine ? "items-end" : "items-start"}`}>
+      <div className={`flex min-w-0 ${isFormApproval || isAssistantReport || isTaskAssignApproval ? "max-w-[92%] sm:max-w-[84%] lg:max-w-[78%]" : "max-w-[86%] sm:max-w-[70%]"} flex-col ${isMine ? "items-end" : "items-start"}`}>
         {!grouped && (
           <p className={`mb-1 px-1 text-[11px] text-sub ${isMine ? "text-right" : "text-left"}`}>
             {isMine ? (
@@ -934,10 +936,11 @@ function MessageItem({ m, mine, grouped, conv, onReply, onCreateTask, readBy }) 
               {isPoll && <PollCard pollId={m.poll_id || m.poll?.id} poll={m.poll} />}
               {isStickyNote && m.sticky_note && <StickyNoteMessageCard m={m} />}
               {isFormApproval && m.form_approval && <ApprovalRequestCard m={m} />}
+              {isTaskAssignApproval && m.task_assignment && <TaskAssignmentApprovalCard m={m} />}
               {isAssistantReport && <AssistantReportCard m={m} />}
               {(m.type === "task" || m.type === "approval_card") && m.task && <TaskPreview m={m} />}
               {m.type === "access_request_card" && (m.access_request || m.data) && <AccessRequestCard m={m} />}
-              {(m.text && !isPoll && !isStickyNote && !isFormApproval && !isAssistantReport && m.type !== "access_request_card") && (editing ? (
+              {(m.text && !isPoll && !isStickyNote && !isFormApproval && !isTaskAssignApproval && !isAssistantReport && m.type !== "access_request_card") && (editing ? (
                 <div className="flex flex-col gap-1"><textarea value={val} onChange={(e) => setVal(e.target.value)} className="w-72 max-w-full rounded-xl border bg-surface p-2 text-sm text-ink" data-testid="edit-message-input" />
                   <div className="flex gap-2 text-xs"><button onClick={save} className="font-semibold text-brand" data-testid="save-edit-btn">{tr("chat_msg_save_edit", "Simpan")}</button><button onClick={() => setEditing(false)} className="text-sub">{tr("chat_msg_cancel_edit", "Batal")}</button></div></div>
               ) : <div className={`${plain ? "mt-1 text-sm" : `rounded-2xl px-3.5 py-2 text-[14.5px] leading-relaxed ${bubble}`} whitespace-pre-wrap break-words`}>{renderedBody}{m.edited && <span className="ml-1 text-[10px] opacity-70">{tr("chat_msg_edited", "· diedit")}</span>}</div>)}

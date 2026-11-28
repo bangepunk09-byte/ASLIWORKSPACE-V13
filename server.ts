@@ -1581,8 +1581,33 @@ async function startServer() {
     "Project"
   ];
 
+  const EMPLOYEE_ORG_LEVELS = ["C Level", "Direktur", "Manager", "Lead", "Staff"];
+  const EMPLOYEE_ORG_LEVEL_MAP: Record<string, string> = {
+    "c-level": "C Level",
+    "c level": "C Level",
+    clevel: "C Level",
+    director: "Direktur",
+    direktur: "Direktur",
+    manager: "Manager",
+    manajer: "Manager",
+    lead: "Lead",
+    leader: "Lead",
+    supervisor: "Lead",
+    staff: "Staff",
+    staf: "Staff",
+    employee: "Staff",
+  };
+  const normalizeEmployeeOrgLevel = (raw: any): string => {
+    const s = String(raw || "").trim();
+    if (!s) return "";
+    const mapped = EMPLOYEE_ORG_LEVEL_MAP[s.toLowerCase()];
+    if (mapped) return mapped;
+    const exact = EMPLOYEE_ORG_LEVELS.find((l) => l.toLowerCase() === s.toLowerCase());
+    return exact || "";
+  };
+
   const DEFAULT_ALIGNED_ORG_UNITS = [
-    { id: "unit_mgmt", name: "Management", division: "Management", description: "Board of Directors & Executive Leadership", level: "Executive", color: "#FF5364", head_id: "user_superadmin_saeful", parent_id: null, order: 0 },
+    { id: "unit_mgmt", name: "Management", division: "Management", description: "Board of Directors & C-Level Leadership", level: "Executive", color: "#FF5364", head_id: "user_superadmin_saeful", parent_id: null, order: 0 },
     { id: "unit_mkt", name: "Marketing", division: "Marketing", description: "Brand Marketing, Campaign & Social Media Growth", level: "Division", color: "#10B981", head_id: null, parent_id: "unit_mgmt", order: 1 },
     { id: "unit_sales", name: "Sales", division: "Sales", description: "Enterprise Sales, Partnership & Business Development", level: "Division", color: "#F59E0B", head_id: null, parent_id: "unit_mgmt", order: 2 },
     { id: "unit_it", name: "IT", division: "IT", description: "IT Infrastructure, Security & Internal Support", level: "Division", color: "#06B6D4", head_id: "user_admin1", parent_id: "unit_mgmt", order: 3 },
@@ -1592,8 +1617,40 @@ async function startServer() {
     { id: "unit_project", name: "Project", division: "Project", description: "Project Management & Execution Division", level: "Division", color: "#8B5CF6", head_id: null, parent_id: "unit_mgmt", order: 7 }
   ];
 
-  if (!Array.isArray(db.workspace.org_levels) || db.workspace.org_levels.length === 0) {
+  // Restore workspace org_levels & org_units back to original unit hierarchy if previously auto-migrated
+  const curOrgLevelsLower = Array.isArray(db.workspace.org_levels)
+    ? db.workspace.org_levels.map((x: any) => String(x || "").trim().toLowerCase())
+    : [];
+  const wasMigratedToEmpLevels =
+    curOrgLevelsLower.length === 5 &&
+    curOrgLevelsLower[0] === "c level" &&
+    curOrgLevelsLower[1] === "direktur" &&
+    curOrgLevelsLower[2] === "manager" &&
+    curOrgLevelsLower[3] === "lead" &&
+    curOrgLevelsLower[4] === "staff";
+  let orgStructureRestored = false;
+  if (wasMigratedToEmpLevels) {
     db.workspace.org_levels = ["Executive", "Division", "Department", "Team"];
+    orgStructureRestored = true;
+  }
+  const RESTORE_UNIT_LEVEL_MAP: Record<string, string> = {
+    "c level": "Executive",
+    direktur: "Division",
+    manager: "Department",
+    lead: "Team",
+  };
+  if (Array.isArray(db.org_units)) {
+    db.org_units.forEach((u: any) => {
+      if (!u) return;
+      const restored = RESTORE_UNIT_LEVEL_MAP[String(u.level || "").trim().toLowerCase()];
+      if (restored && restored !== u.level) {
+        u.level = restored;
+        orgStructureRestored = true;
+      }
+    });
+  }
+  if (orgStructureRestored) {
+    saveDbToFile();
   }
 
   function getDepartmentGroupMemberIds(divName: string, existingGroup?: any): string[] {
@@ -1748,7 +1805,7 @@ async function startServer() {
           id: isMgmt ? "unit_mgmt" : `unit_${slug}`,
           name: clean,
           division: clean,
-          description: isMgmt ? "Board of Directors & Executive Leadership" : `Divisi ${clean}`,
+          description: isMgmt ? "Board of Directors & C-Level Leadership" : `Divisi ${clean}`,
           level: isMgmt || !rootUnit ? "Executive" : "Division",
           color: palette[idx % palette.length],
           head_id: null,
@@ -2092,6 +2149,7 @@ async function startServer() {
     if (t.created_by === user.user_id || (Array.isArray(t.requestor_ids) && t.requestor_ids.includes(user.user_id))) return true;
     if (Array.isArray(t.collaborator_ids) && t.collaborator_ids.includes(user.user_id)) return true;
     if (Array.isArray(t.checkpoints) && t.checkpoints.some((c: any) => c && c.assignee_id === user.user_id)) return true;
+    if (Array.isArray(t.pending_assignees) && t.pending_assignees.some((p: any) => p && p.user_id === user.user_id && p.status === "pending")) return true;
     if (Array.isArray(t.comments) && t.comments.some((c: any) => Array.isArray(c?.mention_ids) && c.mention_ids.includes(user.user_id))) return true;
 
     // Check board permission
@@ -6767,6 +6825,10 @@ async function startServer() {
       verified_at: _ignoreVerifiedAt,
       ...safeBody
     } = req.body || {};
+    if (safeBody.org_level !== undefined) {
+      const cleanLvl = normalizeEmployeeOrgLevel(safeBody.org_level);
+      safeBody.org_level = cleanLvl || null;
+    }
     if (isAdminOrMgr) {
       if (req.body?.role !== undefined) {
         if (!isValidWorkspaceRole(req.body.role)) {
@@ -6854,6 +6916,10 @@ async function startServer() {
     }
     if (safeBody.status !== undefined && user.role === "super_admin" && reqUser.role !== "super_admin") {
       return res.status(403).json({ detail: "Hanya Super Admin yang dapat mengubah status akun Super Admin." });
+    }
+    if (safeBody.org_level !== undefined) {
+      const cleanLvl = normalizeEmployeeOrgLevel(safeBody.org_level);
+      safeBody.org_level = cleanLvl || null;
     }
 
     const wasVerifiedBefore = computeProfileCompletion(user).isVerified;
@@ -7537,6 +7603,177 @@ async function startServer() {
     res.json(list);
   });
 
+  const isHumanWorkspaceUser = (uid: string | null | undefined) => {
+    if (!uid || uid === CIRCLE_BOT_ID) return false;
+    const u = (db.users || []).find((x: any) => x && x.user_id === uid);
+    return Boolean(u && !u.is_bot && u.role !== "assistant" && u.status !== "suspended");
+  };
+
+  const ensureDirectDmConversation = (senderId: string, targetUid: string) => {
+    const expectedPair = Array.from(new Set([senderId, targetUid].filter(Boolean))).sort();
+    let conv = (db.conversations || []).find((x: any) => {
+      if (!x || x.type !== "dm" || String(x.id || "").startsWith("conv_circle_")) return false;
+      const rawMems = Array.isArray(x.member_ids) ? x.member_ids : (Array.isArray(x.members) ? x.members : []);
+      const uniqueMems = Array.from(new Set(rawMems.filter(Boolean))).sort();
+      if (uniqueMems.length !== expectedPair.length) return false;
+      return uniqueMems.every((id, idx) => id === expectedPair[idx]);
+    });
+    if (!conv) {
+      const mems = Array.from(new Set([senderId, targetUid].filter(Boolean)));
+      conv = {
+        id: `conv_dm_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        type: "dm",
+        name: "",
+        admin_ids: [],
+        members: mems,
+        member_ids: mems,
+        unread: 0,
+        reads: {},
+        last_message_preview: "",
+        last_message_at: new Date().toISOString()
+      };
+      db.conversations.unshift(conv);
+    }
+    return conv;
+  };
+
+  const sendTaskAssignmentInvites = (task: any, rawTargetIds: string[], actor: any) => {
+    if (!task || !actor?.user_id || !Array.isArray(rawTargetIds) || rawTargetIds.length === 0) {
+      return [];
+    }
+    const actorId = actor.user_id;
+    const actorName = actor.name || "Rekan Kerja";
+    const actorSafe = sanitizeUser(actor);
+    const activeSet = new Set(Array.isArray(task.assignee_ids) ? task.assignee_ids.filter(Boolean) : []);
+    if (task.assignee_id) activeSet.add(task.assignee_id);
+
+    task.pending_assignees = Array.isArray(task.pending_assignees) ? task.pending_assignees : [];
+    const pendingSet = new Set(
+      task.pending_assignees
+        .filter((p: any) => p && p.status === "pending" && p.user_id)
+        .map((p: any) => p.user_id)
+    );
+
+    const uniqueTargets = Array.from(new Set(rawTargetIds.filter(Boolean))).filter(
+      (uid) => uid !== actorId && !activeSet.has(uid) && !pendingSet.has(uid) && isHumanWorkspaceUser(uid)
+    );
+    if (uniqueTargets.length === 0) return [];
+
+    const boardObj = (db.boards || []).find((b: any) => b.id === task.board_id);
+    const boardName = boardObj?.name || task.department || "Workspace";
+    const cleanDesc = String(task.description || "")
+      .replace(/<[^>]*>?/gm, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 200);
+    const nowIso = new Date().toISOString();
+    const sentInvites: Array<{ user_id: string; name: string; invite_id: string; conversation_id: string; message_id: string }> = [];
+
+    uniqueTargets.forEach((targetUid) => {
+      const targetUser = (db.users || []).find((u: any) => u.user_id === targetUid);
+      const targetName = targetUser?.name || "Anggota Tim";
+      const conv = ensureDirectDmConversation(actorId, targetUid);
+      const mems = Array.isArray(conv.member_ids) ? conv.member_ids : (Array.isArray(conv.members) ? conv.members : [actorId, targetUid]);
+      const inviteId = `tinv_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      const msgId = `msg_tassign_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
+      // Replace any previous non-pending invite for the same user on this task so state stays clean
+      task.pending_assignees = task.pending_assignees.filter(
+        (p: any) => !(p && p.user_id === targetUid && p.status !== "pending")
+      );
+      task.pending_assignees.push({
+        id: inviteId,
+        user_id: targetUid,
+        name: targetName,
+        invited_by: actorId,
+        invited_by_name: actorName,
+        status: "pending",
+        invited_at: nowIso,
+        responded_at: null,
+        note: "",
+        dm_conversation_id: conv.id,
+        dm_message_id: msgId,
+      });
+
+      const assignmentPayload = {
+        invite_id: inviteId,
+        task_id: task.id,
+        number_str: task.number_str || "",
+        title: task.title || "Tanpa Judul",
+        description: cleanDesc,
+        priority: task.priority || "medium",
+        deadline: task.deadline || null,
+        board_id: task.board_id || null,
+        board_name: boardName,
+        department: task.department || "",
+        item_type: task.item_type || null,
+        invited_by: actorId,
+        invited_by_name: actorName,
+        assignee_id: targetUid,
+        assignee_name: targetName,
+        status: "pending",
+        created_at: nowIso,
+        responded_at: null,
+        note: "",
+      };
+
+      const dmMsg = {
+        id: msgId,
+        conversation_id: conv.id,
+        sender_id: actorId,
+        user_id: actorId,
+        type: "task_assignment_approval",
+        task_id: task.id,
+        text: `Konfirmasi penugasan ${task.number_str || ""}: ${task.title}`,
+        task_assignment: assignmentPayload,
+        attachments: [],
+        mention_ids: [],
+        created_at: nowIso,
+      };
+      db.messages.push(dmMsg);
+
+      conv.last_message_preview = `📋 Konfirmasi Tugas: ${task.title}`;
+      conv.last_message_at = nowIso;
+      conv.reads = conv.reads || {};
+      conv.reads[actorId] = Date.now();
+
+      broadcast({
+        type: "message:new",
+        data: {
+          ...dmMsg,
+          member_ids: mems,
+          conversation_type: "dm",
+          conversation_name: "",
+          notified_user_ids: [targetUid],
+        },
+      });
+      broadcast({ type: "conversations:changed" });
+
+      createNotification({
+        user_id: targetUid,
+        title: "Konfirmasi Penugasan Tugas",
+        body: `${actorName} ingin menugaskan "${task.title}" (${task.number_str || "Tugas"}) kepadamu. Buka japri untuk Terima atau Tolak.`,
+        type: "task_assign_invite",
+        category: "tasks",
+        actor_id: actorId,
+        sender: actorSafe,
+        link: `/messages/${conv.id}`,
+        conversation_id: conv.id,
+        task_id: task.id,
+      });
+
+      sentInvites.push({
+        user_id: targetUid,
+        name: targetName,
+        invite_id: inviteId,
+        conversation_id: conv.id,
+        message_id: msgId,
+      });
+    });
+
+    return sentInvites;
+  };
+
   app.post("/api/tasks", (req, res) => {
     const curUser = getReqUser(req);
     if (!curUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
@@ -7553,34 +7790,50 @@ async function startServer() {
     );
     const cpPics = normalizedInputCps.map((c: any) => c?.assignee_id).filter(Boolean);
 
-    // Normalize assignee_ids and assignee_id
-    let assigneeIds = Array.isArray(req.body.assignee_ids) ? [...req.body.assignee_ids] : [];
-    if (req.body.assignee_id && !assigneeIds.includes(req.body.assignee_id)) {
-      assigneeIds.unshift(req.body.assignee_id);
+    // Normalize requested assignee_ids and split self-assignment vs others requiring DM approval
+    let requestedAssigneeIds = Array.isArray(req.body.assignee_ids) ? [...req.body.assignee_ids] : [];
+    if (req.body.assignee_id && !requestedAssigneeIds.includes(req.body.assignee_id)) {
+      requestedAssigneeIds.unshift(req.body.assignee_id);
     }
-    assigneeIds = assigneeIds.filter(Boolean);
-    if (assigneeIds.length === 0 && cpPics.length > 0) {
-      assigneeIds = Array.from(new Set(cpPics));
+    requestedAssigneeIds = Array.from(new Set(requestedAssigneeIds.filter(Boolean)));
+    if (requestedAssigneeIds.length === 0 && cpPics.length > 0) {
+      requestedAssigneeIds = Array.from(new Set(cpPics));
     } else if (
-      assigneeIds.length === 0 &&
+      requestedAssigneeIds.length === 0 &&
       req.body.assignee_ids === undefined &&
       req.body.assignee_id === undefined &&
       creatorId
     ) {
-      assigneeIds = [creatorId];
+      requestedAssigneeIds = [creatorId];
     }
-    const primaryAssigneeId = assigneeIds[0] || null;
+
+    const immediateAssigneeIds = requestedAssigneeIds.filter((uid: string) => uid === creatorId);
+    const pendingTargetIds = Array.from(
+      new Set([
+        ...requestedAssigneeIds.filter((uid: string) => uid !== creatorId && isHumanWorkspaceUser(uid)),
+        ...cpPics.filter((uid: string) => uid !== creatorId && isHumanWorkspaceUser(uid)),
+      ])
+    );
+    const pendingTargetSet = new Set(pendingTargetIds);
+
+    const primaryAssigneeId = immediateAssigneeIds[0] || null;
     const createNowIso = new Date().toISOString();
     const createFirstActiveIdx = normalizedInputCps.findIndex((c: any) => !c?.done);
     const cps = normalizedInputCps.map((c: any, idx: number) => {
       if (!c || typeof c !== "object") return c;
-      const withPic = !c.assignee_id && !c.unassigned && primaryAssigneeId
-        ? { ...c, assignee_id: primaryAssigneeId }
-        : c;
-      if (idx === createFirstActiveIdx && !withPic.started_at) {
-        return { ...withPic, started_at: createNowIso };
+      let nextCp = { ...c };
+      if (nextCp.assignee_id && pendingTargetSet.has(nextCp.assignee_id)) {
+        nextCp.pending_assignee_id = nextCp.assignee_id;
+        nextCp.assignee_id = null;
+      } else if (!nextCp.assignee_id && !nextCp.unassigned && primaryAssigneeId) {
+        nextCp.assignee_id = primaryAssigneeId;
+      } else if (!nextCp.assignee_id && !nextCp.unassigned && !primaryAssigneeId && pendingTargetIds[0]) {
+        nextCp.pending_assignee_id = pendingTargetIds[0];
       }
-      return withPic;
+      if (idx === createFirstActiveIdx && !nextCp.started_at) {
+        return { ...nextCp, started_at: createNowIso };
+      }
+      return nextCp;
     });
     const doneCount = cps.filter((c: any) => c.done).length;
     const progress = cps.length > 0 ? Math.round((doneCount / cps.length) * 100) : (req.body.progress ?? (req.body.status === "done" ? 100 : 0));
@@ -7610,8 +7863,9 @@ async function startServer() {
       ? normalizedCreateStatus
       : (validStatuses[0] || "todo");
 
-    const primaryAssigneeUser = primaryAssigneeId
-      ? (db.users || []).find((u: any) => u.user_id === primaryAssigneeId)
+    const boardHintUserId = primaryAssigneeId || pendingTargetIds[0] || null;
+    const primaryAssigneeUser = boardHintUserId
+      ? (db.users || []).find((u: any) => u.user_id === boardHintUserId)
       : null;
     const assigneeDivBoard = primaryAssigneeUser?.department
       ? db.boards?.find((b: any) => b.department && b.department.toLowerCase() === String(primaryAssigneeUser.department).toLowerCase())
@@ -7630,7 +7884,7 @@ async function startServer() {
       ? targetBoard.department
       : (req.body.department || targetBoard?.department || primaryAssigneeUser?.department || userDept || "Marketing");
 
-    const t = {
+    const t: any = {
       comments: [],
       subtasks: [],
       attachments: [],
@@ -7657,7 +7911,8 @@ async function startServer() {
       requestor_id: reqIds[0] || creatorId,
       requestor_ids: reqIds,
       assignee_id: primaryAssigneeId,
-      assignee_ids: assigneeIds,
+      assignee_ids: immediateAssigneeIds,
+      pending_assignees: [],
       start_date: req.body.start_date || createNowIso.slice(0, 10),
       created_at: createNowIso,
       updated_at: createNowIso
@@ -7672,13 +7927,13 @@ async function startServer() {
       t.activity = [initAct];
     }
 
-    // If the first active checkpoint has an assigned PIC, prepare collaborator access & notified_ready_for before saving/broadcasting
+    // Only activate checkpoint notification if the active checkpoint already has an accepted (non-pending) assignee
     let pendingCpNotification: { targetUid: string; cpTitle: string } | null = null;
     if (Array.isArray(t.checkpoints) && t.checkpoints.length > 0) {
       const activeIdx = t.checkpoints.findIndex((c: any) => !c.done);
       if (activeIdx !== -1) {
         const activeCp = t.checkpoints[activeIdx];
-        if (activeCp && activeCp.assignee_id) {
+        if (activeCp && activeCp.assignee_id && !pendingTargetSet.has(activeCp.assignee_id)) {
           activeCp.notified_ready_for = activeCp.assignee_id;
           t.collaborator_ids = Array.isArray(t.collaborator_ids) ? t.collaborator_ids : [];
           if (!t.collaborator_ids.includes(activeCp.assignee_id)) {
@@ -7698,24 +7953,25 @@ async function startServer() {
       action: `membuat tugas baru "${t.title}" (${t.number_str})`,
       created_at: new Date().toISOString()
     });
+
+    // Send DM approval boxes (Terima / Tolak) to all invited assignees (other than creator)
+    const newlyInvited = sendTaskAssignmentInvites(t, pendingTargetIds, curUser);
+    if (newlyInvited.length > 0) {
+      const invitedNames = newlyInvited.map((x) => x.name).join(", ");
+      const invAct = {
+        id: `act_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        actor_id: creatorId,
+        action: `mengirim konfirmasi penugasan via japri ke ${invitedNames} (menunggu diterima)`,
+        task_id: t.id,
+        task_title: t.title,
+        created_at: new Date().toISOString(),
+      };
+      t.activity.unshift(invAct);
+      db.activity.unshift(invAct);
+    }
+
     saveDbToFile(true);
     broadcast({ type: "tasks:changed", task: t });
-
-    // Notify all assigned users
-    assigneeIds.forEach((uid: string) => {
-      if (uid && uid !== creatorId) {
-        createNotification({
-          user_id: uid,
-          title: "Tugas Baru Ditugaskan",
-          body: `${creatorName} menugaskan "${t.title}" kepadamu.`,
-          type: "task_assigned",
-          category: "tasks",
-          actor_id: creatorId,
-          link: `/tasks?task=${t.id}`,
-          task_id: t.id
-        });
-      }
-    });
 
     if (pendingCpNotification) {
       const readyMsg = `Task "${t.title}" sudah siap dikerjakan, Semangat ya..`;
@@ -7732,7 +7988,7 @@ async function startServer() {
       saveDbToFile(true);
     }
 
-    res.json(t);
+    res.json({ ...t, newly_invited_assignees: newlyInvited });
   });
 
   // CSV & JSON Task Import Endpoint (Super Admin only)
@@ -8388,16 +8644,26 @@ async function startServer() {
               delete safePatch.completed_by;
             }
           }
-          if (safePatch.assignee_id && !safePatch.assignee_ids) {
-            safePatch.assignee_ids = [safePatch.assignee_id];
-          } else if (safePatch.assignee_ids && !safePatch.assignee_id) {
-            safePatch.assignee_id = safePatch.assignee_ids[0] || null;
+          let bulkPendingInvites: string[] = [];
+          if (safePatch.assignee_id !== undefined || safePatch.assignee_ids !== undefined) {
+            const curActive = Array.isArray(t.assignee_ids) && t.assignee_ids.length ? t.assignee_ids : (t.assignee_id ? [t.assignee_id] : []);
+            const curActiveSet = new Set(curActive);
+            const requestedBulk = Array.isArray(safePatch.assignee_ids)
+              ? safePatch.assignee_ids.filter(Boolean)
+              : (safePatch.assignee_id ? [safePatch.assignee_id] : []);
+            const immediateBulk = requestedBulk.filter((uid: string) => uid === reqUser.user_id || curActiveSet.has(uid));
+            bulkPendingInvites = requestedBulk.filter((uid: string) => uid !== reqUser.user_id && !curActiveSet.has(uid) && isHumanWorkspaceUser(uid));
+            safePatch.assignee_ids = immediateBulk;
+            safePatch.assignee_id = immediateBulk[0] || null;
           }
           Object.assign(t, safePatch);
           if (safePatch.assignee_id && Array.isArray(t.checkpoints)) {
             t.checkpoints = t.checkpoints.map((c: any) =>
               c && !c.assignee_id && !c.unassigned ? { ...c, assignee_id: safePatch.assignee_id } : c
             );
+          }
+          if (bulkPendingInvites.length > 0) {
+            sendTaskAssignmentInvites(t, bulkPendingInvites, reqUser);
           }
           if (safePatch.archived) {
             t.archived_at = t.archived_at || new Date().toISOString();
@@ -8840,23 +9106,59 @@ async function startServer() {
     }
 
     const cpAddedCollaborators: string[] = [];
+    const oldAssigneesEarly: string[] = Array.isArray(t.assignee_ids) && t.assignee_ids.length ? t.assignee_ids : (t.assignee_id ? [t.assignee_id] : []);
+    const oldAssigneeEarlySet = new Set(oldAssigneesEarly);
+    const pendingAssignInviteIds: string[] = [];
+
+    // Withhold any newly requested assignees (other than actorId & already-accepted assignees) until they accept via DM approval box
+    if (req.body.assignee_ids !== undefined || req.body.assignee_id !== undefined) {
+      const requestedList: string[] = Array.isArray(req.body.assignee_ids)
+        ? req.body.assignee_ids.filter(Boolean)
+        : (req.body.assignee_id ? [req.body.assignee_id] : []);
+      const immediateList: string[] = [];
+      requestedList.forEach((uid: string) => {
+        if (uid === actorId || oldAssigneeEarlySet.has(uid)) {
+          if (!immediateList.includes(uid)) immediateList.push(uid);
+        } else if (isHumanWorkspaceUser(uid)) {
+          if (!pendingAssignInviteIds.includes(uid)) pendingAssignInviteIds.push(uid);
+        }
+      });
+      req.body.assignee_ids = immediateList;
+      req.body.assignee_id = immediateList[0] || null;
+    }
+
+    const activeAfterPatchSet = new Set<string>(
+      req.body.assignee_ids !== undefined
+        ? (Array.isArray(req.body.assignee_ids) ? req.body.assignee_ids.filter(Boolean).map(String) : [])
+        : oldAssigneesEarly
+    );
 
     // 17. Checkpoint granular tracking (add, delete, rename, PIC change, deadline change, done/undone)
     if (Array.isArray(req.body.checkpoints)) {
       const oldCheckpoints = t.checkpoints || [];
-      const effectiveTaskAssignees: string[] = Array.isArray(req.body.assignee_ids)
-        ? req.body.assignee_ids.filter(Boolean)
-        : (req.body.assignee_id !== undefined
-            ? (req.body.assignee_id ? [req.body.assignee_id] : [])
-            : (Array.isArray(t.assignee_ids) && t.assignee_ids.length ? t.assignee_ids : (t.assignee_id ? [t.assignee_id] : [])));
+      const effectiveTaskAssignees: string[] = Array.from(activeAfterPatchSet);
       const effectivePrimaryAssignee = effectiveTaskAssignees[0] || null;
       const patchNowIso = new Date().toISOString();
       const newCheckpoints = req.body.checkpoints.map((nc: any) => {
         if (!nc || typeof nc !== "object") return nc;
         const oldCp = oldCheckpoints.find((oc: any) => oc.id === nc.id);
         const isNewCp = !oldCp;
-        let updated = nc;
-        if (isNewCp && !updated.assignee_id && !updated.unassigned && effectivePrimaryAssignee) {
+        let updated = { ...nc };
+        // If checkpoint assigns a newly invited user who hasn't accepted yet, store as pending_assignee_id
+        if (
+          updated.assignee_id &&
+          updated.assignee_id !== actorId &&
+          !activeAfterPatchSet.has(updated.assignee_id) &&
+          oldCp?.assignee_id !== updated.assignee_id &&
+          isHumanWorkspaceUser(updated.assignee_id)
+        ) {
+          if (!pendingAssignInviteIds.includes(updated.assignee_id)) {
+            pendingAssignInviteIds.push(updated.assignee_id);
+          }
+          updated.pending_assignee_id = updated.assignee_id;
+          updated.assignee_id = null;
+        }
+        if (isNewCp && !updated.assignee_id && !updated.pending_assignee_id && !updated.unassigned && effectivePrimaryAssignee) {
           updated = { ...updated, assignee_id: effectivePrimaryAssignee };
         }
         if (updated.done && !oldCp?.done && !updated.done_at) {
@@ -9224,25 +9526,20 @@ async function startServer() {
     }
     enforceTaskSaklekDone(t);
 
-    // Notify newly assigned users
-    if (Array.isArray(t.assignee_ids)) {
-      const newlyAssigned = t.assignee_ids.filter((uid: string) => !oldAssignees.includes(uid));
-      newlyAssigned.forEach((userId: string) => {
-        if (userId !== actorId) {
-          createNotification({
-            user_id: userId,
-            title: "Tugas Ditugaskan Kepadamu",
-            body: `${actorName} menugaskan "${t.title}" kepadamu.`,
-            type: "task_assigned",
-            category: "tasks",
-            actor_id: actorId,
-            link: `/tasks?task=${t.id}`,
-            task_id: t.id
-          });
-        }
-      });
+    // Send DM approval boxes for any newly invited assignees
+    const newlyInvitedAssignees = pendingAssignInviteIds.length > 0
+      ? sendTaskAssignmentInvites(t, pendingAssignInviteIds, user)
+      : [];
+    if (newlyInvitedAssignees.length > 0) {
+      const invitedNames = newlyInvitedAssignees.map((x) => x.name);
+      recordTaskActivity(
+        `mengirim konfirmasi penugasan via japri ke ${joinListNatural(invitedNames)} (menunggu diterima)`,
+        undefined,
+        undefined,
+        `mengirim konfirmasi penugasan ${t.number_str || t.title} via japri ke ${joinListNatural(invitedNames)}`
+      );
     }
-    
+
     // Notify requestors if status changed
     if (req.body.status && req.body.status !== oldStatus) {
       const requestors = Array.isArray(t.requestor_ids) ? t.requestor_ids : [t.created_by];
@@ -9264,7 +9561,282 @@ async function startServer() {
     saveDbToFile(true);
     broadcast({ type: "tasks:changed", task: t });
     const board = db.boards?.find((b: any) => b.id === t.board_id) || db.boards?.[0] || null;
-    res.json({ ...t, board });
+    res.json({ ...t, board, newly_invited_assignees: newlyInvitedAssignees });
+  });
+
+  // Accept or reject a pending task assignment invitation from DM approval box
+  app.post("/api/tasks/:id/assignment-response", (req, res) => {
+    const curUser = getReqUser(req);
+    if (!curUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    const t = db.tasks.find((x: any) => x.id === req.params.id);
+    if (!t) return res.status(404).json({ detail: "Tugas tidak ditemukan." });
+
+    const decision = String(req.body?.decision || "").trim().toLowerCase();
+    if (decision !== "accept" && decision !== "reject") {
+      return res.status(400).json({ detail: "Keputusan tidak valid. Gunakan 'accept' atau 'reject'." });
+    }
+    const inviteId = typeof req.body?.invite_id === "string" ? req.body.invite_id.trim() : "";
+    const note = typeof req.body?.note === "string" ? req.body.note.trim().slice(0, 300) : "";
+
+    t.pending_assignees = Array.isArray(t.pending_assignees) ? t.pending_assignees : [];
+    const invite = t.pending_assignees.find(
+      (p: any) =>
+        p &&
+        p.user_id === curUser.user_id &&
+        p.status === "pending" &&
+        (!inviteId || p.id === inviteId)
+    );
+    if (!invite) {
+      const existingSame = t.pending_assignees.find(
+        (p: any) => p && p.user_id === curUser.user_id && (!inviteId || p.id === inviteId)
+      );
+      if (existingSame && existingSame.status !== "pending") {
+        return res.status(409).json({
+          detail:
+            existingSame.status === "accepted"
+              ? "Penugasan ini sudah kamu terima sebelumnya."
+              : existingSame.status === "rejected"
+              ? "Penugasan ini sudah kamu tolak sebelumnya."
+              : "Undangan penugasan ini sudah dibatalkan."
+        });
+      }
+      return res.status(403).json({ detail: "Hanya penerima penugasan yang dapat merespons undangan ini." });
+    }
+
+    const nowIso = new Date().toISOString();
+    const actorName = curUser.name || "Anggota Tim";
+    const actorSafe = sanitizeUser(curUser);
+    const taskRef = t.number_str || t.title;
+
+    if (decision === "accept") {
+      invite.status = "accepted";
+      invite.responded_at = nowIso;
+      invite.note = note;
+
+      const curAssignees = Array.isArray(t.assignee_ids) ? t.assignee_ids.filter(Boolean) : [];
+      if (!curAssignees.includes(curUser.user_id)) {
+        curAssignees.push(curUser.user_id);
+      }
+      t.assignee_ids = curAssignees;
+      t.assignee_id = curAssignees[0] || curUser.user_id;
+
+      // Activate any checkpoints that were waiting for this assignee
+      if (Array.isArray(t.checkpoints)) {
+        const firstActiveIdx = t.checkpoints.findIndex((c: any) => c && !c.done);
+        t.checkpoints = t.checkpoints.map((c: any, idx: number) => {
+          if (!c || typeof c !== "object") return c;
+          if (c.pending_assignee_id === curUser.user_id) {
+            const nextCp = { ...c, assignee_id: curUser.user_id };
+            delete nextCp.pending_assignee_id;
+            if (idx === firstActiveIdx) {
+              nextCp.notified_ready_for = curUser.user_id;
+              t.collaborator_ids = Array.isArray(t.collaborator_ids) ? t.collaborator_ids : [];
+              if (!t.collaborator_ids.includes(curUser.user_id)) {
+                t.collaborator_ids.push(curUser.user_id);
+              }
+            }
+            return nextCp;
+          }
+          return c;
+        });
+      }
+
+      t.updated_at = nowIso;
+      const act = {
+        id: `act_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        actor_id: curUser.user_id,
+        action: `menerima penugasan tugas "${t.title}"`,
+        task_id: t.id,
+        task_title: t.title,
+        created_at: nowIso,
+      };
+      t.activity = Array.isArray(t.activity) ? t.activity : [];
+      t.activity.unshift(act);
+      db.activity.unshift(act);
+      db.audit_logs.unshift({
+        id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        actor_id: curUser.user_id,
+        actor_name: actorName,
+        action: `menerima penugasan ${taskRef} ("${t.title}")`,
+        created_at: nowIso,
+      });
+
+      if (invite.invited_by && invite.invited_by !== curUser.user_id) {
+        createNotification({
+          user_id: invite.invited_by,
+          title: "Penugasan Diterima",
+          body: `${actorName} menerima tugas "${t.title}" (${taskRef}). Tugas sekarang aktif atas nama ${actorName}.`,
+          type: "task_assign_accepted",
+          category: "tasks",
+          actor_id: curUser.user_id,
+          sender: actorSafe,
+          link: `/tasks?task=${t.id}`,
+          task_id: t.id,
+        });
+      }
+    } else {
+      invite.status = "rejected";
+      invite.responded_at = nowIso;
+      invite.note = note;
+
+      // Clear any checkpoint pending_assignee_id for the declining user
+      if (Array.isArray(t.checkpoints)) {
+        t.checkpoints = t.checkpoints.map((c: any) => {
+          if (c && c.pending_assignee_id === curUser.user_id) {
+            const nextCp = { ...c };
+            delete nextCp.pending_assignee_id;
+            return nextCp;
+          }
+          return c;
+        });
+      }
+
+      t.updated_at = nowIso;
+      const act = {
+        id: `act_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        actor_id: curUser.user_id,
+        action: `menolak penugasan tugas "${t.title}"`,
+        detail: note || undefined,
+        task_id: t.id,
+        task_title: t.title,
+        created_at: nowIso,
+      };
+      t.activity = Array.isArray(t.activity) ? t.activity : [];
+      t.activity.unshift(act);
+      db.activity.unshift(act);
+      db.audit_logs.unshift({
+        id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        actor_id: curUser.user_id,
+        actor_name: actorName,
+        action: `menolak penugasan ${taskRef} ("${t.title}")${note ? ` — "${note}"` : ""}`,
+        created_at: nowIso,
+      });
+
+      if (invite.invited_by && invite.invited_by !== curUser.user_id) {
+        createNotification({
+          user_id: invite.invited_by,
+          title: "Penugasan Ditolak",
+          body: `${actorName} menolak penugasan "${t.title}" (${taskRef})${note ? ` — "${note}"` : ""}.`,
+          type: "task_assign_rejected",
+          category: "tasks",
+          actor_id: curUser.user_id,
+          sender: actorSafe,
+          link: `/tasks?task=${t.id}`,
+          task_id: t.id,
+        });
+      }
+    }
+
+    // Sync DM approval card message(s) in real time
+    const updatedMessages: any[] = [];
+    (db.messages || []).forEach((m: any) => {
+      if (
+        m &&
+        m.type === "task_assignment_approval" &&
+        m.task_assignment &&
+        ((invite.dm_message_id && m.id === invite.dm_message_id) ||
+          m.task_assignment.invite_id === invite.id ||
+          (m.task_id === t.id && m.task_assignment.assignee_id === curUser.user_id && m.task_assignment.status === "pending"))
+      ) {
+        m.task_assignment = {
+          ...m.task_assignment,
+          status: invite.status,
+          responded_at: nowIso,
+          note,
+        };
+        m.updated_at = nowIso;
+        updatedMessages.push(m);
+
+        const dmConv = (db.conversations || []).find((c: any) => c.id === m.conversation_id);
+        if (dmConv) {
+          dmConv.last_message_preview =
+            decision === "accept"
+              ? `✓ ${actorName} menerima tugas ${taskRef}`
+              : `✕ ${actorName} menolak tugas ${taskRef}`;
+          dmConv.last_message_at = nowIso;
+        }
+        broadcast({ type: "message:update", data: m });
+      }
+    });
+
+    saveDbToFile(true);
+    broadcast({ type: "tasks:changed", task: t });
+    broadcast({ type: "conversations:changed" });
+
+    res.json({
+      ok: true,
+      decision,
+      task: t,
+      invite,
+      message: updatedMessages[0] || null,
+    });
+  });
+
+  // Cancel a pending task assignment invite (by inviter, creator, requestor, or admin/manager)
+  app.delete("/api/tasks/:id/pending-assignees/:userId", (req, res) => {
+    const curUser = getReqUser(req);
+    if (!curUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    const t = db.tasks.find((x: any) => x.id === req.params.id);
+    if (!t) return res.status(404).json({ detail: "Tugas tidak ditemukan." });
+    if (!isTaskAccessible(t, curUser)) {
+      return res.status(403).json({ detail: "Akses ditolak." });
+    }
+
+    const targetUid = String(req.params.userId || "").trim();
+    t.pending_assignees = Array.isArray(t.pending_assignees) ? t.pending_assignees : [];
+    const pendingInvites = t.pending_assignees.filter(
+      (p: any) => p && p.user_id === targetUid && p.status === "pending"
+    );
+    if (pendingInvites.length === 0) {
+      return res.status(404).json({ detail: "Undangan penugasan pending tidak ditemukan." });
+    }
+
+    const isAdminOrMgr = ["super_admin", "workspace_admin", "department_manager", "project_manager"].includes(String(curUser.role || ""));
+    const isAllowed =
+      isAdminOrMgr ||
+      t.created_by === curUser.user_id ||
+      (Array.isArray(t.requestor_ids) && t.requestor_ids.includes(curUser.user_id)) ||
+      pendingInvites.some((p: any) => p.invited_by === curUser.user_id);
+    if (!isAllowed) {
+      return res.status(403).json({ detail: "Anda tidak memiliki izin membatalkan undangan penugasan ini." });
+    }
+
+    const nowIso = new Date().toISOString();
+    pendingInvites.forEach((inv: any) => {
+      inv.status = "cancelled";
+      inv.responded_at = nowIso;
+      (db.messages || []).forEach((m: any) => {
+        if (
+          m &&
+          m.type === "task_assignment_approval" &&
+          m.task_assignment &&
+          (m.id === inv.dm_message_id || m.task_assignment.invite_id === inv.id)
+        ) {
+          m.task_assignment = {
+            ...m.task_assignment,
+            status: "cancelled",
+            responded_at: nowIso,
+          };
+          m.updated_at = nowIso;
+          broadcast({ type: "message:update", data: m });
+        }
+      });
+    });
+
+    if (Array.isArray(t.checkpoints)) {
+      t.checkpoints = t.checkpoints.map((c: any) => {
+        if (c && c.pending_assignee_id === targetUid) {
+          const nextCp = { ...c };
+          delete nextCp.pending_assignee_id;
+          return nextCp;
+        }
+        return c;
+      });
+    }
+    t.updated_at = nowIso;
+    saveDbToFile(true);
+    broadcast({ type: "tasks:changed", task: t });
+    res.json({ ok: true, task: t });
   });
 
   app.post("/api/tasks/:id/checkpoints/:cpId/notify", (req, res) => {
@@ -10594,7 +11166,7 @@ async function startServer() {
       name,
       division: divisionName,
       description: rest.description || "",
-      level: rest.level || "Division",
+      level: rest.level || (rest.parent_id ? "Division" : "Executive"),
       color: rest.color || "#FF5364",
       head_id: rest.head_id || null,
       parent_id: rest.parent_id || null,
@@ -10837,6 +11409,9 @@ async function startServer() {
     delete rawPatch.is_verified;
     delete rawPatch.verified_at;
     delete rawPatch.user_id;
+    if (rawPatch.org_level !== undefined) {
+      rawPatch.org_level = normalizeEmployeeOrgLevel(rawPatch.org_level) || null;
+    }
     Object.assign(m, rawPatch);
     syncUserOrgAndDepartment(m, rawPatch);
     saveDbToFile();
@@ -13179,6 +13754,9 @@ async function startServer() {
 
     const applyCircleBotEffects = (result: any) => {
       const fx = result?.effects || {};
+      if (fx.pendingAssignmentInvite?.task && Array.isArray(fx.pendingAssignmentInvite.userIds) && fx.pendingAssignmentInvite.userIds.length > 0) {
+        sendTaskAssignmentInvites(fx.pendingAssignmentInvite.task, fx.pendingAssignmentInvite.userIds, senderUser);
+      }
       if (result?.createdTask || fx.createdTask) {
         broadcast({ type: "tasks:changed", task: result?.createdTask || fx.createdTask });
       } else if (fx.updatedTask) {
@@ -13194,7 +13772,7 @@ async function startServer() {
       if (fx.postsChanged) broadcast({ type: "posts:changed" });
       if (fx.pollsChanged) broadcast({ type: "polls:changed" });
       if (fx.notificationsChanged) broadcast({ type: "notifications:changed" });
-      return Boolean(result?.createdTask || fx.needsSave || fx.tasksChanged || fx.projectsChanged || fx.remindersChanged || fx.meetingsChanged || fx.postsChanged || fx.pollsChanged || fx.notificationsChanged);
+      return Boolean(result?.createdTask || fx.needsSave || fx.tasksChanged || fx.projectsChanged || fx.remindersChanged || fx.meetingsChanged || fx.postsChanged || fx.pollsChanged || fx.notificationsChanged || fx.pendingAssignmentInvite);
     };
 
     // Instant AI Workspace Copilot auto-reply for Circle Assistant
@@ -13225,8 +13803,13 @@ async function startServer() {
             created_at: new Date().toISOString()
           };
           db.messages.push(botMsg);
+          const reportPct = result.report
+            ? (result.report.kind === "task_report"
+                ? result.report.summary?.progress_percent
+                : result.report.progress_percent)
+            : null;
           const cleanPreview = result.report
-            ? `${result.report.title} (${result.report.summary?.progress_percent ?? 0}%)`
+            ? `${result.report.title}${typeof reportPct === "number" ? ` (${reportPct}%)` : ""}`
             : replyText.replace(/\*\*/g, "").replace(/\s+/g, " ").trim().slice(0, 120);
           conv.last_message_preview = cleanPreview || replyText;
           conv.last_message_at = botMsg.created_at;
@@ -13256,6 +13839,9 @@ async function startServer() {
     const question = String(req.body?.question || req.body?.text || "").trim();
     const result = await generateCircleBotReply({ db, senderUser, question });
     const fx = result?.effects || {};
+    if (fx.pendingAssignmentInvite?.task && Array.isArray(fx.pendingAssignmentInvite.userIds) && fx.pendingAssignmentInvite.userIds.length > 0) {
+      sendTaskAssignmentInvites(fx.pendingAssignmentInvite.task, fx.pendingAssignmentInvite.userIds, senderUser);
+    }
     if (result.createdTask || fx.createdTask) {
       broadcast({ type: "tasks:changed", task: result.createdTask || fx.createdTask });
     } else if (fx.updatedTask) {
@@ -13271,7 +13857,7 @@ async function startServer() {
     if (fx.postsChanged) broadcast({ type: "posts:changed" });
     if (fx.pollsChanged) broadcast({ type: "polls:changed" });
     if (fx.notificationsChanged) broadcast({ type: "notifications:changed" });
-    if (result.createdTask || fx.needsSave || fx.tasksChanged || fx.projectsChanged || fx.remindersChanged || fx.meetingsChanged || fx.postsChanged || fx.pollsChanged || fx.notificationsChanged) {
+    if (result.createdTask || fx.needsSave || fx.tasksChanged || fx.projectsChanged || fx.remindersChanged || fx.meetingsChanged || fx.postsChanged || fx.pollsChanged || fx.notificationsChanged || fx.pendingAssignmentInvite) {
       saveDbToFile();
     }
     res.json({ answer: result.text, report: result.report || null, created_task: result.createdTask || null, effects: fx });

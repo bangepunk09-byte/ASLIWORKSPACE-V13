@@ -87,6 +87,7 @@ function areMessagesEquivalent(a, b) {
       x.sticky_note?.progress !== y.sticky_note?.progress ||
       x.form_approval?.progress !== y.form_approval?.progress ||
       x.form_approval?.status !== y.form_approval?.status ||
+      x.task_assignment?.status !== y.task_assignment?.status ||
       x.poll?.total_votes !== y.poll?.total_votes ||
       JSON.stringify(x.reactions || null) !== JSON.stringify(y.reactions || null)
     ) {
@@ -103,7 +104,8 @@ function areMessagesEquivalent(a, b) {
     lastA?.pinned === lastB?.pinned &&
     lastA?.sticky_note?.progress === lastB?.sticky_note?.progress &&
     lastA?.form_approval?.progress === lastB?.form_approval?.progress &&
-    lastA?.form_approval?.status === lastB?.form_approval?.status
+    lastA?.form_approval?.status === lastB?.form_approval?.status &&
+    lastA?.task_assignment?.status === lastB?.task_assignment?.status
   );
 }
 

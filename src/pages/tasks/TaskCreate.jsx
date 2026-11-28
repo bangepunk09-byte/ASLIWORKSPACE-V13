@@ -393,7 +393,13 @@ export default function TaskCreate({ open, onOpenChange, preset, defaults, onCre
         start_date: f.start_date || todayYmd(),
         estimate: f.estimate || null
       });
-      toast.success(`Tugas ${data.number_str || ""} berhasil dibuat!`);
+      const invited = Array.isArray(data?.newly_invited_assignees) ? data.newly_invited_assignees : [];
+      if (invited.length > 0) {
+        const names = invited.map((x) => x.name).filter(Boolean).join(", ");
+        toast.success(`Tugas ${data.number_str || ""} dibuat! Box approval penugasan dikirim lewat japri ke ${names}.`);
+      } else {
+        toast.success(`Tugas ${data.number_str || ""} berhasil dibuat!`);
+      }
       playSound("task_create");
       onOpenChange(false);
       onCreated?.(data);

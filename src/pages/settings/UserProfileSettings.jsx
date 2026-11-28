@@ -10,6 +10,7 @@ import { ROLE_NAMES } from "../../components/common";
 import { AppSelect } from "../../components/ui/select";
 import { DatePicker } from "../../components/ui/date-picker";
 import { Card } from "./AdminPanels";
+import { DEFAULT_ORG_LEVELS, inferUserOrgLevel } from "../../lib/orgLevels";
 
 const DEFAULT_DEPARTMENTS = ["Management", "Marketing", "Sales", "IT", "Finance", "Legal", "HRGA"];
 const EMPLOYMENT_OPTIONS = [
@@ -25,6 +26,7 @@ export function UserProfileSettings() {
   const [f, setF] = useState({
     name: me?.name || "",
     job_title: me?.job_title || "",
+    org_level: inferUserOrgLevel(me, DEFAULT_ORG_LEVELS),
     department: me?.department || "Marketing",
     phone: me?.phone || "",
     employee_id: me?.employee_id || "",
@@ -56,6 +58,7 @@ export function UserProfileSettings() {
     setF({
       name: me.name || "",
       job_title: me.job_title || "",
+      org_level: inferUserOrgLevel(me, DEFAULT_ORG_LEVELS),
       department: me.department || "Marketing",
       phone: me.phone || "",
       employee_id: me.employee_id || "",
@@ -301,7 +304,7 @@ export function UserProfileSettings() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div>
             <label className="mb-1 block text-xs font-semibold text-sub">Divisi / Departemen</label>
             <AppSelect
@@ -312,6 +315,20 @@ export function UserProfileSettings() {
             >
               {departments.map((d) => (
                 <option key={d} value={d}>{d}</option>
+              ))}
+            </AppSelect>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-sub">Level Hierarki</label>
+            <AppSelect
+              value={f.org_level || inferUserOrgLevel(me, DEFAULT_ORG_LEVELS)}
+              onChange={(e) => setF({ ...f, org_level: e.target.value })}
+              className="h-10 w-full rounded-xl border bg-surface2 px-3 text-xs font-medium text-ink"
+              data-testid="profile-settings-level-select"
+            >
+              {DEFAULT_ORG_LEVELS.map((lvl, idx) => (
+                <option key={lvl} value={lvl}>{idx + 1}. {lvl}</option>
               ))}
             </AppSelect>
           </div>
