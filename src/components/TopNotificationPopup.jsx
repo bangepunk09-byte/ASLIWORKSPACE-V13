@@ -85,10 +85,10 @@ export default function TopNotificationPopup({ notif, onClose }) {
       onClose();
       toast.success(
         isPasswordReset
-          ? `Reset password untuk ${access_request.name || "karyawan"} di-approve!`
+          ? `Reset password untuk ${access_request.name || "employee"} di-approve!`
           : isDeleteUser
-          ? `Permohonan hapus akun ${access_request.name || "karyawan"} di-approve!`
-          : `Akses untuk ${access_request.name || "karyawan"} berhasil di-approve!`
+          ? `Permohonan hapus akun ${access_request.name || "employee"} di-approve!`
+          : `Akses untuk ${access_request.name || "employee"} berhasil di-approve!`
       );
     } catch (e) {
       toast.error(errMsg(e, "Gagal meng-approve permintaan"));

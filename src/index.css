@@ -12,11 +12,23 @@
 :root {
   --c-bg: #F5F7FB; --c-surface: #FFFFFF; --c-surface2: #F0F4FA; --c-sidebar: #FFFFFF; --c-text: #20283B; --c-muted: #778198;
   --c-border: #E6EAF1; --c-accent: #FF5364; --c-accent-hover: #F04456; --c-accent2: #6C8CFF;
+  --c-chat-mine: #FF5364; --c-chat-mine-text: #FFFFFF; --c-chat-other: #FFFFFF; --c-chat-other-text: #20283B;
   --s-red: #FFF0F2; --s-blue: #DDEEFF; --s-purple: #EEE6FF; --s-green: #DFF7E8; --s-yellow: #FFF3C4;
   --radius: 14px; --btn-radius: 9999px; --input-radius: 9999px; --chip-radius: 9999px; --card-radius: 20px;
   --shadow-card: 0 1px 2px rgba(32, 40, 59, .04), 0 8px 24px -12px rgba(32, 40, 59, .12);
 }
-.dark { --shadow-card: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px -12px rgba(0, 0, 0, .5); }
+.dark {
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px -12px rgba(0, 0, 0, .5);
+  --c-chat-other: #171E2E; --c-chat-other-text: #F4F6FC;
+}
+.chat-bubble-mine {
+  background-color: var(--c-chat-mine);
+  color: var(--c-chat-mine-text);
+}
+.chat-bubble-other {
+  background-color: var(--c-chat-other);
+  color: var(--c-chat-other-text);
+}
 
 * { border-color: var(--c-border); box-sizing: border-box; }
 html {

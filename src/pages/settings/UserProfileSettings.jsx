@@ -97,7 +97,7 @@ export function UserProfileSettings() {
     if (!file) return;
     if (!file.type.startsWith("image/")) return toast.error("Pilih file gambar untuk foto profil");
     try {
-      const up = await uploadFile(file);
+      const up = await uploadFile(file, { maxDim: 480, quality: 0.84 });
       const url = fileUrl(up.id);
       setF((prev) => ({ ...prev, avatar: url, picture: url }));
 

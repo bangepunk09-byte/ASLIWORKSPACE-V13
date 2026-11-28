@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { Smile, Sticker, Paperclip, Image as ImageIcon, BarChart3, SendHorizonal, X, Search, Upload, FileText, Plus, Sparkles, Trash2, Palette, Users } from "lucide-react";
+import { Smile, Sticker, Paperclip, Image as ImageIcon, BarChart3, ClipboardCheck, SendHorizonal, X, Search, Upload, FileText, Plus, Sparkles, Trash2, Palette, Users } from "lucide-react";
 import { toast } from "sonner";
 import { api, errMsg, fileUrl, uploadFile } from "../../lib/api";
 import { useApp } from "../../context/AppContext";
@@ -394,13 +394,14 @@ function isImageFile(file) {
   return /\.(png|jpe?g|gif|webp|avif|bmp|svg|heic|heif)$/i.test(file.name || "");
 }
 
-const Composer = forwardRef(function Composer({ conv, reply, onCancelReply, onSent, onPoll, isCircleConv, onOpenFeatureHub }, forwardedRef) {
+const Composer = forwardRef(function Composer({ conv, reply, onCancelReply, onSent, onPoll, onApproval, isCircleConv, onOpenFeatureHub }, forwardedRef) {
   const { me, send, userMap, t: tr } = useApp();
   const [text, setText] = useState("");
   const [files, setFiles] = useState([]);
   const [busy, setBusy] = useState(false);
   const [mentions, setMentions] = useState([]);
   const [mq, setMq] = useState(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
   const [slashCmds, setSlashCmds] = useState([]);
   const [slashIndex, setSlashIndex] = useState(0);
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
@@ -544,16 +545,26 @@ const Composer = forwardRef(function Composer({ conv, reply, onCancelReply, onSe
     setText(v);
     const m = v.slice(0, e.target.selectionStart).match(/@([\w]*)$/);
     setMq(m ? m[1].toLowerCase() : null);
+    setMentionIndex(0);
     if (Date.now() - lastTyping.current > 2500) { lastTyping.current = Date.now(); send({ type: "typing", conversation_id: conv.id }); }
   };
   const pickMention = (u) => {
-    const pos = ta.current.selectionStart;
+    if (!u) return;
+    const pos = ta.current ? ta.current.selectionStart : text.length;
     const tagText = u.isAll ? "@semua " : `@${u.name} `;
     const before = text.slice(0, pos).replace(/@[\w]*$/, tagText);
-    setText(before + text.slice(pos));
+    const nextText = before + text.slice(pos);
+    const nextCursor = before.length;
+    setText(nextText);
     setMentions((prev) => Array.from(new Set([...prev, u.isAll ? "semua" : u.user_id])));
     setMq(null);
-    ta.current.focus();
+    setMentionIndex(0);
+    requestAnimationFrame(() => {
+      if (ta.current) {
+        ta.current.focus();
+        try { ta.current.setSelectionRange(nextCursor, nextCursor); } catch {}
+      }
+    });
   };
   const addFiles = useCallback(async (list) => {
     if (conv?.archived || conv?.is_member === false) return;
@@ -677,32 +688,46 @@ const Composer = forwardRef(function Composer({ conv, reply, onCancelReply, onSe
       )}
       {members.length > 0 && (
         <div className="mb-2 rounded-xl border bg-surface p-1 shadow-lg" data-testid="mention-suggestions">
-          {members.map((u) => (
-            <button
-              key={u.user_id}
-              type="button"
-              onClick={() => pickMention(u)}
-              className="flex w-full items-center gap-2 rounded-lg p-1.5 text-sm hover:bg-surface2 cursor-pointer"
-              data-testid={`chat-mention-${u.user_id}`}
-            >
-              {u.isAll ? (
-                <>
-                  <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full bg-brand/15 text-brand">
-                    <Users size={12} />
-                  </span>
-                  <span className="font-semibold text-brand">@semua</span>
-                  <span className="ml-auto text-[11px] text-sub">
-                    {conv?.type === "group" ? `Semua anggota grup (${u.count})` : "Tag semua"}
-                  </span>
-                </>
-              ) : (
-                <>
-                  <Avatar user={u} size={22} showStatus={false} />
-                  <span>{u.name}</span>
-                </>
-              )}
-            </button>
-          ))}
+          {members.map((u, idx) => {
+            const isSelected = idx === (mentionIndex % members.length);
+            return (
+              <button
+                key={u.user_id}
+                type="button"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  pickMention(u);
+                }}
+                onMouseEnter={() => setMentionIndex(idx)}
+                className={`flex w-full items-center gap-2 rounded-lg p-1.5 text-sm transition-colors cursor-pointer ${
+                  isSelected ? "bg-brand/10 text-brand font-semibold" : "hover:bg-surface2 text-ink"
+                }`}
+                data-testid={`chat-mention-${u.user_id}`}
+              >
+                {u.isAll ? (
+                  <>
+                    <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full bg-brand/15 text-brand">
+                      <Users size={12} />
+                    </span>
+                    <span className="font-semibold text-brand">@semua</span>
+                    <span className="ml-auto text-[11px] text-sub">
+                      {conv?.type === "group" ? `Semua anggota grup (${u.count})` : "Tag semua"}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <Avatar user={u} size={22} showStatus={false} />
+                    <span className="truncate">{u.name}</span>
+                    {isSelected && (
+                      <span className="ml-auto shrink-0 rounded-md bg-brand/15 px-1.5 py-0.5 text-[10px] font-bold text-brand">
+                        Tab ↹
+                      </span>
+                    )}
+                  </>
+                )}
+              </button>
+            );
+          })}
         </div>
       )}
       {matchingSlash.length > 0 && (
@@ -764,7 +789,7 @@ const Composer = forwardRef(function Composer({ conv, reply, onCancelReply, onSe
                 <button type="button" onClick={() => setMobileTab("sticker")} className={`flex-1 rounded-lg py-1.5 transition-colors ${mobileTab === "sticker" ? "bg-surface text-ink shadow-xs font-bold" : "text-sub"}`}>{tr("chat_composer_mobile_sticker", "Stiker")}</button>
               </div>
               {mobileTab === "actions" && (
-                <div className={`grid gap-2 ${conv.type === "group" ? "grid-cols-3" : "grid-cols-2"}`}>
+                <div className={`grid gap-2 ${conv.type === "group" ? "grid-cols-2" : "grid-cols-3"}`}>
                   <button
                     type="button"
                     onClick={() => { setMobileToolsOpen(false); imgRef.current?.click(); }}
@@ -794,6 +819,15 @@ const Composer = forwardRef(function Composer({ conv, reply, onCancelReply, onSe
                       <span>{tr("chat_composer_poll", "Polling")}</span>
                     </button>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => { setMobileToolsOpen(false); onApproval?.(); }}
+                    className="flex flex-col items-center justify-center gap-1.5 rounded-xl border bg-surface2/60 py-3 text-xs font-semibold text-ink hover:bg-surface2"
+                    data-testid="mobile-composer-approval-btn"
+                  >
+                    <ClipboardCheck size={18} className="text-indigo-500" />
+                    <span>Approval</span>
+                  </button>
                 </div>
               )}
               {mobileTab === "emoji" && (
@@ -825,6 +859,7 @@ const Composer = forwardRef(function Composer({ conv, reply, onCancelReply, onSe
             <button type="button" onClick={() => imgRef.current.click()} className="btn-ghost flex h-10 w-10 items-center justify-center text-sub" aria-label="Lampirkan gambar" data-testid="attach-image-btn"><ImageIcon size={19} /></button>
             <button type="button" onClick={() => fileRef.current.click()} className="btn-ghost flex h-10 w-10 items-center justify-center text-sub" aria-label="Lampirkan file" data-testid="attach-file-btn"><Paperclip size={19} /></button>
             {conv.type === "group" && <button type="button" onClick={onPoll} className="btn-ghost flex h-10 w-10 items-center justify-center text-sub hover:text-brand" title="Buat Polling" aria-label="Buat polling" data-testid="composer-poll-btn"><BarChart3 size={19} /></button>}
+            {onApproval && <button type="button" onClick={onApproval} className="btn-ghost flex h-10 w-10 items-center justify-center text-sub hover:text-brand" title="Buat Approval Card (Izin Cuti / Request Barang)" aria-label="Buat Approval Card" data-testid="composer-approval-btn"><ClipboardCheck size={19} /></button>}
           </div>
 
           <input ref={imgRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
@@ -832,6 +867,28 @@ const Composer = forwardRef(function Composer({ conv, reply, onCancelReply, onSe
         </div>
         <textarea ref={ta} rows={1} value={text} onPaste={handlePaste} onChange={(e) => { setSlashIndex(0); onChange(e); }} placeholder={conv.archived ? tr("chat_composer_ph_archived", "Grup ini telah diarsipkan") : circleMode ? tr("chat_composer_ph_circle", "Tanya atau ketik / perintah…") : tr("chat_composer_ph_default", "Tulis pesan…")} disabled={conv.archived}
           onKeyDown={(e) => {
+            if (members.length > 0) {
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setMentionIndex((i) => (i + 1) % members.length);
+                return;
+              }
+              if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setMentionIndex((i) => (i - 1 + members.length) % members.length);
+                return;
+              }
+              if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing)) {
+                e.preventDefault();
+                pickMention(members[mentionIndex % members.length] || members[0]);
+                return;
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setMq(null);
+                return;
+              }
+            }
             if (matchingSlash.length > 0) {
               if (e.key === "ArrowDown") { e.preventDefault(); setSlashIndex((i) => (i + 1) % matchingSlash.length); return; }
               if (e.key === "ArrowUp") { e.preventDefault(); setSlashIndex((i) => (i - 1 + matchingSlash.length) % matchingSlash.length); return; }

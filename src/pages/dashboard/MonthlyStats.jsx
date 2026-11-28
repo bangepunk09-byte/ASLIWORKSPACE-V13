@@ -6,6 +6,13 @@ import { toast } from "sonner";
 import { useApp } from "../../context/AppContext";
 import { api, errMsg } from "../../lib/api";
 import { scheduleJsonStorageWrite, upsertConversationInCache } from "../../lib/workspaceCaches";
+import {
+  TEAM_STATS_MEMORY_CACHE as statsMemoryCache,
+  resolveActiveStatsUserId,
+  isValidStats,
+  makeStatsCacheKey,
+  hydrateTeamStatsCache,
+} from "../../lib/bootstrapCaches";
 import { Avatar, AvatarStack, LabelChip } from "../../components/common";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../../components/ui/dropdown-menu";
 import { analyzeTaskFlow, toDayDate } from "../tasks/timelineFlow";
@@ -45,33 +52,13 @@ const INITIAL_DATA = {
   people: FALLBACK_PEOPLE
 };
 
-const statsMemoryCache = {};
+export { hydrateTeamStatsCache };
 
 function clearStatsMemoryCacheForUser(userId) {
   const prefix = `${userId || "anon"}::`;
   Object.keys(statsMemoryCache).forEach((k) => {
     if (k.startsWith(prefix)) delete statsMemoryCache[k];
   });
-}
-
-function isValidStats(d) {
-  return Boolean(d && typeof d === "object" && d.summary && typeof d.summary === "object" && Array.isArray(d.series) && Array.isArray(d.people));
-}
-
-function makeStatsCacheKey(userId, boardScopeKey, rRange) {
-  return `${userId || "anon"}::${boardScopeKey || "default"}::${rRange}`;
-}
-
-export function hydrateTeamStatsCache(userId, statsData, boardScopeKey = "default", rRange = "7d") {
-  if (!isValidStats(statsData)) return;
-  const key = makeStatsCacheKey(userId, boardScopeKey, rRange);
-  statsMemoryCache[key] = statsData;
-  scheduleJsonStorageWrite(`circle_stats_team_v2_cache_${key}`, statsData);
-  if (statsData.scope?.board_id && statsData.scope.board_id !== boardScopeKey) {
-    const altKey = makeStatsCacheKey(userId, statsData.scope.board_id, rRange);
-    statsMemoryCache[altKey] = statsData;
-    scheduleJsonStorageWrite(`circle_stats_team_v2_cache_${altKey}`, statsData);
-  }
 }
 
 function readCachedBoardsList() {
@@ -504,6 +491,22 @@ function computeInstantClientStats(
   };
 }
 
+function readStoredStatsEntry(key) {
+  if (isValidStats(statsMemoryCache[key])) return statsMemoryCache[key];
+  try {
+    const cached = localStorage.getItem(`circle_stats_team_v2_cache_${key}`);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (isValidStats(parsed)) {
+        const enriched = { ...parsed, __serverAuthoritative: true };
+        statsMemoryCache[key] = enriched;
+        return enriched;
+      }
+    }
+  } catch {}
+  return null;
+}
+
 function getCachedStats(
   userId,
   boardScopeKey,
@@ -522,26 +525,59 @@ function getCachedStats(
     return stats;
   };
 
-  const key = makeStatsCacheKey(userId, boardScopeKey, rRange);
-  if (isValidStats(statsMemoryCache[key])) return preserveScopes(statsMemoryCache[key]);
+  const uid = resolveActiveStatsUserId(userId || me);
+  const scopeKey = boardScopeKey || "default";
+  const key = makeStatsCacheKey(uid, scopeKey, rRange);
 
-  if (Array.isArray(fallbackTasks) && fallbackTasks.length > 0) {
-    return computeInstantClientStats(fallbackTasks, fallbackUsers, me, rRange, boardScopeKey, fallbackBoards, fallbackScopes);
+  // 1. Check exact memory or localStorage server-cached stats first (includes archived tasks!)
+  const exactStored = readStoredStatsEntry(key);
+  if (exactStored) return preserveScopes(exactStored);
+
+  // 2. If requesting a specific boardId that happens to match the cached "default" board, reuse it immediately
+  if (scopeKey !== "default") {
+    const defaultStored = readStoredStatsEntry(makeStatsCacheKey(uid, "default", rRange));
+    if (defaultStored && defaultStored.scope?.board_id === scopeKey) {
+      statsMemoryCache[key] = defaultStored;
+      return preserveScopes(defaultStored);
+    }
+  } else {
+    // If requesting "default" and user's department board is already cached under its board_id, reuse it
+    const myDeptLower = String(me?.department || "").trim().toLowerCase();
+    if (myDeptLower) {
+      const deptBoardKey = makeStatsCacheKey(uid, `brd_div_${myDeptLower.replace(/\s+/g, "_")}`, rRange);
+      const deptStored = readStoredStatsEntry(deptBoardKey);
+      if (deptStored) return preserveScopes(deptStored);
+    }
   }
 
-  try {
-    const cached = localStorage.getItem(`circle_stats_team_v2_cache_${key}`);
-    if (cached) {
-      const parsed = JSON.parse(cached);
-      if (isValidStats(parsed)) {
-        statsMemoryCache[key] = parsed;
-        return preserveScopes(parsed);
-      }
-    }
-  } catch {}
+  // 3. Check if we have authoritative server stats for the same board in the alternate range ("7d" vs "4w")
+  // Summary & people are board-level and identical across 7d and 4w, preventing any number jump on range toggle
+  const altRange = rRange === "7d" ? "4w" : "7d";
+  const altRangeStored =
+    readStoredStatsEntry(makeStatsCacheKey(uid, scopeKey, altRange)) ||
+    (scopeKey !== "default"
+      ? (() => {
+          const defAlt = readStoredStatsEntry(makeStatsCacheKey(uid, "default", altRange));
+          return defAlt && defAlt.scope?.board_id === scopeKey ? defAlt : null;
+        })()
+      : null);
 
-  if (Array.isArray(fallbackScopes) && fallbackScopes.length > 0) {
-    return computeInstantClientStats(fallbackTasks, fallbackUsers, me, rRange, boardScopeKey, fallbackBoards, fallbackScopes);
+  if ((Array.isArray(fallbackTasks) && fallbackTasks.length > 0) || (Array.isArray(fallbackScopes) && fallbackScopes.length > 0) || altRangeStored) {
+    const computed = computeInstantClientStats(fallbackTasks, fallbackUsers, me, rRange, scopeKey, fallbackBoards, fallbackScopes);
+    if (altRangeStored && isValidStats(altRangeStored)) {
+      return preserveScopes({
+        ...computed,
+        scope: altRangeStored.scope || computed.scope,
+        available_scopes:
+          Array.isArray(altRangeStored.available_scopes) && altRangeStored.available_scopes.length > 0
+            ? altRangeStored.available_scopes
+            : computed.available_scopes,
+        summary: altRangeStored.summary,
+        people: altRangeStored.people,
+        __serverAuthoritative: true,
+      });
+    }
+    return preserveScopes(computed);
   }
 
   return INITIAL_DATA;
@@ -761,13 +797,7 @@ function TeamPerformance({ data, anchor, setAnchor, range, setRange, scopeLabel,
             value={s.done ?? 0}
             note={
               s.done
-                ? `${s.done} ${tr("stats_done_unit", "tugas selesai")}${
-                    s.done_late > 0
-                      ? ` (${s.done_on_time ?? 0} tepat waktu, ${s.done_late} telat)`
-                      : s.total
-                      ? ` dari ${s.total} tugas`
-                      : ""
-                  }`
+                ? tr("stats_done_unit_label", "Tugas selesai")
                 : s.active > 0
                 ? `${tr("stats_no_done", "Belum ada selesai")} · ${s.active} tugas aktif`
                 : tr("stats_no_done", "Belum ada selesai")
@@ -781,9 +811,7 @@ function TeamPerformance({ data, anchor, setAnchor, range, setRange, scopeLabel,
             value={s.overdue ?? 0}
             note={
               s.overdue
-                ? `${s.overdue} ${tr("stats_late_unit", "lewat deadline")}${
-                    s.done_late > 0 ? ` (+${s.done_late} selesai telat)` : ""
-                  }`
+                ? tr("stats_late_unit_label", "Lewat deadline")
                 : s.done_late > 0
                 ? `${s.done_late} selesai lewat deadline`
                 : tr("stats_no_late", "Tidak ada telat")
@@ -1290,7 +1318,16 @@ export default function MonthlyStats({ showPerformance = true, showBottleneck = 
       availableScopesRef.current
     );
     if (cached) {
-      setData((prev) => (statsSignature(prev) === statsSignature(cached) ? prev : cached));
+      setData((prev) => {
+        const sameBoard =
+          Boolean(prev?.scope?.board_id) &&
+          (prev.scope.board_id === bId || (!bId && prev.scope.board_id === cached?.scope?.board_id));
+        // Never overwrite an authoritative server payload for the same board with a partial non-archived client estimate
+        if (sameBoard && prev?.__serverAuthoritative && !cached.__serverAuthoritative) {
+          return prev;
+        }
+        return statsSignature(prev) === statsSignature(cached) ? prev : cached;
+      });
     }
 
     if (abortRef.current) {
@@ -1315,7 +1352,9 @@ export default function MonthlyStats({ showPerformance = true, showBottleneck = 
             availableScopesRef.current = res.data.available_scopes;
           }
           hydrateTeamStatsCache(uid, res.data, scopeKey, r);
-          setData((prev) => (statsSignature(prev) === statsSignature(res.data) ? prev : res.data));
+          const { scopes_stats: _peerScopes, ...cleanData } = res.data;
+          const authoritativeData = { ...cleanData, __serverAuthoritative: true };
+          setData((prev) => (statsSignature(prev) === statsSignature(authoritativeData) ? prev : authoritativeData));
         }
       })
       .catch(() => {});
@@ -1354,13 +1393,27 @@ export default function MonthlyStats({ showPerformance = true, showBottleneck = 
     let wsReloadTimer = null;
     const unsub = subscribe((evt) => {
       if (evt.type === "bootstrap:dashboard") {
-        if (isValidStats(evt.stats_team) && !selectedBoardId && range === "7d") {
+        if (isValidStats(evt.stats_team)) {
           lastBootstrapStatsAtRef.current = Date.now();
           if (Array.isArray(evt.stats_team.available_scopes) && evt.stats_team.available_scopes.length > 0) {
             availableScopesRef.current = evt.stats_team.available_scopes;
           }
           hydrateTeamStatsCache(meRef.current?.user_id, evt.stats_team, "default", "7d");
-          setData((prev) => (statsSignature(prev) === statsSignature(evt.stats_team) ? prev : evt.stats_team));
+          if (range === "7d") {
+            const targetStats = getCachedStats(
+              meRef.current?.user_id,
+              selectedBoardId || "default",
+              "7d",
+              tasksRef.current,
+              usersRef.current,
+              meRef.current,
+              boardsRef.current,
+              availableScopesRef.current
+            );
+            if (targetStats) {
+              setData((prev) => (statsSignature(prev) === statsSignature(targetStats) ? prev : targetStats));
+            }
+          }
         }
         if (Array.isArray(evt.projects)) {
           setProjectsMap(Object.fromEntries(evt.projects.map((p) => [p.id, p])));
@@ -1368,7 +1421,6 @@ export default function MonthlyStats({ showPerformance = true, showBottleneck = 
         return;
       }
       if (evt.type === "tasks:changed" || evt.type === "tasks:deleted" || evt.type === "users:changed" || evt.type === "boards:changed") {
-        clearStatsMemoryCacheForUser(meRef.current?.user_id);
         if (evt.type === "boards:changed") {
           api.get("/boards")
             .then((res) => {

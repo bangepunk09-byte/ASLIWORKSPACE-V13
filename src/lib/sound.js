@@ -26,6 +26,227 @@ export const setSoundEnabled = (enabled) => {
   localStorage.setItem("circle_sound_effects", enabled ? "enabled" : "disabled");
 };
 
+export const NOTIFICATION_SOUND_PRESETS = [
+  { id: "bbm", name: "BBM Classic Chime", desc: "3-nada kristal klasik BlackBerry Messenger" },
+  { id: "marimba", name: "Elegant Marimba", desc: "Ketukan marimba hangat 2-nada" },
+  { id: "crystal", name: "Crystal Bell", desc: "Lonceng kaca jernih & modern" },
+  { id: "chime_up", name: "Harmony Triad", desc: "Akord naik 3-nada lembut" },
+  { id: "double_pop", name: "Modern Double Pop", desc: "Ketukan pop ganda ringan" },
+  { id: "laser_ping", name: "Digital Sonar Ping", desc: "Nada ping futuristik & tegas" },
+];
+
+export const DEFAULT_WS_SOUND_CONFIG = {
+  message_preset: "bbm",
+  message_custom_file_id: "",
+  message_custom_name: "",
+  notif_preset: "marimba",
+  notif_custom_file_id: "",
+  notif_custom_name: "",
+  volume: 100,
+};
+
+let cachedWsSoundConfig = null;
+
+export function getWorkspaceSoundConfig() {
+  if (cachedWsSoundConfig) return cachedWsSoundConfig;
+  if (typeof window !== "undefined") {
+    try {
+      const raw = localStorage.getItem("circle_ws_sound_config");
+      if (raw) {
+        cachedWsSoundConfig = { ...DEFAULT_WS_SOUND_CONFIG, ...JSON.parse(raw) };
+        return cachedWsSoundConfig;
+      }
+    } catch {}
+  }
+  return DEFAULT_WS_SOUND_CONFIG;
+}
+
+export function setWorkspaceSoundConfig(cfg) {
+  if (!cfg || typeof cfg !== "object") return;
+  cachedWsSoundConfig = { ...DEFAULT_WS_SOUND_CONFIG, ...cfg };
+  if (typeof window !== "undefined") {
+    try {
+      localStorage.setItem("circle_ws_sound_config", JSON.stringify(cachedWsSoundConfig));
+    } catch {}
+  }
+}
+
+const audioElementCache = new Map();
+
+function playCustomAudioFile(fileId, volumeScale = 1, onFallback) {
+  if (typeof window === "undefined" || !fileId) {
+    onFallback?.();
+    return;
+  }
+  try {
+    const src = fileId.startsWith("http") || fileId.startsWith("/") || fileId.startsWith("data:")
+      ? fileId
+      : `/api/files/${fileId}`;
+    let audio = audioElementCache.get(src);
+    if (!audio) {
+      audio = new Audio(src);
+      audio.preload = "auto";
+      audioElementCache.set(src, audio);
+    }
+    audio.volume = Math.max(0.05, Math.min(1, Number(volumeScale) || 1));
+    audio.currentTime = 0;
+    const playPromise = audio.play();
+    if (playPromise && typeof playPromise.catch === "function") {
+      playPromise.catch(() => {
+        onFallback?.();
+      });
+    }
+  } catch {
+    onFallback?.();
+  }
+}
+
+function playSynthNotifPreset(ctx, now, presetId = "bbm", vol = 1) {
+  const v = Math.max(0.1, Math.min(1.5, Number(vol) || 1));
+  switch (presetId) {
+    case "marimba": {
+      [659.25, 987.77].forEach((freq, idx) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(freq, now + idx * 0.09);
+        gain.gain.setValueAtTime(0.16 * v, now + idx * 0.09);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.09 + 0.35);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + idx * 0.09);
+        osc.stop(now + idx * 0.09 + 0.36);
+      });
+      break;
+    }
+    case "crystal": {
+      [1174.66, 1760.0].forEach((freq, idx) => {
+        const t0 = now + idx * 0.075;
+        const osc = ctx.createOscillator();
+        const g = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(freq, t0);
+        g.gain.setValueAtTime(0.001, t0);
+        g.gain.linearRampToValueAtTime(0.17 * v, t0 + 0.005);
+        g.gain.exponentialRampToValueAtTime(0.0008, t0 + 0.42);
+        osc.connect(g);
+        g.connect(ctx.destination);
+        osc.start(t0);
+        osc.stop(t0 + 0.44);
+      });
+      break;
+    }
+    case "chime_up": {
+      [523.25, 659.25, 783.99, 1046.5].forEach((freq, idx) => {
+        const t0 = now + idx * 0.065;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(freq, t0);
+        gain.gain.setValueAtTime(0.14 * v, t0);
+        gain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.3);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(t0);
+        osc.stop(t0 + 0.32);
+      });
+      break;
+    }
+    case "double_pop": {
+      [0, 0.095].forEach((delay, idx) => {
+        const t0 = now + delay;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(idx === 0 ? 480 : 640, t0);
+        osc.frequency.exponentialRampToValueAtTime(idx === 0 ? 780 : 980, t0 + 0.065);
+        gain.gain.setValueAtTime(0.16 * v, t0);
+        gain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.095);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(t0);
+        osc.stop(t0 + 0.1);
+      });
+      break;
+    }
+    case "laser_ping": {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(1480, now);
+      osc.frequency.exponentialRampToValueAtTime(880, now + 0.11);
+      osc.frequency.setValueAtTime(1320, now + 0.12);
+      gain.gain.setValueAtTime(0.16 * v, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.34);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.36);
+      break;
+    }
+    case "bbm":
+    default: {
+      const notes = [
+        { freq: 1046.5, delay: 0.0, dur: 0.14, gain: 0.15 * v },   // C6
+        { freq: 1318.51, delay: 0.082, dur: 0.16, gain: 0.16 * v }, // E6
+        { freq: 1567.98, delay: 0.165, dur: 0.34, gain: 0.18 * v }, // G6
+      ];
+      notes.forEach(({ freq, delay, dur, gain: peak }) => {
+        const t0 = now + delay;
+        const osc1 = ctx.createOscillator();
+        const g1 = ctx.createGain();
+        osc1.type = "sine";
+        osc1.frequency.setValueAtTime(freq, t0);
+        g1.gain.setValueAtTime(0.001, t0);
+        g1.gain.linearRampToValueAtTime(peak, t0 + 0.004);
+        g1.gain.exponentialRampToValueAtTime(0.0008, t0 + dur);
+        osc1.connect(g1);
+        g1.connect(ctx.destination);
+        osc1.start(t0);
+        osc1.stop(t0 + dur + 0.02);
+
+        const osc2 = ctx.createOscillator();
+        const g2 = ctx.createGain();
+        osc2.type = "sine";
+        osc2.frequency.setValueAtTime(freq * 2.003, t0);
+        g2.gain.setValueAtTime(0.001, t0);
+        g2.gain.linearRampToValueAtTime(peak * 0.28, t0 + 0.003);
+        g2.gain.exponentialRampToValueAtTime(0.0008, t0 + Math.min(0.11, dur * 0.65));
+        osc2.connect(g2);
+        g2.connect(ctx.destination);
+        osc2.start(t0);
+        osc2.stop(t0 + Math.min(0.13, dur * 0.7));
+
+        const osc3 = ctx.createOscillator();
+        const g3 = ctx.createGain();
+        osc3.type = "triangle";
+        osc3.frequency.setValueAtTime(freq * 3, t0);
+        g3.gain.setValueAtTime(peak * 0.14, t0);
+        g3.gain.exponentialRampToValueAtTime(0.0008, t0 + 0.024);
+        osc3.connect(g3);
+        g3.connect(ctx.destination);
+        osc3.start(t0);
+        osc3.stop(t0 + 0.028);
+      });
+      break;
+    }
+  }
+}
+
+export function playSoundPreview(presetId = "bbm", { customFileId = "", volume = 100 } = {}) {
+  const volScale = Math.max(0.1, Math.min(1, (Number(volume) || 100) / 100));
+  if (presetId === "custom" && customFileId) {
+    playCustomAudioFile(customFileId, volScale, () => {
+      const ctx = getAudioContext();
+      if (ctx) playSynthNotifPreset(ctx, ctx.currentTime, "bbm", volScale);
+    });
+    return;
+  }
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  playSynthNotifPreset(ctx, ctx.currentTime, presetId, volScale);
+}
+
 let lastBbmSoundAt = 0;
 
 export function playSound(type = "click") {
@@ -35,62 +256,24 @@ export function playSound(type = "click") {
     if (!ctx) return;
 
     const now = ctx.currentTime;
+    const wsCfg = getWorkspaceSoundConfig();
+    const volScale = Math.max(0.1, Math.min(1, (Number(wsCfg.volume) || 100) / 100));
 
     switch (type) {
       case "bbm":
       case "message_notif": {
-        // Classic BlackBerry Messenger (BBM) crystalline 3-note chime
         const nowMs = typeof performance !== "undefined" ? performance.now() : Date.now();
         if (nowMs - lastBbmSoundAt < 350) return;
         lastBbmSoundAt = nowMs;
 
-        const notes = [
-          { freq: 1046.5, delay: 0.0, dur: 0.14, gain: 0.15 },   // C6
-          { freq: 1318.51, delay: 0.082, dur: 0.16, gain: 0.16 }, // E6
-          { freq: 1567.98, delay: 0.165, dur: 0.34, gain: 0.18 }, // G6
-        ];
-
-        notes.forEach(({ freq, delay, dur, gain: peak }) => {
-          const t0 = now + delay;
-
-          // Primary glassy sine chime
-          const osc1 = ctx.createOscillator();
-          const g1 = ctx.createGain();
-          osc1.type = "sine";
-          osc1.frequency.setValueAtTime(freq, t0);
-          g1.gain.setValueAtTime(0.001, t0);
-          g1.gain.linearRampToValueAtTime(peak, t0 + 0.004);
-          g1.gain.exponentialRampToValueAtTime(0.0008, t0 + dur);
-          osc1.connect(g1);
-          g1.connect(ctx.destination);
-          osc1.start(t0);
-          osc1.stop(t0 + dur + 0.02);
-
-          // Harmonic bell overtone (2x shimmer, faster decay)
-          const osc2 = ctx.createOscillator();
-          const g2 = ctx.createGain();
-          osc2.type = "sine";
-          osc2.frequency.setValueAtTime(freq * 2.003, t0);
-          g2.gain.setValueAtTime(0.001, t0);
-          g2.gain.linearRampToValueAtTime(peak * 0.28, t0 + 0.003);
-          g2.gain.exponentialRampToValueAtTime(0.0008, t0 + Math.min(0.11, dur * 0.65));
-          osc2.connect(g2);
-          g2.connect(ctx.destination);
-          osc2.start(t0);
-          osc2.stop(t0 + Math.min(0.13, dur * 0.7));
-
-          // Crisp percussive plink transient
-          const osc3 = ctx.createOscillator();
-          const g3 = ctx.createGain();
-          osc3.type = "triangle";
-          osc3.frequency.setValueAtTime(freq * 3, t0);
-          g3.gain.setValueAtTime(peak * 0.14, t0);
-          g3.gain.exponentialRampToValueAtTime(0.0008, t0 + 0.024);
-          osc3.connect(g3);
-          g3.connect(ctx.destination);
-          osc3.start(t0);
-          osc3.stop(t0 + 0.028);
-        });
+        const msgPreset = wsCfg.message_preset || "bbm";
+        if (msgPreset === "custom" && wsCfg.message_custom_file_id) {
+          playCustomAudioFile(wsCfg.message_custom_file_id, volScale, () => {
+            playSynthNotifPreset(ctx, ctx.currentTime, "bbm", volScale);
+          });
+          return;
+        }
+        playSynthNotifPreset(ctx, now, msgPreset, volScale);
         break;
       }
 
@@ -144,19 +327,14 @@ export function playSound(type = "click") {
       }
 
       case "notification": {
-        // Elegant marimba chime
-        [659.25, 987.77].forEach((freq, idx) => {
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.type = "sine";
-          osc.frequency.setValueAtTime(freq, now + idx * 0.09);
-          gain.gain.setValueAtTime(0.15, now + idx * 0.09);
-          gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.09 + 0.35);
-          osc.connect(gain);
-          gain.connect(ctx.destination);
-          osc.start(now + idx * 0.09);
-          osc.stop(now + idx * 0.09 + 0.36);
-        });
+        const notifPreset = wsCfg.notif_preset || "marimba";
+        if (notifPreset === "custom" && wsCfg.notif_custom_file_id) {
+          playCustomAudioFile(wsCfg.notif_custom_file_id, volScale, () => {
+            playSynthNotifPreset(ctx, ctx.currentTime, "marimba", volScale);
+          });
+          return;
+        }
+        playSynthNotifPreset(ctx, now, notifPreset, volScale);
         break;
       }
 

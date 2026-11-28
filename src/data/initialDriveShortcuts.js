@@ -97,7 +97,7 @@ export const INITIAL_DRIVE_SHORTCUTS = [
   {
     id: "drv_6",
     name: "SOP Perusahaan & Onboarding HRGA",
-    description: "Panduan karyawan baru, peraturan perusahaan, klaim reimbursement, dan kebijakan cuti.",
+    description: "Panduan employee baru, peraturan perusahaan, klaim reimbursement, dan kebijakan cuti.",
     drive_url: "https://drive.google.com/drive/folders/1asli-hrga-sop-onboarding",
     folder_id: "1asli-hrga-sop-onboarding",
     category: "HRGA",

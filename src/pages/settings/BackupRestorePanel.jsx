@@ -39,6 +39,7 @@ import {
 import {
   inspectLocalMirrorSources,
   forceHydrateFromLocalSources,
+  resetLocalMirrorAfterRestore,
 } from "../../lib/persistentMirror";
 import { Card } from "./AdminPanels";
 import {
@@ -629,7 +630,7 @@ export default function BackupRestorePanel() {
   const handleDownloadJson = async () => {
     setDownloading(true);
     try {
-      const { data } = await api.get("/admin/backup/export");
+      const { data } = await api.get("/admin/backup/export", { timeout: 180000 });
       const jsonStr = JSON.stringify(data, null, 2);
       const blob = new Blob([jsonStr], { type: "application/json;charset=utf-8" });
       const url = URL.createObjectURL(blob);
@@ -677,19 +678,21 @@ export default function BackupRestorePanel() {
     if (!pendingRestore?.payload) return;
     setRestoring(true);
     try {
-      const { data } = await api.post("/admin/backup/restore", pendingRestore.payload);
+      const { data } = await api.post("/admin/backup/restore", pendingRestore.payload, { timeout: 180000 });
       clearWorkspaceCaches();
+      await resetLocalMirrorAfterRestore(api);
       await Promise.allSettled([
         checkAuth?.(),
         reloadWs?.(),
         reloadUsers?.(),
         reloadTasks?.(),
         reloadLabels?.(),
-        reloadAll?.(),
+        reloadAll?.(true),
       ]);
       setSummary(data?.summary || pendingRestore.summary);
       setPendingRestore(null);
-      toast.success("Semua data workspace (pesan, tugas, anggota, beranda, dll) berhasil dipulihkan!");
+      const filesMsg = Number(data?.restored_files || 0) > 0 ? ` (${data.restored_files} file lampiran dipulihkan)` : "";
+      toast.success(`Semua data workspace (pesan, tugas, file, anggota, beranda, dll) berhasil dipulihkan${filesMsg}!`);
       fetchSummary();
     } catch (e) {
       toast.error(errMsg(e, "Gagal memulihkan data backup"));
@@ -767,7 +770,7 @@ export default function BackupRestorePanel() {
     ? [
         { label: "Pesan & Ruang Obrolan", value: `${summary.conversations || 0} ruang · ${summary.messages || 0} pesan`, icon: MessageCircle, tone: "bg-soft-blue text-blue-700 dark:text-blue-300" },
         { label: "Tugas & Proyek", value: `${summary.tasks || 0} tugas · ${summary.projects || 0} proyek`, icon: CheckSquare, tone: "bg-soft-red text-rose-700 dark:text-rose-300" },
-        { label: "Karyawan & Divisi", value: `${summary.users || 0} karyawan · ${summary.org_units || 0} unit`, icon: Users, tone: "bg-soft-green text-emerald-700 dark:text-emerald-300" },
+        { label: "Employee & Divisi", value: `${summary.users || 0} employee · ${summary.org_units || 0} unit`, icon: Users, tone: "bg-soft-green text-emerald-700 dark:text-emerald-300" },
         { label: "Beranda & Polling", value: `${summary.posts || 0} postingan · ${summary.polls || 0} polling`, icon: Newspaper, tone: "bg-soft-purple text-violet-700 dark:text-violet-300" },
         { label: "Board & Label", value: `${summary.boards || 0} board · ${summary.labels || 0} label`, icon: FolderKanban, tone: "bg-soft-yellow text-amber-700 dark:text-amber-300" },
         { label: "File & Stiker", value: `${summary.upload_files || 0} file unggahan · ${summary.stickers || 0} stiker`, icon: FileArchive, tone: "bg-surface2 text-ink" },
@@ -1135,7 +1138,7 @@ export default function BackupRestorePanel() {
               <span>Cara menjaga data tetap utuh saat Republish aplikasi:</span>
             </p>
             <ol className="list-decimal pl-4 space-y-1 text-sub">
-              <li>Sebelum melakukan <strong>Republish</strong>, klik <strong>Unduh Full Backup (.json)</strong> untuk menyimpan semua pesan, tugas, karyawan, beranda, board, dan file ke perangkat Anda.</li>
+              <li>Sebelum melakukan <strong>Republish</strong>, klik <strong>Unduh Full Backup (.json)</strong> untuk menyimpan semua pesan, tugas, employee, beranda, board, dan file ke perangkat Anda.</li>
               <li>Setelah aplikasi selesai di-republish, buka menu <strong>Pengaturan → Backup &amp; Restore</strong> lalu unggah file <code>.json</code> tersebut melalui tombol <strong>Pulihkan dari File (.json)</strong>.</li>
             </ol>
           </div>
@@ -1323,7 +1326,7 @@ export default function BackupRestorePanel() {
 
           {pendingRestore?.summary && (
             <div className="grid grid-cols-2 gap-2 rounded-2xl border bg-surface2/60 p-3 text-xs">
-              <div><span className="text-sub">Karyawan:</span> <strong className="text-ink">{pendingRestore.summary.users || 0}</strong></div>
+              <div><span className="text-sub">Employee:</span> <strong className="text-ink">{pendingRestore.summary.users || 0}</strong></div>
               <div><span className="text-sub">Tugas:</span> <strong className="text-ink">{pendingRestore.summary.tasks || 0}</strong></div>
               <div><span className="text-sub">Ruang Obrolan:</span> <strong className="text-ink">{pendingRestore.summary.conversations || 0}</strong></div>
               <div><span className="text-sub">Pesan:</span> <strong className="text-ink">{pendingRestore.summary.messages || 0}</strong></div>

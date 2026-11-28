@@ -596,6 +596,53 @@ export function upsertAccountsListInVault(accounts: any[]): void {
   } catch {}
 }
 
+export function removeAccountFromVault(userIdOrEmail: string | { user_id?: string; email?: string }): void {
+  try {
+    const targetUid =
+      typeof userIdOrEmail === "string"
+        ? userIdOrEmail.trim()
+        : String(userIdOrEmail?.user_id || "").trim();
+    const targetEmail =
+      typeof userIdOrEmail === "string"
+        ? userIdOrEmail.toLowerCase().trim()
+        : String(userIdOrEmail?.email || "").toLowerCase().trim();
+    if (!targetUid && !targetEmail) return;
+    const list = readVaultRaw();
+    const before = list.length;
+    const filtered = list.filter((a) => {
+      const uid = String(a?.user_id || "").trim();
+      const em = String(a?.email || "").toLowerCase().trim();
+      if (targetUid && uid === targetUid) return false;
+      if (targetEmail && em === targetEmail) return false;
+      return true;
+    });
+    if (filtered.length !== before) {
+      vaultMemoryCache = filtered;
+      try {
+        localStorage.setItem(VAULT_STORAGE_KEY, JSON.stringify(filtered));
+      } catch {}
+    }
+    try {
+      const rawUsers = localStorage.getItem("circle_users_cache");
+      if (rawUsers) {
+        const parsed = JSON.parse(rawUsers);
+        if (Array.isArray(parsed)) {
+          const nextUsers = parsed.filter((u: any) => {
+            const uid = String(u?.user_id || "").trim();
+            const em = String(u?.email || "").toLowerCase().trim();
+            if (targetUid && uid === targetUid) return false;
+            if (targetEmail && em === targetEmail) return false;
+            return true;
+          });
+          if (nextUsers.length !== parsed.length) {
+            localStorage.setItem("circle_users_cache", JSON.stringify(nextUsers));
+          }
+        }
+      }
+    } catch {}
+  } catch {}
+}
+
 function openMirrorDb(): Promise<IDBDatabase | null> {
   if (typeof indexedDB === 'undefined') return Promise.resolve(null);
   return new Promise((resolve) => {
@@ -1977,3 +2024,99 @@ export function scheduleRealtimeCloudSync(
     void syncWorkspaceMirror(api, false, onPulledCloud, false);
   }, delayMs);
 }
+
+export async function resetLocalMirrorAfterRestore(api?: any): Promise<void> {
+  if (realtimeSyncTimer) {
+    clearTimeout(realtimeSyncTimer);
+    realtimeSyncTimer = null;
+  }
+
+  // Clear local deletion tombstones & stale cached collections so pre-restore state never clobbers restored data
+  try {
+    localStorage.removeItem(DELETED_TASK_IDS_KEY);
+    localStorage.removeItem(DELETED_CP_TEMPLATE_IDS_KEY);
+    localStorage.removeItem(DELETED_ENTITY_IDS_KEY);
+
+    const preservePrefixes = [
+      'circle_session_cache',
+      'circle_user_prefs',
+      'circle_auth_',
+      'circle_account_vault',
+      'circle_prod_clean_',
+    ];
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith('circle_')) continue;
+      if (preservePrefixes.some((p) => k === p || k.startsWith(p))) continue;
+      keysToRemove.push(k);
+    }
+    keysToRemove.forEach((k) => {
+      try {
+        localStorage.removeItem(k);
+      } catch {}
+    });
+  } catch {}
+
+  // Reset in-memory mirror state so sync never re-hydrates stale pre-restore items
+  cachedBootHarvest = {
+    users: [],
+    tasks: [],
+    boards: [],
+    templates: [],
+    messages: [],
+    conversations: [],
+    groups: [],
+    meetings: [],
+    projects: [],
+    notes: [],
+    posts: [],
+    org_units: [],
+    divisions: [],
+    drive_shortcuts: [],
+  };
+  cachedPersistenceStatus = null;
+  inFlightPersistenceStatus = null;
+  lastSyncedRevision = -1;
+  lastFirestoreUploadedSig = '';
+  writePersistedUploadedSig('');
+  initialHydrateCompleted = true;
+
+  // Wipe IndexedDB mirror entries so pre-restore richest/latest snapshots cannot merge back
+  try {
+    const idb = await openMirrorDb();
+    if (idb) {
+      await new Promise<void>((resolve) => {
+        try {
+          const tx = idb.transaction(IDB_STORE, 'readwrite');
+          const store = tx.objectStore(IDB_STORE);
+          store.delete(MIRROR_KEY);
+          store.delete(RICHEST_MIRROR_KEY);
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => resolve();
+        } catch {
+          resolve();
+        }
+      });
+    }
+  } catch {}
+
+  // Immediately persist the newly restored authoritative server snapshot into clean IndexedDB mirror
+  if (api?.get) {
+    try {
+      const { data } = await api.get('/workspace/persistent-snapshot', { timeout: 60000 });
+      if (data?.snapshot) {
+        const freshEnvelope: PersistentMirrorEnvelope = {
+          snapshot: data.snapshot,
+          snapshot_sig: data.snapshot_sig,
+          revision: Number(data.revision || 1),
+          last_mutated_at: data.last_mutated_at,
+          saved_at: new Date().toISOString(),
+        };
+        await saveMirrorSnapshot(freshEnvelope);
+        lastSyncedRevision = freshEnvelope.revision;
+      }
+    } catch {}
+  }
+}
+

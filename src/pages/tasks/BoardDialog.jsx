@@ -154,7 +154,7 @@ export default function BoardDialog({ board, onClose, onSaved }) {
                 <b className="text-ink">{t("board_collab_all_title", "Terbuka untuk seluruh anggota lintas divisi")}</b>
                 <span className="block text-sub text-[11px] mt-0.5">
                   {f.all_workspace_members !== false
-                    ? t("board_collab_all_desc_on", "Semua karyawan dari divisi manapun bisa dipilih saat assign tugas di board kolaborasi ini.")
+                    ? t("board_collab_all_desc_on", "Semua employee dari divisi manapun bisa dipilih saat assign tugas di board kolaborasi ini.")
                     : t("board_collab_all_desc_off", "Hanya anggota yang Anda centang di bawah yang bisa ditugaskan di board ini.")}
                 </span>
               </span>
@@ -192,7 +192,7 @@ export default function BoardDialog({ board, onClose, onSaved }) {
                 <input
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
-                  placeholder={t("board_search_member_ph", "Cari karyawan lintas divisi...")}
+                  placeholder={t("board_search_member_ph", "Cari employee lintas divisi...")}
                   className="flex-1 bg-transparent text-sm outline-none"
                   data-testid="board-member-search"
                 />

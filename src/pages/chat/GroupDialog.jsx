@@ -62,6 +62,9 @@ export function GroupDialog({ open, onOpenChange, group, onSaved }) {
   }, [open, group, me?.user_id]);
 
   const creatorId = group?.created_by || me?.user_id;
+  const isExistingDeptGroup = Boolean(
+    group && (group.group_type === "department" || String(group.id || "").startsWith("group_official_"))
+  );
   const canManageAdmins = !group || isAdmin || creatorId === me?.user_id || (Array.isArray(group?.admin_ids) && group.admin_ids.includes(me?.user_id));
 
   const toggleMember = (uid) => {
@@ -96,13 +99,18 @@ export function GroupDialog({ open, onOpenChange, group, onSaved }) {
       toast.error("Nama grup wajib diisi");
       return;
     }
+    const resolvedGroupType = isExistingDeptGroup
+      ? "department"
+      : ["public", "private", "project"].includes(f.group_type)
+      ? f.group_type
+      : "public";
     const deputyAdminIds = (f.admin_ids || []).filter((id) => id && id !== creatorId);
     const mergedAdmins = Array.from(new Set([creatorId, ...deputyAdminIds].filter(Boolean)));
     try {
       const body = {
         name: f.name.trim(),
         description: f.description,
-        group_type: f.group_type,
+        group_type: resolvedGroupType,
         location: f.location,
         image: f.image,
         ...(canManageAdmins ? { admin_ids: mergedAdmins, deputy_admin_ids: deputyAdminIds } : {}),
@@ -162,11 +170,33 @@ export function GroupDialog({ open, onOpenChange, group, onSaved }) {
         </div> : f.image ? <img src={fileUrl(f.image)} alt="" className="h-14 w-14 rounded-2xl object-cover" /> : null}
         <input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder={tr("groups_dialog_name_ph", "Nama grup")} className="h-11 rounded-xl border bg-surface2 px-3 text-sm outline-none" data-testid="group-name-input" />
         <textarea value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} placeholder={tr("groups_dialog_desc_ph", "Deskripsi grup")} className="min-h-[72px] rounded-xl border bg-surface2 p-3 text-sm outline-none" data-testid="group-description-input" />
-        <div className="grid grid-cols-2 gap-2">
-          {["public", "private", "department", "project"].map((t) => <button type="button" key={t} onClick={() => setF({ ...f, group_type: t })} className={`h-10 rounded-xl border text-sm font-medium ${f.group_type === t ? "border-[var(--c-accent)] bg-soft-red text-ink font-semibold" : "text-sub"}`} data-testid={`group-type-${t}`}>{groupTypeLabels[t]}</button>)}
-        </div>
+        {isExistingDeptGroup ? (
+          <div className="flex items-center justify-between rounded-xl border border-blue-200 dark:border-blue-800/70 bg-blue-50/70 dark:bg-blue-950/30 px-3 py-2 text-xs font-semibold text-blue-700 dark:text-blue-300">
+            <span className="inline-flex items-center gap-1.5">
+              <ShieldCheck size={14} />
+              <span>{groupTypeLabels.department}</span>
+            </span>
+            <span className="text-[11px] font-medium opacity-80">Dikelola otomatis dari divisi</span>
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-2">
+            {["public", "private", "project"].map((t) => (
+              <button
+                type="button"
+                key={t}
+                onClick={() => setF({ ...f, group_type: t })}
+                className={`h-10 rounded-xl border text-sm font-medium transition-colors cursor-pointer ${
+                  f.group_type === t ? "border-[var(--c-accent)] bg-soft-red text-ink font-semibold" : "text-sub hover:bg-surface2"
+                }`}
+                data-testid={`group-type-${t}`}
+              >
+                {groupTypeLabels[t]}
+              </button>
+            ))}
+          </div>
+        )}
         <p className="rounded-xl bg-surface2/80 px-3 py-2 text-[11px] leading-relaxed text-sub" data-testid="group-privacy-hint">
-          {groupTypeHints[f.group_type] || groupTypeHints.public}
+          {groupTypeHints[isExistingDeptGroup ? "department" : f.group_type] || groupTypeHints.public}
         </p>
         <input value={f.location || ""} onChange={(e) => setF({ ...f, location: e.target.value })} placeholder={tr("groups_dialog_loc_ph", "Lokasi / divisi")} className="h-10 rounded-xl border bg-surface2 px-3 text-sm outline-none" data-testid="group-location-input" />
         {!group && (

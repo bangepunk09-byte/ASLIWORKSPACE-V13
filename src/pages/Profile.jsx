@@ -583,7 +583,7 @@ export default function Profile() {
 
   const activeRawP = rawP?.user_id === uid ? rawP : null;
   const liveUser = (uid === me?.user_id ? me : null) || userMap?.[uid];
-  const baseP = activeRawP || liveUser || { user_id: uid, name: "Karyawan", job_title: "Anggota Tim" };
+  const baseP = activeRawP || liveUser || { user_id: uid, name: "Employee", job_title: "Anggota Tim" };
   const p = liveUser
     ? {
         ...liveUser,

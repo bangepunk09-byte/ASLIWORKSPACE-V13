@@ -631,7 +631,7 @@ export async function tryExecuteCircleCommand(params: {
     const task = findTaskByRef(db, partsPipe[0]);
     const targetUser = findHumanUserByRef(db, partsPipe.slice(1).join(" | "));
     if (!task || !targetUser) {
-      return { handled: true, text: `⚠️ Tugas atau nama karyawan tidak ditemukan. Format: \`/assign TSK-001 | Nama Karyawan\`` };
+      return { handled: true, text: `⚠️ Tugas atau nama employee tidak ditemukan. Format: \`/assign TSK-001 | Nama Employee\`` };
     }
     task.assignee_id = targetUser.user_id;
     task.assignee_ids = Array.from(new Set([...(Array.isArray(task.assignee_ids) ? task.assignee_ids : []), targetUser.user_id]));
@@ -1983,7 +1983,7 @@ export async function tryExecuteCircleCommand(params: {
         `${isWeekly ? "📈" : "☀️"} **${isWeekly ? "Executive Weekly Digest" : "Executive Morning Brief"} — ${intel.workspace_name}**`,
         `_${intel.generated_at_wib}_`,
         ``,
-        `1️⃣ **Pulse Organisasi:** ${intel.employees.online}/${intel.employees.active} karyawan sedang online · ${intel.workload_summary.optimal_count} Optimal · ${intel.workload_summary.stabil_count} Stabil · ${intel.workload_summary.pressure_count} Under Pressure`,
+        `1️⃣ **Pulse Organisasi:** ${intel.employees.online}/${intel.employees.active} employee sedang online · ${intel.workload_summary.optimal_count} Optimal · ${intel.workload_summary.stabil_count} Stabil · ${intel.workload_summary.pressure_count} Under Pressure`,
         `2️⃣ **Status Tugas:** ${intel.tasks.active} aktif · ${intel.tasks.done} selesai · **${intel.tasks.overdue_count} overdue** · ${intel.tasks.due_today_count} jatuh tempo hari ini`,
         `3️⃣ **Agenda Hari Ini:** ${todayMeetings.length} meeting terjadwal · ${intel.access_requests.pending_count} approval akses pending`,
         ...(pressureList.length
@@ -2028,7 +2028,7 @@ export async function tryExecuteCircleCommand(params: {
       text: [
         `🔎 **Hasil Pencarian Global: "${argRaw}" (${total} temuan teratas)**`,
         ...(matchedTasks.length ? [`\n📌 **Tugas:**\n${matchedTasks.map((t: any) => `• **${t.number_str || t.id}** — ${t.title} [${t.status}]`).join("\n")}`] : []),
-        ...(matchedUsers.length ? [`\n👥 **Karyawan:**\n${matchedUsers.map((u: any) => `• **${u.name}** — ${u.department} (${u.job_title || "Member"})`).join("\n")}`] : []),
+        ...(matchedUsers.length ? [`\n👥 **Employee:**\n${matchedUsers.map((u: any) => `• **${u.name}** — ${u.department} (${u.job_title || "Member"})`).join("\n")}`] : []),
         ...(matchedProjects.length ? [`\n🗂️ **Proyek:**\n${matchedProjects.map((p: any) => `• **${p.name}** (${p.status})`).join("\n")}`] : []),
         ...(matchedMeetings.length ? [`\n📅 **Meeting:**\n${matchedMeetings.map((m: any) => `• **${m.title}** (${m.date} ${m.start_time || ""})`).join("\n")}`] : []),
         ...(matchedPosts.length ? [`\n📰 **Beranda:**\n${matchedPosts.map((p: any) => `• "${String(p.text || p.content || "").slice(0, 80)}"`).join("\n")}`] : []),

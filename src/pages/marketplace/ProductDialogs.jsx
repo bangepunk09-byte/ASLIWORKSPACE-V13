@@ -187,7 +187,7 @@ export function ProductDetailDialog({
                   {item.title}
                 </DialogTitle>
                 <DialogDescription className="sr-only">
-                  Detail produk marketplace karyawan dan opsi pembelian.
+                  Detail produk marketplace employee dan opsi pembelian.
                 </DialogDescription>
               </DialogHeader>
 

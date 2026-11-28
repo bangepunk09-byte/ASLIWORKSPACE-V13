@@ -1,9 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { api, wsUrl, fileUrl, setAuthUserId, setAuthToken, getAuthToken, getAuthGeneration } from "../lib/api";
+import { api, wsUrl, fileUrl, setAuthUserId, setAuthToken, getAuthToken, getAuthGeneration, invalidateApiGetCache } from "../lib/api";
 import { applyTheme, buildTheme } from "../lib/theme";
 import { getTranslation, getEffectiveCopywriting } from "../lib/i18n";
-import { playSound } from "../lib/sound";
+import { playSound, setWorkspaceSoundConfig } from "../lib/sound";
 import {
   hydrateConversationsCache,
   upsertConversationInCache,
@@ -20,16 +20,29 @@ import {
   cancelScheduledStorageWrite,
 } from "../lib/workspaceCaches";
 import { preloadAllRoutes } from "../lib/routePreload";
+import { prewarmImages } from "../lib/imagePreloader";
 import { setCachedDriveShortcuts } from "../data/initialDriveShortcuts";
 import { showSystemNotification, syncPushSubscription, syncAppBadge } from "../lib/systemNotifications";
-import { attemptAutoHydrateServer, syncWorkspaceMirror, scheduleRealtimeCloudSync, upsertAccountInVault, upsertAccountsListInVault, getKnownAccountsFromVault, hasCompletedInitialHydrate, rehydrateIfServerRestarted, recordDeletedTaskIds, recordDeletedCheckpointTemplateIds, recordDeletedEntityIds } from "../lib/persistentMirror";
+import { attemptAutoHydrateServer, syncWorkspaceMirror, scheduleRealtimeCloudSync, upsertAccountInVault, upsertAccountsListInVault, getKnownAccountsFromVault, removeAccountFromVault, hasCompletedInitialHydrate, rehydrateIfServerRestarted, recordDeletedTaskIds, recordDeletedCheckpointTemplateIds, recordDeletedEntityIds, resetLocalMirrorAfterRestore } from "../lib/persistentMirror";
 import { firebaseAuth, subscribeFirebaseAuth, getCloudSyncStatus, subscribeCloudSyncStatus, isFirestoreQuotaPaused } from "../lib/firestoreBackup";
 import { googleBasicSignIn } from "../lib/auth";
-import { prefetchMarketplaceState, reconcileMarketplaceEnabledCache } from "../pages/marketplace/marketplaceStore";
+import {
+  DEFAULT_BOARDS,
+  INITIAL_UNITS,
+  hydrateTasksWorkspaceCache,
+  hydrateOrgUnitsCache,
+  hydrateAdminPanelsCache,
+  hydrateTeamStatsCache,
+  reconcileMarketplaceEnabledCacheLite as reconcileMarketplaceEnabledCache,
+} from "../lib/bootstrapCaches";
 import { setTopQuickActionNotifActive } from "../lib/sonnerCompat";
 import { hasTopNotifQuickAction } from "../components/TopNotificationPopup";
-import { hydrateTeamStatsCache } from "../pages/dashboard/MonthlyStats";
 import { enforceTaskApprovalInvariant, mergeTasksArrayNonDestructive } from "../lib/snapshotMerge";
+
+const prefetchMarketplaceStateLazy = (uid) =>
+  import("../pages/marketplace/marketplaceStore")
+    .then((m) => m.prefetchMarketplaceState?.(uid))
+    .catch(() => null);
 
 const AppCtx = createContext(null);
 export const useApp = () => useContext(AppCtx);
@@ -78,22 +91,24 @@ export function AppProvider({ children }) {
     const nextUid = next?.user?.user_id || null;
 
     if (prevUid !== nextUid) {
-      clearChatCache();
       lastBootstrapEtagRef.current = null;
       lastLoadAllAtRef.current = 0;
-      try {
-        [
-          "circle_convs_cache",
-          "circle_cache_conversations",
-          "circle_tasks_cache",
-          "circle_cache_tasks",
-          "circle_admin_stats",
-          "circle_admin_audit",
-          "circle_admin_users",
-          "circle_admin_invites",
-          "circle_admin_access_reqs",
-        ].forEach((k) => localStorage.removeItem(k));
-      } catch {}
+      if (prevUid && prevUid !== nextUid) {
+        clearChatCache();
+        try {
+          [
+            "circle_convs_cache",
+            "circle_cache_conversations",
+            "circle_tasks_cache",
+            "circle_cache_tasks",
+            "circle_admin_stats",
+            "circle_admin_audit",
+            "circle_admin_users",
+            "circle_admin_invites",
+            "circle_admin_access_reqs",
+          ].forEach((k) => localStorage.removeItem(k));
+        } catch {}
+      }
     }
 
     sessionRef.current = next;
@@ -154,6 +169,29 @@ export function AppProvider({ children }) {
       return [];
     }
   });
+  const [boards, setBoards] = useState(() => {
+    try {
+      const cached = localStorage.getItem("circle_boards_cache");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const clean = parsed.filter((b) => b && b.id !== "brd_1").map((b) => ({ ...b, is_accessible: b.is_accessible ?? true }));
+          if (clean.length > 0) return clean;
+        }
+      }
+    } catch {}
+    return DEFAULT_BOARDS;
+  });
+  const [orgUnits, setOrgUnits] = useState(() => {
+    try {
+      const cached = localStorage.getItem("circle_org_units_cache");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return INITIAL_UNITS;
+  });
   const subs = useRef(new Set());
   const sock = useRef(null);
   /** @type {import("react").MutableRefObject<((force?: boolean) => Promise<void>) | null>} */
@@ -186,6 +224,7 @@ export function AppProvider({ children }) {
             if (Array.isArray(r.data)) {
               const normalized = r.data.map((t) => enforceTaskApprovalInvariant(t));
               setTasks(normalized);
+              hydrateTasksWorkspaceCache({ tasks: normalized });
               scheduleJsonStorageWrite("circle_tasks_cache", normalized);
               scheduleJsonStorageWrite("circle_cache_tasks", normalized);
               subs.current.forEach((fn) => fn({ type: "tasks:changed", silentSync: true }));
@@ -193,6 +232,7 @@ export function AppProvider({ children }) {
           }).catch(() => {});
         } else {
           setTasks([]);
+          hydrateTasksWorkspaceCache({ tasks: [] });
           scheduleJsonStorageWrite("circle_tasks_cache", []);
           scheduleJsonStorageWrite("circle_cache_tasks", []);
           subs.current.forEach((fn) => fn({ type: "tasks:changed", silentSync: true }));
@@ -202,6 +242,7 @@ export function AppProvider({ children }) {
     }
     const normalized = incomingList.map((t) => enforceTaskApprovalInvariant(t));
     setTasks(normalized);
+    hydrateTasksWorkspaceCache({ tasks: normalized });
     scheduleJsonStorageWrite("circle_tasks_cache", normalized);
     scheduleJsonStorageWrite("circle_cache_tasks", normalized);
     if (silentSync) {
@@ -395,6 +436,34 @@ export function AppProvider({ children }) {
         if (Array.isArray(bootData.tasks)) {
           applyServerTasksSafely(bootData.tasks);
         }
+        if (Array.isArray(bootData.boards) && bootData.boards.length > 0) {
+          const cleanBoards = bootData.boards.filter((b) => b && b.id !== "brd_1").map((b) => ({ ...b, is_accessible: b.is_accessible ?? true }));
+          if (cleanBoards.length > 0) {
+            setBoards(cleanBoards);
+            scheduleJsonStorageWrite("circle_boards_cache", cleanBoards);
+          }
+        }
+        hydrateTasksWorkspaceCache({
+          tasks: Array.isArray(bootData.tasks) ? bootData.tasks : undefined,
+          boards: Array.isArray(bootData.boards) ? bootData.boards : undefined,
+          allBoards: Array.isArray(bootData.all_boards) ? bootData.all_boards : undefined,
+          projects: Array.isArray(bootData.projects) ? bootData.projects : undefined,
+        });
+        if (Array.isArray(bootData.org_units) && bootData.org_units.length > 0) {
+          setOrgUnits(bootData.org_units);
+          hydrateOrgUnitsCache(bootData.org_units);
+          scheduleJsonStorageWrite("circle_org_units_cache", bootData.org_units);
+        }
+        hydrateAdminPanelsCache({
+          adminStats: bootData.admin_stats,
+          auditLogs: bootData.audit_logs,
+          users: bootData.users,
+          invitations: bootData.invitations,
+          accessRequests: bootData.access_requests,
+          divisions: bootData.workspace?.divisions,
+          stickers: bootData.stickers,
+          recoveryKey: bootData.recovery_key,
+        });
         if (Array.isArray(bootData.drive_shortcuts)) {
           setCachedDriveShortcuts(bootData.drive_shortcuts);
         }
@@ -480,6 +549,8 @@ export function AppProvider({ children }) {
         scheduleJsonStorageWrite("circle_labels_cache", data.labels);
       }
       if (Array.isArray(data.org_units)) {
+        setOrgUnits(data.org_units);
+        hydrateOrgUnitsCache(data.org_units);
         scheduleJsonStorageWrite("circle_org_units_cache", data.org_units);
       }
       if (Array.isArray(data.drive_shortcuts)) {
@@ -511,7 +582,12 @@ export function AppProvider({ children }) {
               return;
             }
           }
-        } catch {}
+        } catch (recErr) {
+          if (recErr?.response?.data?.was_removed || recErr?.response?.data?.revoked) {
+            const curMe = meRef.current;
+            if (curMe) removeAccountFromVault(curMe);
+          }
+        }
         setSession(null);
       }
     }
@@ -567,7 +643,12 @@ export function AppProvider({ children }) {
               return;
             }
           }
-        } catch {}
+        } catch (recErr) {
+          if (recErr?.response?.data?.was_removed || recErr?.response?.data?.revoked) {
+            const curMe = meRef.current;
+            if (curMe) removeAccountFromVault(curMe);
+          }
+        }
         if (getAuthGeneration() !== currentGenBefore && sessionRef.current?.user?.user_id && sessionRef.current?.token) {
           return;
         }
@@ -615,9 +696,11 @@ export function AppProvider({ children }) {
         }, 1200);
         bgPrefetchTimer = setTimeout(() => {
           if (cancelled) return;
-          prefetchMarketplaceState(me.user_id).catch(() => null);
           syncPushSubscription(api).catch(() => {});
-        }, 2500);
+          if (wsRef.current?.marketplace_enabled !== false) {
+            prefetchMarketplaceStateLazy(me.user_id);
+          }
+        }, 5000);
       })();
       return () => {
         cancelled = true;
@@ -745,6 +828,12 @@ export function AppProvider({ children }) {
   useEffect(() => {
     applyTheme(buildTheme(ws?.theme, prefs, themeDraft));
   }, [ws?.theme, prefs, themeDraft]);
+
+  useEffect(() => {
+    if (ws?.notification_sound_config) {
+      setWorkspaceSoundConfig(ws.notification_sound_config);
+    }
+  }, [ws?.notification_sound_config]);
 
   // Synchronize browser tab Favicon dynamically with Workspace Favicon / Logo
   useEffect(() => {
@@ -986,16 +1075,42 @@ export function AppProvider({ children }) {
           updateMessageInCache(evt.data);
         }
         if (evt.type === "conversation:upsert" && evt.data) {
+          invalidateApiGetCache("/conversations");
           upsertConversationInCache(evt.data, me?.user_id);
         }
         if ((evt.type === "groups:changed" || evt.type === "group:updated") && evt.data) {
+          invalidateApiGetCache("/groups/browse");
+          invalidateApiGetCache("/conversations");
           upsertGroupInCache(evt.data, me?.user_id);
           upsertConversationInCache({ ...evt.data, type: "group" }, me?.user_id);
+        } else if (evt.type === "groups:changed" || evt.type === "group:deleted") {
+          invalidateApiGetCache("/groups/browse");
+          invalidateApiGetCache("/conversations");
         }
         if (evt.type === "conversations:changed") {
-          api.get("/conversations").then((r) => {
+          invalidateApiGetCache("/conversations");
+          api.get("/conversations", { noCache: true }).then((r) => {
             if (Array.isArray(r.data)) hydrateConversationsCache(r.data, me?.user_id);
           }).catch(() => {});
+        }
+        if (
+          evt.type === "tasks:changed" ||
+          evt.type === "boards:changed" ||
+          evt.type === "post:updated" ||
+          evt.type === "post:created" ||
+          evt.type === "post:deleted" ||
+          evt.type === "meeting:new" ||
+          evt.type === "meeting:updated" ||
+          evt.type === "meeting:delete" ||
+          evt.type === "projects:changed" ||
+          evt.type === "drive_shortcuts:changed" ||
+          evt.type === "marketplace:changed" ||
+          evt.type === "users:changed" ||
+          evt.type === "workspace:changed" ||
+          evt.type === "workspace:updated" ||
+          evt.type === "workspace:restored"
+        ) {
+          invalidateApiGetCache();
         }
         if (evt.type === "conversation:deleted" && evt.id) {
           const curUid = meRef.current?.user_id || me?.user_id;
@@ -1057,6 +1172,18 @@ export function AppProvider({ children }) {
             );
           }
         }
+        if (evt.type === "workspace:restored") {
+          lastBootstrapEtagRef.current = null;
+          lastLoadAllAtRef.current = 0;
+          clearChatCache();
+          resetLocalMirrorAfterRestore(api)
+            .catch(() => {})
+            .finally(() => {
+              loadAllRef.current?.(true)?.catch(() => {});
+            });
+          emit(evt);
+          return;
+        }
         if (evt.type === "workspace:changed" || evt.type === "workspace:updated") {
           if (evt.data && typeof evt.data === "object") {
             if (Array.isArray(evt.data.deleted_checkpoint_template_ids) && evt.data.deleted_checkpoint_template_ids.length > 0) {
@@ -1094,7 +1221,23 @@ export function AppProvider({ children }) {
             }).catch(() => {});
           }
           if (evt.data?.marketplace_enabled !== undefined) {
-            prefetchMarketplaceState(me?.user_id).catch(() => null);
+            prefetchMarketplaceStateLazy(me?.user_id);
+          }
+        }
+        if (evt.type === "user:removed") {
+          const curMe = meRef.current;
+          const remUid = String(evt.user_id || "").trim();
+          const remEmail = String(evt.email || "").toLowerCase().trim();
+          if (remUid || remEmail) {
+            removeAccountFromVault({ user_id: remUid, email: remEmail });
+          }
+          if (
+            curMe &&
+            ((remUid && curMe.user_id === remUid) ||
+              (remEmail && String(curMe.email || "").toLowerCase().trim() === remEmail))
+          ) {
+            setSession(null);
+            toast.error("Akun Anda telah dihapus oleh Super Admin. Silakan lengkapi data ulang jika ingin bergabung kembali.");
           }
         }
         if (evt.type === "users:changed") {
@@ -1115,6 +1258,8 @@ export function AppProvider({ children }) {
           }).catch(() => {});
         }
         if (evt.type === "org:changed" && Array.isArray(evt.units)) {
+          setOrgUnits(evt.units);
+          hydrateOrgUnitsCache(evt.units);
           scheduleJsonStorageWrite("circle_org_units_cache", evt.units);
         }
         if (evt.type === "drive_shortcuts:changed" && Array.isArray(evt.data)) {
@@ -1201,7 +1346,7 @@ export function AppProvider({ children }) {
               return { ...s, workspace: { ...s.workspace, marketplace_enabled: evt.enabled } };
             });
             reconcileMarketplaceEnabledCache(me?.user_id, evt.enabled);
-            prefetchMarketplaceState(me?.user_id).catch(() => null);
+            prefetchMarketplaceStateLazy(me?.user_id);
           }
         }
         if (
@@ -1407,10 +1552,36 @@ export function AppProvider({ children }) {
     setSession(null);
   }, [setSession]);
 
+  // Proactively prewarm employee avatars & workspace logo in browser cache during idle time
+  // so profile photos across Dashboard, Pesan, Tugas, Grup, and Employee render with 0ms delay.
+  useEffect(() => {
+    if (!me?.user_id) return;
+    const urls = [];
+    if (me.avatar || me.picture) urls.push(me.avatar || me.picture);
+    if (ws?.logo_file_id && ws.logo_file_id !== "default_workspace_logo") {
+      urls.push(fileUrl(ws.logo_file_id));
+    }
+    if (ws?.assistant_avatar) urls.push(ws.assistant_avatar);
+    if (Array.isArray(users)) {
+      for (const u of users) {
+        const src = u?.avatar || u?.picture;
+        if (src) urls.push(src);
+      }
+    }
+    if (urls.length === 0) return;
+    const run = () => prewarmImages(urls, { concurrency: 6, maxCount: 60 });
+    if (typeof window !== "undefined" && typeof window.requestIdleCallback === "function") {
+      const id = window.requestIdleCallback(run, { timeout: 1200 });
+      return () => window.cancelIdleCallback?.(id);
+    }
+    const timer = setTimeout(run, 300);
+    return () => clearTimeout(timer);
+  }, [me?.user_id, me?.avatar, me?.picture, ws?.logo_file_id, ws?.assistant_avatar, users]);
+
   const value = useMemo(() => {
     return {
       session, setSession, me, ws, prefs, users, userMap, labels, labelMap, online, unread, setUnread,
-      tasks, userDeadlinesToday, userDeadlineReasons, hasDeadlineToday,
+      tasks, boards, orgUnits, userDeadlinesToday, userDeadlineReasons, hasDeadlineToday,
       reloadTasks,
       topNotif,
       setTopNotif: handleSetTopNotif,
@@ -1438,7 +1609,7 @@ export function AppProvider({ children }) {
       syncCloudNow,
       connectCloudGoogle,
     };
-  }, [session, setSession, me, ws, prefs, users, userMap, labels, labelMap, statuses, effectiveCopywriting, t, online, unread, topNotif, themeDraft, tasks, userDeadlinesToday, userDeadlineReasons, hasDeadlineToday, reloadTasks, handleSetTopNotif, closeTopNotif, reloadUsers, reloadLabels, reloadWs, savePrefs, subscribe, send, updateAvailabilityStatus, logout, checkAuth, loadAll, cloudSyncStatus, syncCloudNow, connectCloudGoogle]);
+  }, [session, setSession, me, ws, prefs, users, userMap, labels, labelMap, statuses, effectiveCopywriting, t, online, unread, topNotif, themeDraft, tasks, boards, orgUnits, userDeadlinesToday, userDeadlineReasons, hasDeadlineToday, reloadTasks, handleSetTopNotif, closeTopNotif, reloadUsers, reloadLabels, reloadWs, savePrefs, subscribe, send, updateAvailabilityStatus, logout, checkAuth, loadAll, cloudSyncStatus, syncCloudNow, connectCloudGoogle]);
 
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
 }

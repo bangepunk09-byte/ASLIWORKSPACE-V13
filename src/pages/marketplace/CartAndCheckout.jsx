@@ -474,7 +474,7 @@ export function OrderPaymentModal({ order, onClose, onPaid }) {
 
           {order.payment_method === "payroll" && (
             <div className="rounded-2xl border border-indigo-200 dark:border-indigo-900/50 bg-indigo-50/60 dark:bg-indigo-950/20 p-4 text-xs text-ink space-y-1">
-              <p className="font-bold">Konfirmasi Potong Gaji / Kasbon Karyawan</p>
+              <p className="font-bold">Konfirmasi Potong Gaji / Kasbon Employee</p>
               <p className="text-sub">
                 Dengan menekan konfirmasi di bawah, Anda menyetujui pemotongan gaji bulan berjalan sebesar{" "}
                 <strong className="text-ink tabular-nums">{formatIDR(order.total_amount)}</strong> untuk pesanan {order.order_number}.

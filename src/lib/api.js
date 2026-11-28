@@ -18,10 +18,68 @@ export function invalidateProfileHeaderCache() {
   cachedProfileHeader = { uid: null, token: null, value: "", expiresAt: 0 };
 }
 
+const CACHEABLE_GET_PREFIXES = [
+  "/groups/browse",
+  "/projects",
+  "/boards",
+  "/meetings",
+  "/drive-shortcuts",
+  "/posts",
+  "/conversations",
+  "/stats/team",
+  "/stickers",
+  "/workspace",
+  "/users",
+  "/labels",
+  "/marketplace/state",
+  "/org/units",
+  "/admin/stats",
+  "/admin/users",
+];
+const GET_CACHE_TTL_MS = 10000;
+const GET_CACHE_MAX_ENTRIES = 80;
+const apiGetCache = new Map();
+const apiInflightGets = new Map();
+
+function buildGetCacheKey(url, params) {
+  const uid = getAuthUserId() || "anon";
+  let paramKey = "";
+  if (params && typeof params === "object") {
+    const entries = Object.entries(params)
+      .filter(([, v]) => v !== undefined && v !== null && v !== "")
+      .sort(([a], [b]) => a.localeCompare(b));
+    if (entries.length > 0) {
+      paramKey = `?${entries.map(([k, v]) => `${k}=${String(v)}`).join("&")}`;
+    }
+  }
+  return `${uid}::${url}${paramKey}`;
+}
+
+function isCacheableGetUrl(url) {
+  if (typeof url !== "string") return false;
+  const clean = url.split("?")[0];
+  if (clean.includes("/messages")) return false;
+  return CACHEABLE_GET_PREFIXES.some((p) => clean === p || clean.startsWith(`${p}/`));
+}
+
+export function invalidateApiGetCache(prefix = "") {
+  if (!prefix) {
+    apiGetCache.clear();
+    return;
+  }
+  for (const key of apiGetCache.keys()) {
+    if (key.includes(prefix)) {
+      apiGetCache.delete(key);
+    }
+  }
+}
+
 export function setAuthToken(token) {
   const next = token || null;
   if (activeAuthToken !== next) {
     authGeneration += 1;
+    apiGetCache.clear();
+    apiInflightGets.clear();
   }
   activeAuthToken = next;
   invalidateProfileHeaderCache();
@@ -66,6 +124,8 @@ export function setAuthUserId(uid) {
   const next = uid || null;
   if (activeTabUserId !== next) {
     authGeneration += 1;
+    apiGetCache.clear();
+    apiInflightGets.clear();
   }
   activeTabUserId = next;
   invalidateProfileHeaderCache();
@@ -249,7 +309,13 @@ async function recoverActiveSession() {
 }
 
 api.interceptors.response.use(
-  (res) => res,
+  (res) => {
+    const method = String(res?.config?.method || "get").toLowerCase();
+    if (method !== "get" && method !== "head" && method !== "options") {
+      apiGetCache.clear();
+    }
+    return res;
+  },
   async (err) => {
     const status = err?.response?.status;
     const originalConfig = err?.config;
@@ -331,6 +397,50 @@ api.interceptors.response.use(
   }
 );
 
+// Transparent in-memory GET deduplication & short-TTL cache for snappy menu switching
+const rawApiGet = api.get.bind(api);
+api.get = function cachedApiGet(url, config) {
+  const skipCache = Boolean(
+    config?.noCache ||
+    config?.responseType === "blob" ||
+    config?.responseType === "arraybuffer" ||
+    config?.signal ||
+    !isCacheableGetUrl(url)
+  );
+  if (skipCache) {
+    return rawApiGet(url, config);
+  }
+  const cacheKey = buildGetCacheKey(url, config?.params);
+  const now = Date.now();
+  const cached = apiGetCache.get(cacheKey);
+  if (cached && now < cached.expiresAt) {
+    return Promise.resolve(cached.response);
+  }
+  const inflight = apiInflightGets.get(cacheKey);
+  if (inflight) {
+    return inflight;
+  }
+  const reqPromise = rawApiGet(url, config)
+    .then((res) => {
+      if (res && res.status >= 200 && res.status < 300) {
+        if (apiGetCache.size >= GET_CACHE_MAX_ENTRIES) {
+          const oldestKey = apiGetCache.keys().next().value;
+          if (oldestKey) apiGetCache.delete(oldestKey);
+        }
+        apiGetCache.set(cacheKey, {
+          response: res,
+          expiresAt: Date.now() + GET_CACHE_TTL_MS,
+        });
+      }
+      return res;
+    })
+    .finally(() => {
+      apiInflightGets.delete(cacheKey);
+    });
+  apiInflightGets.set(cacheKey, reqPromise);
+  return reqPromise;
+};
+
 export const fileUrl = (id) => (id ? `/api/files/${id}` : "");
 export const wsUrl = () => {
   const token = getAuthToken();
@@ -350,9 +460,85 @@ export function errMsg(e, fallback = "Something went wrong") {
   return e?.message || fallback;
 }
 
-export async function uploadFile(file) {
+async function compressImageForUpload(file, { maxDim = 1600, quality = 0.82 } = {}) {
+  try {
+    if (typeof window === "undefined" || typeof document === "undefined") return file;
+    if (!(file instanceof Blob)) return file;
+    const type = String(file.type || "").toLowerCase();
+    // Skip non-raster images (SVG, GIF animations), tiny images (<60 KB), or non-images
+    if (!type.startsWith("image/") || type.includes("svg") || type.includes("gif") || file.size < 60 * 1024) {
+      return file;
+    }
+    const bitmap = typeof createImageBitmap === "function"
+      ? await createImageBitmap(file)
+      : await new Promise((resolve, reject) => {
+          const img = new Image();
+          const objUrl = URL.createObjectURL(file);
+          img.onload = () => {
+            URL.revokeObjectURL(objUrl);
+            resolve(img);
+          };
+          img.onerror = (err) => {
+            URL.revokeObjectURL(objUrl);
+            reject(err);
+          };
+          img.src = objUrl;
+        });
+
+    const srcW = bitmap.width || 0;
+    const srcH = bitmap.height || 0;
+    if (!srcW || !srcH) {
+      if (typeof bitmap.close === "function") bitmap.close();
+      return file;
+    }
+
+    const scale = Math.min(1, maxDim / Math.max(srcW, srcH));
+    const targetW = Math.max(1, Math.round(srcW * scale));
+    const targetH = Math.max(1, Math.round(srcH * scale));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = targetW;
+    canvas.height = targetH;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      if (typeof bitmap.close === "function") bitmap.close();
+      return file;
+    }
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(bitmap, 0, 0, targetW, targetH);
+    if (typeof bitmap.close === "function") bitmap.close();
+
+    const preferredMime = "image/webp";
+    const blob = await new Promise((resolve) =>
+      canvas.toBlob((b) => resolve(b), preferredMime, quality)
+    );
+    const finalBlob =
+      blob && blob.type === preferredMime
+        ? blob
+        : await new Promise((resolve) =>
+            canvas.toBlob((b) => resolve(b), type === "image/png" ? "image/png" : "image/jpeg", quality)
+          );
+
+    if (!finalBlob || finalBlob.size >= file.size * 0.95) {
+      return file;
+    }
+
+    const ext = finalBlob.type === "image/webp" ? ".webp" : finalBlob.type === "image/jpeg" ? ".jpg" : ".png";
+    const baseName = String(file.name || "image").replace(/\.[^.]+$/, "");
+    return new File([finalBlob], `${baseName}${ext}`, {
+      type: finalBlob.type,
+      lastModified: Date.now(),
+    });
+  } catch {
+    return file;
+  }
+}
+
+export async function uploadFile(file, opts = {}) {
+  const prepared = opts?.skipCompress ? file : await compressImageForUpload(file, opts);
   const fd = new FormData();
-  fd.append("file", file);
+  fd.append("file", prepared);
   const { data } = await api.post("/upload", fd);
   return data;
 }

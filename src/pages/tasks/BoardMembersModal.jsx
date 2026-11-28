@@ -73,11 +73,11 @@ export default function BoardMembersModal({ board, boards = [], onSwitchBoard, o
       });
       if (includeGroupChat) {
         toast.success(
-          `${targetUser?.name || t("board_members_staff_fallback", "Karyawan")} berhasil diundang ke Board ${board.name} & Group Chat ${linkedGroupName}`
+          `${targetUser?.name || t("board_members_staff_fallback", "Employee")} berhasil diundang ke Board ${board.name} & Group Chat ${linkedGroupName}`
         );
       } else {
         toast.success(
-          `${targetUser?.name || t("board_members_staff_fallback", "Karyawan")} berhasil diundang ke Board ${board.name} (Board Saja)`
+          `${targetUser?.name || t("board_members_staff_fallback", "Employee")} berhasil diundang ke Board ${board.name} (Board Saja)`
         );
       }
       setInviteUserId("");
@@ -97,7 +97,7 @@ export default function BoardMembersModal({ board, boards = [], onSwitchBoard, o
         invite_scope: "board_and_chat",
         include_group_chat: true,
       });
-      toast.success(`${userName || "Karyawan"} berhasil ditambahkan juga ke Group Chat ${linkedGroupName}`);
+      toast.success(`${userName || "Employee"} berhasil ditambahkan juga ke Group Chat ${linkedGroupName}`);
       await load();
       onUpdated?.();
     } catch (err) {
@@ -374,12 +374,12 @@ export default function BoardMembersModal({ board, boards = [], onSwitchBoard, o
               </span>
             </div>
             <p className="text-[11px] text-sub">
-              {t("board_members_dept_desc_pre", "Semua karyawan dengan divisi")} <b>{boardDept}</b> {t("board_members_dept_desc_suf", "otomatis dapat membuka board ini dan mengelola daftar tugasnya.")}
+              {t("board_members_dept_desc_pre", "Semua employee dengan divisi")} <b>{boardDept}</b> {t("board_members_dept_desc_suf", "otomatis dapat membuka board ini dan mengelola daftar tugasnya.")}
             </p>
 
             {deptUsers.length === 0 ? (
               <div className="rounded-xl border border-dashed p-4 text-center text-xs text-sub bg-surface2/30">
-                {t("board_members_dept_empty_pre", "Belum ada karyawan yang terdaftar di divisi")} {boardDept}.
+                {t("board_members_dept_empty_pre", "Belum ada employee yang terdaftar di divisi")} {boardDept}.
               </div>
             ) : (
               <div className="max-h-56 overflow-y-auto space-y-1 pr-1">

@@ -1,14 +1,12 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from "react-router-dom";
-import { Component, Suspense, lazy, useEffect, useRef } from "react";
+import { Component, Suspense, lazy, useEffect, useRef, useState } from "react";
 import { Toaster } from "./components/ui/sonner";
 import { AppProvider, useApp } from "./context/AppContext";
-import { api } from "./lib/api";
 import Shell from "./components/Shell";
 import { Spinner } from "./components/common";
-import { NotificationList } from "./components/NotificationPanel";
 import { routeLoaders } from "./lib/routePreload";
-import Dashboard from "./pages/Dashboard";
 
+const Dashboard = lazy(routeLoaders["/"]);
 const Login = lazy(routeLoaders["/login"]);
 const Messages = lazy(routeLoaders["/messages"]);
 const Groups = lazy(routeLoaders["/groups"]);
@@ -23,6 +21,23 @@ const Onboarding = lazy(routeLoaders["/onboarding"]);
 const Beranda = lazy(routeLoaders["/beranda"]);
 const Schedule = lazy(routeLoaders["/schedule"]);
 const Marketplace = lazy(routeLoaders["/marketplace"]);
+const NotificationList = lazy(() =>
+  import("./components/NotificationPanel").then((m) => ({ default: m.NotificationList }))
+);
+
+function RouteFallback() {
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const id = setTimeout(() => setVisible(true), 150);
+    return () => clearTimeout(id);
+  }, []);
+  if (!visible) return <div className="min-h-[50vh]" />;
+  return (
+    <div className="flex min-h-[50vh] items-center justify-center">
+      <div className="h-7 w-7 animate-spin rounded-full border-2 border-brand/25 border-t-brand" />
+    </div>
+  );
+}
 
 function ErrorFallback({ onReload }) {
   const { t } = useApp() || {};
@@ -92,6 +107,10 @@ function Protected({ children }) {
   return children;
 }
 
+function LazyPage({ children }) {
+  return <Suspense fallback={<RouteFallback />}>{children}</Suspense>;
+}
+
 function Router() {
   const location = useLocation();
   const { t } = useApp();
@@ -107,25 +126,25 @@ function Router() {
         }
       />
       <Route element={<Protected><Shell /></Protected>}>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/beranda" element={<Beranda />} />
-        <Route path="/beranda/:pid" element={<Beranda />} />
-        <Route path="/messages" element={<Messages />} />
-        <Route path="/messages/:cid" element={<Messages />} />
-        <Route path="/groups" element={<Groups />} />
-        <Route path="/directory" element={<Directory />} />
-        <Route path="/employee" element={<Employees />} />
-        <Route path="/people" element={<Employees />} />
-        <Route path="/people/:uid" element={<Profile />} />
-        <Route path="/org" element={<Org />} />
-        <Route path="/tasks" element={<Tasks />} />
-        <Route path="/schedule" element={<Schedule />} />
-        <Route path="/projects" element={<Projects />} />
-        <Route path="/projects/:pid" element={<Projects />} />
-        <Route path="/marketplace" element={<Marketplace />} />
-        <Route path="/marketplace/:itemId" element={<Marketplace />} />
-        <Route path="/notifications" element={<div className="h-[calc(100dvh-7.5rem)] bg-surface md:h-screen"><NotificationList /></div>} />
-        <Route path="/settings" element={<Settings />} />
+        <Route path="/" element={<LazyPage><Dashboard /></LazyPage>} />
+        <Route path="/beranda" element={<LazyPage><Beranda /></LazyPage>} />
+        <Route path="/beranda/:pid" element={<LazyPage><Beranda /></LazyPage>} />
+        <Route path="/messages" element={<LazyPage><Messages /></LazyPage>} />
+        <Route path="/messages/:cid" element={<LazyPage><Messages /></LazyPage>} />
+        <Route path="/groups" element={<LazyPage><Groups /></LazyPage>} />
+        <Route path="/directory" element={<LazyPage><Directory /></LazyPage>} />
+        <Route path="/employee" element={<LazyPage><Employees /></LazyPage>} />
+        <Route path="/people" element={<LazyPage><Employees /></LazyPage>} />
+        <Route path="/people/:uid" element={<LazyPage><Profile /></LazyPage>} />
+        <Route path="/org" element={<LazyPage><Org /></LazyPage>} />
+        <Route path="/tasks" element={<LazyPage><Tasks /></LazyPage>} />
+        <Route path="/schedule" element={<LazyPage><Schedule /></LazyPage>} />
+        <Route path="/projects" element={<LazyPage><Projects /></LazyPage>} />
+        <Route path="/projects/:pid" element={<LazyPage><Projects /></LazyPage>} />
+        <Route path="/marketplace" element={<LazyPage><Marketplace /></LazyPage>} />
+        <Route path="/marketplace/:itemId" element={<LazyPage><Marketplace /></LazyPage>} />
+        <Route path="/notifications" element={<LazyPage><div className="h-[calc(100dvh-7.5rem)] bg-surface md:h-screen"><NotificationList /></div></LazyPage>} />
+        <Route path="/settings" element={<LazyPage><Settings /></LazyPage>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

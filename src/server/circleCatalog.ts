@@ -652,7 +652,7 @@ export const CIRCLE_FEATURE_CATALOG: CircleFeatureItem[] = [
     command: "/search",
     category: "Admin, Drive & Audit",
     title: "Pencarian Global Lintas Modul",
-    description: "Cari sekaligus di Task, Karyawan, Proyek, Meeting, Grup Chat, Beranda, dan Drive!",
+    description: "Cari sekaligus di Task, Employee, Proyek, Meeting, Grup Chat, Beranda, dan Drive!",
     template: "/search ",
     example: "/search Marketing"
   },

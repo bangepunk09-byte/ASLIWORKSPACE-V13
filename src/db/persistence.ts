@@ -580,6 +580,18 @@ export async function getUploadedFileFromPostgres(id: string) {
   }
 }
 
+export async function getAllUploadedFilesFromPostgres() {
+  if (!isPostgresSocketReachable()) {
+    return [];
+  }
+  try {
+    return await pgDb.select().from(uploadedFiles);
+  } catch (error) {
+    markPostgresUnavailable();
+    return [];
+  }
+}
+
 export async function syncUploadedFilesMapToPostgres(
   uploadedBase64: Record<string, string>,
   filesMeta: Record<string, any> = {}

@@ -10,7 +10,7 @@ import { getTranslation } from "../lib/i18n";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "../components/ui/dialog";
 import { AppSelect } from "../components/ui/select";
 import { PasswordStrengthMeter } from "../components/PasswordStrengthMeter";
-import { attemptAutoHydrateServer, syncWorkspaceMirror, upsertAccountInVault, getKnownAccountsFromVault } from "../lib/persistentMirror";
+import { attemptAutoHydrateServer, syncWorkspaceMirror, upsertAccountInVault, getKnownAccountsFromVault, removeAccountFromVault } from "../lib/persistentMirror";
 
 const STATUS_MSG = {
   pending: "Akun Anda sedang dalam proses peninjauan & approval oleh Super Admin. Anda akan bisa masuk setelah akun di-approve.",
@@ -304,6 +304,10 @@ export default function Login() {
         res = await api.post("/auth/login", payload);
       } catch (firstErr) {
         const st = firstErr?.response?.status;
+        if (firstErr?.response?.data?.was_removed) {
+          removeAccountFromVault(loginEmail);
+          throw firstErr;
+        }
         if (st === 401 || st === 404) {
           const restored = await attemptAutoHydrateServer(api).catch(() => false);
           if (restored) {
@@ -692,7 +696,10 @@ export default function Login() {
       });
 
       if (data?.status === "needs_onboarding") {
-        if (allowHydrateRetry && !payload.profile_submitted && !data?.existing_user) {
+        if (data?.was_removed) {
+          removeAccountFromVault(payload.email);
+          toast.info("Akun Anda sebelumnya telah dihapus oleh Super Admin. Silakan lengkapi data profil Anda kembali.");
+        } else if (allowHydrateRetry && !payload.profile_submitted && !data?.existing_user) {
           const restored = await attemptAutoHydrateServer(api).catch(() => false);
           if (restored) {
             await submitGoogleAccount(payload, false);
@@ -704,11 +711,11 @@ export default function Login() {
             email: data.google_profile?.email || payload.email,
             name: data.google_profile?.name || payload.name || "",
             picture: data.google_profile?.picture || payload.picture || "",
-            department: data.google_profile?.department || "",
-            job_title: data.google_profile?.job_title || "",
-            phone: data.google_profile?.phone || "",
-            work_mode: data.google_profile?.work_mode || "On-site",
-            bio: data.google_profile?.bio || ""
+            department: data.was_removed ? "" : (data.google_profile?.department || ""),
+            job_title: data.was_removed ? "" : (data.google_profile?.job_title || ""),
+            phone: data.was_removed ? "" : (data.google_profile?.phone || ""),
+            work_mode: data.was_removed ? "On-site" : (data.google_profile?.work_mode || "On-site"),
+            bio: data.was_removed ? "" : (data.google_profile?.bio || "")
           },
           idToken: payload.idToken || "",
           verified: Boolean(payload.verifiedByOAuth),

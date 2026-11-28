@@ -21,6 +21,7 @@ import {
   reconcileMarketplaceEnabledCache,
 } from "../marketplace/marketplaceStore";
 import { syncWorkspaceMirror } from "../../lib/persistentMirror";
+import { ADMIN_PANELS_CACHE_BOX, hydrateAdminPanelsCache } from "../../lib/bootstrapCaches";
 import { googleGmailOAuthSignIn, getGmailAccessToken, clearGmailAuth } from "../../lib/auth";
 import {
   BANNER_IMAGE_PRESETS,
@@ -49,41 +50,126 @@ const INITIAL_AUDIT_LOGS = [
   { id: "log_2", actor_name: "Admin ASLI RI", action: "menghubungkan integrasi Google Workspace (Calendar & Meet)", created_at: new Date(Date.now() - 28800000).toISOString() },
   { id: "log_3", actor_name: "Siti Rahma", action: "meng-approve final (2/2) pada tugas TSK-002", created_at: new Date(Date.now() - 64800000).toISOString() },
   { id: "log_4", actor_name: "Budi Santoso", action: "menyelesaikan checkpoint 'Audit stats endpoint' pada tugas TSK-002", created_at: new Date(Date.now() - 86400000).toISOString() },
-  { id: "log_5", actor_name: "Admin ASLI RI", action: "menerima permohonan bergabung karyawan baru Dian Pratama", created_at: new Date(Date.now() - 172800000).toISOString() }
+  { id: "log_5", actor_name: "Admin ASLI RI", action: "menerima permohonan bergabung employee baru Dian Pratama", created_at: new Date(Date.now() - 172800000).toISOString() }
 ];
 
-let ADMIN_STATS_CACHE = null;
-let AUDIT_LOGS_CACHE = null;
-let USERS_CACHE = null;
-let INVITES_CACHE = null;
-let ACCESS_REQ_CACHE = null;
-let DIVISIONS_CACHE = null;
-let STICKERS_CACHE = null;
+const DEFAULT_STICKERS_DATA = {
+  recent: [],
+  frequent: [],
+  packs: [
+    { id: "pk_work", name: "Kerja & Memes", category: "Kerja & Memes", workspace_id: "global" },
+    { id: "pk_reactions", name: "Reactions & Memoji", category: "Reactions", workspace_id: "global" },
+    { id: "pk_creative", name: "Design & Creative", category: "Design", workspace_id: "global" },
+    { id: "pk_dev", name: "Tech & Engineering", category: "Dev", workspace_id: "global" },
+    { id: "pk_custom", name: "Custom Stickers", category: "Custom", workspace_id: "user" }
+  ],
+  stickers: [
+    { id: "stk_w1", pack_id: "pk_work", name: "SIAP MANDAN", emoji: "🫡", bg: "#E0F2FE", category: "Kerja & Memes" },
+    { id: "stk_w2", pack_id: "pk_work", name: "MANTAP!", emoji: "🔥", bg: "#FFEDD5", category: "Kerja & Memes" },
+    { id: "stk_w3", pack_id: "pk_work", name: "NEED REVIEW", emoji: "👀", bg: "#FEF3C7", category: "Kerja & Memes" },
+    { id: "stk_w4", pack_id: "pk_work", name: "APPROVED!", emoji: "✅", bg: "#DCFCE7", category: "Kerja & Memes" },
+    { id: "stk_w5", pack_id: "pk_work", name: "REVISI DIKIT", emoji: "✏️", bg: "#F3E8FF", category: "Kerja & Memes" },
+    { id: "stk_w6", pack_id: "pk_work", name: "GASKEN!", emoji: "🚀", bg: "#FCE7F3", category: "Kerja & Memes" },
+    { id: "stk_w7", pack_id: "pk_work", name: "OTW", emoji: "🏎️", bg: "#E0E7FF", category: "Kerja & Memes" },
+    { id: "stk_w8", pack_id: "pk_work", name: "COPY THAT", emoji: "👍", bg: "#DBEAFE", category: "Kerja & Memes" },
+    { id: "stk_w9", pack_id: "pk_work", name: "URGENT!", emoji: "🚨", bg: "#FEE2E2", category: "Kerja & Memes" },
+    { id: "stk_w10", pack_id: "pk_work", name: "NGOPI DULU", emoji: "☕", bg: "#FEF3C7", category: "Kerja & Memes" },
+    { id: "stk_w11", pack_id: "pk_work", name: "LENGKAP!", emoji: "💯", bg: "#DCFCE7", category: "Kerja & Memes" },
+    { id: "stk_w12", pack_id: "pk_work", name: "DEADLINE", emoji: "⏰", bg: "#FEE2E2", category: "Kerja & Memes" },
+    { id: "stk_w13", pack_id: "pk_work", name: "DONE DEAL", emoji: "🤝", bg: "#DCFCE7", category: "Kerja & Memes" },
+    { id: "stk_w14", pack_id: "pk_work", name: "MENANGIS", emoji: "😭", bg: "#E0F2FE", category: "Kerja & Memes" },
+    { id: "stk_r1", pack_id: "pk_reactions", name: "GREAT JOB", emoji: "🎉", bg: "#FEF3C7", category: "Reactions" },
+    { id: "stk_r2", pack_id: "pk_reactions", name: "BRAVO", emoji: "👏", bg: "#DCFCE7", category: "Reactions" },
+    { id: "stk_r3", pack_id: "pk_reactions", name: "LOVE IT", emoji: "❤️", bg: "#FCE7F3", category: "Reactions" },
+    { id: "stk_r4", pack_id: "pk_reactions", name: "BRILLIANT", emoji: "💡", bg: "#FEF3C7", category: "Reactions" },
+    { id: "stk_r5", pack_id: "pk_reactions", name: "SUPER!", emoji: "⭐", bg: "#FFEDD5", category: "Reactions" },
+    { id: "stk_r6", pack_id: "pk_reactions", name: "MIND BLOWN", emoji: "🤯", bg: "#E0E7FF", category: "Reactions" },
+    { id: "stk_r7", pack_id: "pk_reactions", name: "FIGHTING!", emoji: "💪", bg: "#DCFCE7", category: "Reactions" },
+    { id: "stk_r8", pack_id: "pk_reactions", name: "TARGET!", emoji: "🎯", bg: "#FEE2E2", category: "Reactions" },
+    { id: "stk_c1", pack_id: "pk_creative", name: "PIXEL PERFECT", emoji: "📐", bg: "#E0F2FE", category: "Design" },
+    { id: "stk_c2", pack_id: "pk_creative", name: "DRAFT READY", emoji: "🎨", bg: "#F3E8FF", category: "Design" },
+    { id: "stk_c3", pack_id: "pk_creative", name: "ASSET LOADED", emoji: "📸", bg: "#DCFCE7", category: "Design" },
+    { id: "stk_c4", pack_id: "pk_creative", name: "MAGIC VIBES", emoji: "✨", bg: "#FEF3C7", category: "Design" },
+    { id: "stk_c5", pack_id: "pk_creative", name: "STORYBOARD", emoji: "🎬", bg: "#FFEDD5", category: "Design" },
+    { id: "stk_c6", pack_id: "pk_creative", name: "FEEDBACK?", emoji: "💬", bg: "#E0E7FF", category: "Design" },
+    { id: "stk_d1", pack_id: "pk_dev", name: "SHIP IT!", emoji: "🚢", bg: "#E0F2FE", category: "Dev" },
+    { id: "stk_d2", pack_id: "pk_dev", name: "NO BUG", emoji: "🐛", bg: "#DCFCE7", category: "Dev" },
+    { id: "stk_d3", pack_id: "pk_dev", name: "PASSING QA", emoji: "🧪", bg: "#F3E8FF", category: "Dev" },
+    { id: "stk_d4", pack_id: "pk_dev", name: "BUILD OK", emoji: "🟢", bg: "#DCFCE7", category: "Dev" },
+    { id: "stk_d5", pack_id: "pk_dev", name: "MERGE PR", emoji: "🔀", bg: "#E0E7FF", category: "Dev" },
+    { id: "stk_d6", pack_id: "pk_dev", name: "DEPLOYED!", emoji: "🚀", bg: "#FEF3C7", category: "Dev" }
+  ]
+};
+
+export { hydrateAdminPanelsCache };
+
+let ADMIN_STATS_CACHE = ADMIN_PANELS_CACHE_BOX.stats;
+let AUDIT_LOGS_CACHE = ADMIN_PANELS_CACHE_BOX.auditLogs;
+let USERS_CACHE = ADMIN_PANELS_CACHE_BOX.users;
+let INVITES_CACHE = ADMIN_PANELS_CACHE_BOX.invites;
+let ACCESS_REQ_CACHE = ADMIN_PANELS_CACHE_BOX.accessReqs;
+let DIVISIONS_CACHE = ADMIN_PANELS_CACHE_BOX.divisions;
+let STICKERS_CACHE = ADMIN_PANELS_CACHE_BOX.stickers || DEFAULT_STICKERS_DATA;
+let RECOVERY_KEY_CACHE = ADMIN_PANELS_CACHE_BOX.recoveryKey || "";
 
 try {
-  const sStats = localStorage.getItem("circle_admin_stats");
-  if (sStats) ADMIN_STATS_CACHE = JSON.parse(sStats);
-  const sAudit = localStorage.getItem("circle_admin_audit");
-  if (sAudit) AUDIT_LOGS_CACHE = JSON.parse(sAudit);
-  const sUsers = localStorage.getItem("circle_admin_users");
-  if (sUsers) USERS_CACHE = JSON.parse(sUsers);
-  const sInvites = localStorage.getItem("circle_admin_invites");
-  if (sInvites) INVITES_CACHE = JSON.parse(sInvites);
-  const sAccess = localStorage.getItem("circle_admin_access_reqs");
-  if (sAccess) ACCESS_REQ_CACHE = JSON.parse(sAccess);
-  const sDivs = localStorage.getItem("circle_admin_divisions");
-  if (sDivs) DIVISIONS_CACHE = JSON.parse(sDivs);
-  const sStickers = localStorage.getItem("circle_admin_stickers_data");
-  if (sStickers) STICKERS_CACHE = JSON.parse(sStickers);
+  if (!ADMIN_STATS_CACHE) {
+    const sStats = localStorage.getItem("circle_admin_stats");
+    if (sStats) ADMIN_STATS_CACHE = JSON.parse(sStats);
+  }
+  if (!AUDIT_LOGS_CACHE) {
+    const sAudit = localStorage.getItem("circle_admin_audit");
+    if (sAudit) AUDIT_LOGS_CACHE = JSON.parse(sAudit);
+  }
+  if (!USERS_CACHE) {
+    const sUsers = localStorage.getItem("circle_admin_users");
+    if (sUsers) USERS_CACHE = JSON.parse(sUsers);
+  }
+  if (!INVITES_CACHE) {
+    const sInvites = localStorage.getItem("circle_admin_invites");
+    if (sInvites) INVITES_CACHE = JSON.parse(sInvites);
+  }
+  if (!ACCESS_REQ_CACHE) {
+    const sAccess = localStorage.getItem("circle_admin_access_reqs");
+    if (sAccess) ACCESS_REQ_CACHE = JSON.parse(sAccess);
+  }
+  if (!DIVISIONS_CACHE) {
+    const sDivs = localStorage.getItem("circle_admin_divisions");
+    if (sDivs) DIVISIONS_CACHE = JSON.parse(sDivs);
+  }
+  if (STICKERS_CACHE === DEFAULT_STICKERS_DATA) {
+    const sStickers = localStorage.getItem("circle_admin_stickers_data");
+    if (sStickers) {
+      const parsedStickers = JSON.parse(sStickers);
+      if (parsedStickers && Array.isArray(parsedStickers.packs)) STICKERS_CACHE = parsedStickers;
+    }
+  }
 } catch (e) {
   console.warn("Failed to load admin cache", e);
 }
 
 export function AdminOverview() {
-  const [s, setS] = useState(ADMIN_STATS_CACHE || INITIAL_ADMIN_STATS);
-  const [logs, setLogs] = useState(AUDIT_LOGS_CACHE || INITIAL_AUDIT_LOGS);
-  const [loading, setLoading] = useState(!ADMIN_STATS_CACHE);
-  const { userMap } = useApp();
+  const { userMap, users: appUsers, tasks: appTasks, ws } = useApp();
+  const [s, setS] = useState(() => {
+    if (ADMIN_STATS_CACHE) return ADMIN_STATS_CACHE;
+    if (Array.isArray(appUsers) && appUsers.length > 0) {
+      const nowMs = Date.now();
+      const activeTasks = Array.isArray(appTasks) ? appTasks.filter((t) => !t?.archived && t?.status !== "done") : [];
+      return {
+        total_employees: appUsers.length,
+        active_employees: appUsers.filter((u) => u?.status === "active").length,
+        pending_employees: appUsers.filter((u) => u?.status === "pending").length,
+        departments: ws?.divisions?.length || 4,
+        groups: ws?.divisions?.length || 4,
+        active_projects: 1,
+        open_tasks: activeTasks.length,
+        overdue_tasks: activeTasks.filter((t) => t?.deadline && new Date(t.deadline).getTime() < nowMs).length,
+      };
+    }
+    return INITIAL_ADMIN_STATS;
+  });
+  const [logs, setLogs] = useState(() => AUDIT_LOGS_CACHE || INITIAL_AUDIT_LOGS);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     api.get("/admin/stats").then((r) => { 
@@ -103,7 +189,7 @@ export function AdminOverview() {
   }, []);
 
   const stats = s ? [
-    ["Total Karyawan", s.total_employees],
+    ["Total Employee", s.total_employees],
     ["Aktif", s.active_employees],
     ["Menunggu Approval", s.pending_employees],
     ["Divisi", s.departments],
@@ -156,9 +242,9 @@ export function AdminOverview() {
 
 export function PeopleAccess() {
   const { me, ws, users: appUsers, reloadWs, reloadUsers, subscribe } = useApp();
-  const [users, setUsers] = useState(() => USERS_CACHE || appUsers || []);
-  const [invites, setInvites] = useState(INVITES_CACHE || []);
-  const [accessRequests, setAccessRequests] = useState(ACCESS_REQ_CACHE || []);
+  const [users, setUsers] = useState(() => (Array.isArray(appUsers) && appUsers.length > 0 ? appUsers : USERS_CACHE || []));
+  const [invites, setInvites] = useState(() => INVITES_CACHE || []);
+  const [accessRequests, setAccessRequests] = useState(() => ACCESS_REQ_CACHE || []);
   const [loading, setLoading] = useState(false);
   const [reqFilter, setReqFilter] = useState("all");
   const [inv, setInv] = useState({ email: "", role: "employee" });
@@ -180,7 +266,7 @@ export function PeopleAccess() {
   const [resetPwValue, setResetPwValue] = useState("");
   const [showResetPw, setShowResetPw] = useState(false);
   const [busyResetPw, setBusyResetPw] = useState(false);
-  const [recoveryKey, setRecoveryKey] = useState("");
+  const [recoveryKey, setRecoveryKey] = useState(() => RECOVERY_KEY_CACHE || "");
   const [showRecoveryKey, setShowRecoveryKey] = useState(false);
   const [copiedRecoveryKey, setCopiedRecoveryKey] = useState(false);
   const [busyRecoveryKey, setBusyRecoveryKey] = useState(false);
@@ -209,7 +295,7 @@ export function PeopleAccess() {
           toast.success(res.data.detail || `Permohonan hapus ${deleteTargetUser.name} diajukan ke Manajer Divisi.`);
         }
       } else {
-        toast.success(res.data?.message || `Karyawan ${deleteTargetUser.name} berhasil dihapus.`);
+        toast.success(res.data?.message || `Employee ${deleteTargetUser.name} berhasil dihapus.`);
       }
       setDeleteTargetUser(null);
       load();
@@ -220,6 +306,13 @@ export function PeopleAccess() {
       setIsDeleting(false);
     }
   };
+
+  useEffect(() => {
+    if (Array.isArray(appUsers) && appUsers.length > 0) {
+      USERS_CACHE = appUsers;
+      setUsers(appUsers);
+    }
+  }, [appUsers]);
 
   const load = () => {
     api.get("/admin/users").then((r) => { 
@@ -239,7 +332,10 @@ export function PeopleAccess() {
     }).catch(() => {}).finally(() => setLoading(false));
     if (isTopAdmin) {
       api.get("/admin/recovery-key").then((r) => {
-        if (r.data?.recovery_key) setRecoveryKey(r.data.recovery_key);
+        if (r.data?.recovery_key) {
+          RECOVERY_KEY_CACHE = r.data.recovery_key;
+          setRecoveryKey(r.data.recovery_key);
+        }
       }).catch(() => {});
     }
   };
@@ -269,7 +365,7 @@ export function PeopleAccess() {
         reqType === "password_reset"
           ? "Permintaan reset password di-approve! Password baru sekarang aktif."
           : reqType === "delete_user"
-          ? "Permohonan hapus karyawan di-approve."
+          ? "Permohonan hapus employee di-approve."
           : "Permintaan akses berhasil di-approve! Akun sekarang aktif."
       );
       load();
@@ -370,7 +466,7 @@ export function PeopleAccess() {
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-3">
             <p className="text-xs text-sub leading-relaxed max-w-md">
-              Permintaan akses masuk karyawan baru dan permohonan <b>reset lupa password</b> diteruskan melalui Asisten <b className="text-ink">"Asli"</b> berupa Approval Card.
+              Permintaan akses masuk employee baru dan permohonan <b>reset lupa password</b> diteruskan melalui Asisten <b className="text-ink">"Asli"</b> berupa Approval Card.
             </p>
             <div className="flex flex-wrap items-center gap-2">
               <button
@@ -642,7 +738,7 @@ export function PeopleAccess() {
         </div>
       </Card>
 
-      {/* Dialog Konfirmasi Penghapusan Karyawan */}
+      {/* Dialog Konfirmasi Penghapusan Employee */}
       <Dialog open={!!deleteTargetUser} onOpenChange={(open) => !open && !isDeleting && setDeleteTargetUser(null)}>
         <DialogContent className="max-w-md p-4 sm:p-6 bg-surface rounded-2xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl">
           <DialogHeader className="pb-3 border-b">
@@ -651,7 +747,7 @@ export function PeopleAccess() {
                 <Trash2 size={20} />
               </div>
               <div className="text-left">
-                <DialogTitle className="text-base font-bold text-ink">Hapus Karyawan</DialogTitle>
+                <DialogTitle className="text-base font-bold text-ink">Hapus Employee</DialogTitle>
                 <DialogDescription className="text-xs text-sub">Memerlukan approval Manajer Divisi</DialogDescription>
               </div>
             </div>
@@ -757,7 +853,7 @@ export function PeopleAccess() {
         </Card>
       )}
 
-      {/* Dialog Reset Password Karyawan oleh Admin */}
+      {/* Dialog Reset Password Employee oleh Admin */}
       <Dialog open={!!resetPwUser} onOpenChange={(open) => !open && !busyResetPw && setResetPwUser(null)}>
         <DialogContent className="max-w-md p-6 bg-surface rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl" data-testid="admin-reset-pw-dialog">
           <DialogHeader className="pb-3 border-b">
@@ -766,7 +862,7 @@ export function PeopleAccess() {
                 <KeyRound size={20} />
               </div>
               <div className="text-left">
-                <DialogTitle className="text-base font-bold text-ink">Reset Password Karyawan</DialogTitle>
+                <DialogTitle className="text-base font-bold text-ink">Reset Password Employee</DialogTitle>
                 <DialogDescription className="text-xs text-sub">Atur ulang password login untuk akun anggota</DialogDescription>
               </div>
             </div>
@@ -1632,7 +1728,7 @@ export function DivisionsAdmin() {
   return (
     <Card title="Daftar Divisi & Penyelarasan Struktur Organisasi" testid="divisions-admin">
       <p className="mb-3 text-xs text-sub">
-        Kelola daftar divisi resmi perusahaan. Setiap perubahan divisi di sini otomatis tersinkronisasi dengan halaman <b>Struktur Organisasi</b>, <b>Grup</b>, <b>Karyawan</b>, dan <b>Direktori Drive</b>.
+        Kelola daftar divisi resmi perusahaan. Setiap perubahan divisi di sini otomatis tersinkronisasi dengan halaman <b>Struktur Organisasi</b>, <b>Grup</b>, <b>Employee</b>, dan <b>Direktori Drive</b>.
       </p>
       <div className="flex items-center gap-2">
         <input
@@ -1837,7 +1933,7 @@ export function ProfileFieldsAdmin() {
   const mv = (i, d) => { const l = [...fields]; [l[i], l[i + d]] = [l[i + d], l[i]]; setFields(l); };
   const V = ({ value, onChange, testid }) => <AppSelect value={value} onChange={(e) => onChange(e.target.value)} className="h-9 rounded-xl border bg-surface2 px-3 text-xs font-medium" data-testid={testid}><option value="everyone">Semua Orang</option><option value="managers">Manajer</option><option value="admins">Hanya Admin</option></AppSelect>;
   return (
-    <Card title="Kolom Profil Karyawan" testid="profile-fields-admin">
+    <Card title="Kolom Profil Employee" testid="profile-fields-admin">
       <p className="mb-2 text-xs font-semibold text-sub">Visibilitas kolom standar</p>
       <div className="mb-5 grid gap-2 sm:grid-cols-2">{["email", "phone", "employee_id", "employment_status", "join_date"].map((k) => <div key={k} className="flex items-center justify-between rounded-xl bg-surface2 px-3 py-2 text-sm">{STD_FIELD_LABELS[k] || k}<V value={vis[k] || "everyone"} onChange={(v) => setVis({ ...vis, [k]: v })} testid={`vis-${k}`} /></div>)}</div>
       <p className="mb-2 text-xs font-semibold text-sub">Kolom kustom</p>
@@ -2189,8 +2285,8 @@ export function MarketplaceSettingsCard({ compact = false }) {
     reconcileMarketplaceEnabledCache(me?.user_id, boolVal);
     toast.success(
       boolVal
-        ? "Fitur Marketplace Karyawan diaktifkan untuk seluruh tim!"
-        : "Fitur Marketplace Karyawan dinonaktifkan sementara."
+        ? "Fitur Marketplace Employee diaktifkan untuk seluruh tim!"
+        : "Fitur Marketplace Employee dinonaktifkan sementara."
     );
     try {
       const { data } = await api.patch("/workspace", { marketplace_enabled: boolVal });
@@ -2431,7 +2527,7 @@ export function MarketplaceSettingsCard({ compact = false }) {
       : false;
 
   return (
-    <Card title="Marketplace Karyawan (Kontrol Super Admin)" testid="marketplace-settings-card">
+    <Card title="Marketplace Employee (Kontrol Super Admin)" testid="marketplace-settings-card">
       <div className="space-y-4">
         {/* Primary On/Off Control */}
         <div className="flex items-center justify-between gap-4 rounded-2xl border bg-surface2/60 p-4">
@@ -2451,8 +2547,8 @@ export function MarketplaceSettingsCard({ compact = false }) {
             </div>
             <p className="text-xs text-sub leading-relaxed">
               {enabled
-                ? "Menu Marketplace tampil di sidebar seluruh karyawan dan transaksi jual-beli diizinkan."
-                : "Menu Marketplace disembunyikan dari sidebar karyawan dan akses transaksi ditutup sementara tanpa menghapus data."}
+                ? "Menu Marketplace tampil di sidebar seluruh employee dan transaksi jual-beli diizinkan."
+                : "Menu Marketplace disembunyikan dari sidebar employee dan akses transaksi ditutup sementara tanpa menghapus data."}
             </p>
           </div>
           <Switch
@@ -3161,7 +3257,7 @@ export function MarketplaceSettingsCard({ compact = false }) {
                   ["allow_qris", "QRIS Instan (Semua E-Wallet & Mobile Banking)"],
                   ["allow_bank_transfer", "Transfer Bank / Virtual Account (BCA, Mandiri, BNI, BRI)"],
                   ["allow_ewallet", "E-Wallet (GoPay, OVO, DANA, ShopeePay)"],
-                  ["allow_payroll", "Potong Gaji / Kasbon Karyawan (Payroll)"],
+                  ["allow_payroll", "Potong Gaji / Kasbon Employee (Payroll)"],
                   ["allow_cod", "COD (Bayar di Tempat / Meja Kantor)"],
                 ].map(([key, label]) => (
                   <label key={key} className="flex items-center justify-between gap-3 py-2.5 text-xs sm:text-sm cursor-pointer">

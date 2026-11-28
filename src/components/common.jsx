@@ -1,4 +1,5 @@
 import { memo, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import { format, formatDistanceToNowStrict, isToday, isPast, differenceInHours } from "date-fns";
 import { id as localeId } from "date-fns/locale";
@@ -6,16 +7,29 @@ import { X, Download, ZoomIn, ZoomOut } from "lucide-react";
 import { useApp } from "../context/AppContext";
 import { fileUrl } from "../lib/api";
 import { getProfileCompletion } from "../lib/profileCompletion";
+import { isImageFailed, isImageLoaded, markImageFailed, markImageLoaded } from "../lib/imagePreloader";
 
 const GRADS = ["from-[#FF8A9A] to-[#FF5364]", "from-[#8FB8FF] to-[#5B7CFA]", "from-[#C3A6FF] to-[#8B5CF6]", "from-[#7FE0B0] to-[#22A06B]", "from-[#FFD27A] to-[#F59E0B]", "from-[#7FD8E0] to-[#0EA5A4]"];
 const hash = (s = "") => [...s].reduce((a, c) => a + c.charCodeAt(0), 0);
 
-export function Logo({ size = 36, ws }) {
+export const Logo = memo(function Logo({ size = 36, ws }) {
   const logoUrl = ws?.logo_file_id 
     ? (ws.logo_file_id === "default_workspace_logo" ? "/assets/aistudio/657343220_18309991366279811_6828424809008890253_n_c00cf220.png" : fileUrl(ws.logo_file_id))
     : "/assets/aistudio/657343220_18309991366279811_6828424809008890253_n_c00cf220.png";
-  return <img src={logoUrl} alt="logo" style={{ width: size, height: size }} className="rounded-xl object-cover" />;
-}
+  return (
+    <img
+      src={logoUrl}
+      alt="logo"
+      width={size}
+      height={size}
+      loading="eager"
+      decoding="async"
+      fetchPriority="high"
+      style={{ width: size, height: size }}
+      className="rounded-xl object-cover shrink-0"
+    />
+  );
+});
 
 export const AVAILABILITY_STATUS_OPTIONS = [
   {
@@ -54,16 +68,35 @@ export function getAvailabilityStatusMeta(status) {
 }
 
 export const Avatar = memo(function Avatar({ user, size = 36, showStatus = true, className = "", ringDeadline = true }) {
-  const { online, ws, me, userMap, users, userDeadlinesToday, userDeadlineReasons, hasDeadlineToday, t } = useApp() || {};
+  const { online, ws, me, userMap, userDeadlinesToday, userDeadlineReasons, hasDeadlineToday, t } = useApp() || {};
   const tr = t || ((_k, fb) => fb || _k);
   const isCircleBot = user?.user_id === "user_circle_assistant" || user?.role === "assistant";
   const liveUser = (!isCircleBot && user?.user_id)
-    ? (userMap?.[user.user_id] || (Array.isArray(users) ? users.find((u) => u.user_id === user.user_id) : null) || user)
+    ? (userMap?.[user.user_id] || user)
     : user;
   const name = isCircleBot ? (ws?.assistant_name || user?.name || "Asli") : (liveUser?.name || user?.name || "?");
   const avatarSrc = isCircleBot
     ? (ws?.assistant_avatar || user?.avatar || user?.picture || "https://api.dicebear.com/7.x/bottts/svg?seed=AsliWorkspace&backgroundColor=FF5364")
     : (liveUser?.avatar || liveUser?.picture || user?.avatar || user?.picture);
+
+  const [imgState, setImgState] = useState(() => ({
+    src: avatarSrc || "",
+    loaded: isImageLoaded(avatarSrc),
+    failed: isImageFailed(avatarSrc),
+  }));
+
+  useEffect(() => {
+    if (imgState.src !== (avatarSrc || "")) {
+      setImgState({
+        src: avatarSrc || "",
+        loaded: isImageLoaded(avatarSrc),
+        failed: isImageFailed(avatarSrc),
+      });
+    }
+  }, [avatarSrc, imgState.src]);
+
+  const showImg = Boolean(avatarSrc) && !(imgState.src === (avatarSrc || "") && imgState.failed);
+  const imgReady = Boolean(avatarSrc) && (isImageLoaded(avatarSrc) || (imgState.src === (avatarSrc || "") && imgState.loaded));
 
   const initials = name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase();
   const isOn = Boolean(
@@ -108,12 +141,34 @@ export const Avatar = memo(function Avatar({ user, size = 36, showStatus = true,
           : name
       }
     >
-      {avatarSrc ? (
-        <img src={avatarSrc} alt={name} loading="lazy" decoding="async" className="h-full w-full rounded-full object-cover" referrerPolicy="no-referrer" />
-      ) : (
-        <span className={`flex h-full w-full items-center justify-center rounded-full bg-gradient-to-br ${GRADS[hash(name) % GRADS.length]} font-semibold text-white`} style={{ fontSize: size * 0.38 }}>
+      {(!showImg || !imgReady) && (
+        <span
+          className={`flex h-full w-full items-center justify-center rounded-full bg-gradient-to-br ${GRADS[hash(name) % GRADS.length]} font-semibold text-white`}
+          style={{ fontSize: size * 0.38 }}
+        >
           {initials}
         </span>
+      )}
+      {showImg && (
+        <img
+          src={avatarSrc}
+          alt={name}
+          width={size}
+          height={size}
+          loading="eager"
+          decoding="async"
+          fetchPriority={size >= 48 ? "high" : "auto"}
+          referrerPolicy="no-referrer"
+          onLoad={() => {
+            markImageLoaded(avatarSrc);
+            setImgState({ src: avatarSrc || "", loaded: true, failed: false });
+          }}
+          onError={() => {
+            markImageFailed(avatarSrc);
+            setImgState({ src: avatarSrc || "", loaded: false, failed: true });
+          }}
+          className={`${imgReady ? "h-full w-full" : "absolute inset-0 h-full w-full opacity-0"} rounded-full object-cover`}
+        />
       )}
       {showStatus && user && (
         <span
@@ -218,9 +273,9 @@ export function ImageLightbox({ image, onClose }) {
     }
   };
 
-  return (
+  const modalContent = (
     <div
-      className="fixed inset-0 z-[100] flex flex-col bg-black/85 backdrop-blur-sm animate-fadeIn"
+      className="fixed inset-0 z-[9999] flex flex-col bg-black/85 backdrop-blur-sm animate-fadeIn"
       onClick={() => onClose?.()}
       role="dialog"
       aria-modal="true"
@@ -288,6 +343,8 @@ export function ImageLightbox({ image, onClose }) {
       </div>
     </div>
   );
+
+  return typeof document !== "undefined" ? createPortal(modalContent, document.body) : modalContent;
 }
 
 export function GroupIcon({ c, size = 42, rounded = "rounded-2xl" }) {
@@ -513,7 +570,7 @@ export const ROLE_NAMES = {
   workspace_admin: "Workspace Admin",
   department_manager: "Manajer Divisi",
   project_manager: "Project Manager",
-  employee: "Karyawan",
+  employee: "Employee",
   member: "Anggota",
 };
 

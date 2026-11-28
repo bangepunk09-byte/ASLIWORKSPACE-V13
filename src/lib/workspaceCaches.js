@@ -48,7 +48,11 @@ export function scheduleStorageWrite(key, serializedValue) {
   }
   pendingStorageWrites.set(key, serializedValue);
   if (!storageFlushTimer) {
-    storageFlushTimer = setTimeout(flushPendingStorageWrites, 24);
+    if (typeof window !== "undefined" && typeof window.requestIdleCallback === "function") {
+      storageFlushTimer = window.requestIdleCallback(flushPendingStorageWrites, { timeout: 250 });
+    } else {
+      storageFlushTimer = setTimeout(flushPendingStorageWrites, 64);
+    }
   }
 }
 

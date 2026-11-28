@@ -106,7 +106,21 @@ export default defineConfig(() => {
               options: {
                 cacheName: 'workspace-media-cache',
                 expiration: {
-                  maxEntries: 120,
+                  maxEntries: 400,
+                  maxAgeSeconds: 60 * 60 * 24 * 60,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+            {
+              urlPattern: /^https:\/\/(lh3\.googleusercontent\.com|api\.dicebear\.com|images\.unsplash\.com)\/.*/i,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'external-avatars-cache',
+                expiration: {
+                  maxEntries: 250,
                   maxAgeSeconds: 60 * 60 * 24 * 30,
                 },
                 cacheableResponse: {
@@ -145,7 +159,7 @@ export default defineConfig(() => {
           ],
         },
         devOptions: {
-          enabled: true,
+          enabled: false,
           type: 'classic',
           navigateFallback: 'index.html',
         },
@@ -159,6 +173,7 @@ export default defineConfig(() => {
     },
     build: {
       target: 'es2020',
+      sourcemap: false,
       cssCodeSplit: false,
       modulePreload: {
         polyfill: false,

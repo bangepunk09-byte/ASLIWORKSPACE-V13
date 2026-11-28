@@ -337,6 +337,7 @@ function Composer({ parentId, onPosted, placeholder, compact = false, defaultTop
   const [files, setFiles] = useState([]);
   const [mentions, setMentions] = useState([]);
   const [mq, setMq] = useState(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
   const [busy, setBusy] = useState(false);
   const [pollOpen, setPollOpen] = useState(false);
   const fileRef = useRef(null);
@@ -360,14 +361,25 @@ function Composer({ parentId, onPosted, placeholder, compact = false, defaultTop
     setText(e.target.value);
     const m = e.target.value.slice(0, e.target.selectionStart).match(/@([\w]*)$/);
     setMq(m ? m[1].toLowerCase() : null);
+    setMentionIndex(0);
   };
   const pick = (u) => {
-    const pos = ta.current.selectionStart;
+    if (!u) return;
+    const pos = ta.current ? ta.current.selectionStart : text.length;
     const tagText = u.isAll ? "@semua " : `@${u.name} `;
-    setText(text.slice(0, pos).replace(/@[\w]*$/, tagText) + text.slice(pos));
+    const before = text.slice(0, pos).replace(/@[\w]*$/, tagText);
+    const nextText = before + text.slice(pos);
+    const nextCursor = before.length;
+    setText(nextText);
     setMentions((prev) => Array.from(new Set([...prev, u.isAll ? "semua" : u.user_id])));
     setMq(null);
-    ta.current.focus();
+    setMentionIndex(0);
+    requestAnimationFrame(() => {
+      if (ta.current) {
+        ta.current.focus();
+        try { ta.current.setSelectionRange(nextCursor, nextCursor); } catch {}
+      }
+    });
   };
   const addFiles = async (list) => {
     for (const f of Array.from(list).slice(0, 6 - files.length)) {
@@ -538,7 +550,31 @@ function Composer({ parentId, onPosted, placeholder, compact = false, defaultTop
             ref={ta}
             value={text}
             onChange={onChange}
-            onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send(); }}
+            onKeyDown={(e) => {
+              if (sugg.length > 0) {
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setMentionIndex((i) => (i + 1) % sugg.length);
+                  return;
+                }
+                if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setMentionIndex((i) => (i - 1 + sugg.length) % sugg.length);
+                  return;
+                }
+                if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.nativeEvent.isComposing)) {
+                  e.preventDefault();
+                  pick(sugg[mentionIndex % sugg.length] || sugg[0]);
+                  return;
+                }
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  setMq(null);
+                  return;
+                }
+              }
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send();
+            }}
             rows={parentId ? 2 : 3}
             placeholder={activePlaceholder}
             className={`w-full resize-none bg-transparent outline-none placeholder:text-sub ${compact ? "text-[14px]" : "text-[15px]"}`}
@@ -561,30 +597,44 @@ function Composer({ parentId, onPosted, placeholder, compact = false, defaultTop
 
           {sugg.length > 0 && (
             <div className="absolute left-14 z-20 w-64 rounded-xl border bg-surface p-1 shadow-lg" data-testid="post-mention-suggestions">
-              {sugg.map((u) => (
-                <button
-                  key={u.user_id}
-                  type="button"
-                  onClick={() => pick(u)}
-                  className="flex w-full items-center gap-2 rounded-lg p-1.5 text-sm hover:bg-surface2 cursor-pointer"
-                  data-testid={`post-mention-${u.user_id}`}
-                >
-                  {u.isAll ? (
-                    <>
-                      <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full bg-brand/15 text-brand">
-                        <Users size={12} />
-                      </span>
-                      <span className="font-semibold text-brand">@semua</span>
-                      <span className="ml-auto text-[11px] text-sub">Semua anggota</span>
-                    </>
-                  ) : (
-                    <>
-                      <Avatar user={u} size={22} showStatus={false} />
-                      <span>{u.name}</span>
-                    </>
-                  )}
-                </button>
-              ))}
+              {sugg.map((u, idx) => {
+                const isSelected = idx === (mentionIndex % sugg.length);
+                return (
+                  <button
+                    key={u.user_id}
+                    type="button"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      pick(u);
+                    }}
+                    onMouseEnter={() => setMentionIndex(idx)}
+                    className={`flex w-full items-center gap-2 rounded-lg p-1.5 text-sm transition-colors cursor-pointer ${
+                      isSelected ? "bg-brand/10 text-brand font-semibold" : "hover:bg-surface2 text-ink"
+                    }`}
+                    data-testid={`post-mention-${u.user_id}`}
+                  >
+                    {u.isAll ? (
+                      <>
+                        <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full bg-brand/15 text-brand">
+                          <Users size={12} />
+                        </span>
+                        <span className="font-semibold text-brand">@semua</span>
+                        <span className="ml-auto text-[11px] text-sub">Semua anggota</span>
+                      </>
+                    ) : (
+                      <>
+                        <Avatar user={u} size={22} showStatus={false} />
+                        <span className="truncate">{u.name}</span>
+                        {isSelected && (
+                          <span className="ml-auto shrink-0 rounded-md bg-brand/15 px-1.5 py-0.5 text-[10px] font-bold text-brand">
+                            Tab ↹
+                          </span>
+                        )}
+                      </>
+                    )}
+                  </button>
+                );
+              })}
             </div>
           )}
           {files.length > 0 && (

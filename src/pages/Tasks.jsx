@@ -7,6 +7,7 @@ import { playSound } from "../lib/sound";
 import { useApp } from "../context/AppContext";
 import { hasCompletedInitialHydrate, recordDeletedTaskIds } from "../lib/persistentMirror";
 import { scheduleJsonStorageWrite } from "../lib/workspaceCaches";
+import { DEFAULT_BOARDS, TASKS_CACHE_BOX, hydrateTasksWorkspaceCache } from "../lib/bootstrapCaches";
 import { enforceTaskApprovalInvariant, mergeTasksArrayNonDestructive } from "../lib/snapshotMerge";
 import { PageHeader, AccentButton, GhostButton, PRIORITY, fmtDate } from "../components/common";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
@@ -31,16 +32,7 @@ const sel = "h-10 rounded-full border bg-surface text-sm font-medium text-ink sh
 
 import { INITIAL_TASKS } from "../data/initialTasks";
 
-export const DEFAULT_BOARDS = [
-  { id: "brd_div_marketing", name: "Marketing", department: "Marketing", color: "#10B981" },
-  { id: "brd_div_sales", name: "Sales", department: "Sales", color: "#F59E0B" },
-  { id: "brd_div_it", name: "IT", department: "IT", color: "#06B6D4" },
-  { id: "brd_div_finance", name: "Finance", department: "Finance", color: "#14B8A6" },
-  { id: "brd_div_legal", name: "Legal", department: "Legal", color: "#6366F1" },
-  { id: "brd_div_hrga", name: "HRGA", department: "HRGA", color: "#F97316" },
-  { id: "brd_div_management", name: "Management", department: "Management", color: "#FF5364" },
-  { id: "brd_div_project", name: "Project", department: "Project", color: "#8B5CF6" }
-];
+export { DEFAULT_BOARDS, hydrateTasksWorkspaceCache };
 
 export const PRIMARY_SAVED_VIEWS = [
   ["all", "Semua Tugas"],
@@ -188,25 +180,82 @@ export function parseCSV(text) {
   return items;
 }
 
-let GLOBAL_TASKS_CACHE = null;
+let GLOBAL_TASKS_CACHE = TASKS_CACHE_BOX.tasks;
+let GLOBAL_BOARDS_CACHE = TASKS_CACHE_BOX.boards;
+let GLOBAL_ALL_BOARDS_CACHE = TASKS_CACHE_BOX.allBoards;
+let GLOBAL_PROJECTS_CACHE = TASKS_CACHE_BOX.projects;
+
+try {
+  if (typeof localStorage !== "undefined") {
+    if (!GLOBAL_TASKS_CACHE) {
+      const rawTasks = localStorage.getItem("circle_tasks_cache") || localStorage.getItem("circle_cache_tasks");
+      if (rawTasks) {
+        const parsedTasks = JSON.parse(rawTasks);
+        if (Array.isArray(parsedTasks) && parsedTasks.length > 0) {
+          GLOBAL_TASKS_CACHE = parsedTasks.map((t) => enforceTaskApprovalInvariant(t));
+        }
+      }
+    }
+    if (!GLOBAL_BOARDS_CACHE) {
+      const rawBoards = localStorage.getItem("circle_boards_cache");
+      if (rawBoards) {
+        const parsedBoards = JSON.parse(rawBoards);
+        if (Array.isArray(parsedBoards) && parsedBoards.length > 0) {
+          const clean = parsedBoards.filter((b) => b && b.id !== "brd_1").map((b) => ({ ...b, is_accessible: b.is_accessible ?? true }));
+          if (clean.length > 0) GLOBAL_BOARDS_CACHE = clean;
+        }
+      }
+    }
+    if (!GLOBAL_PROJECTS_CACHE) {
+      const rawProjects = localStorage.getItem("circle_projects_cache") || localStorage.getItem("circle_cache_projects");
+      if (rawProjects) {
+        const parsedProjects = JSON.parse(rawProjects);
+        if (Array.isArray(parsedProjects)) {
+          GLOBAL_PROJECTS_CACHE = Object.fromEntries(parsedProjects.map((p) => [p.id, p]));
+        }
+      }
+    }
+  }
+} catch {}
 
 export function TaskWorkspace({ projectId, compactHeader }) {
-  const { me, isAdmin, isManager, users, userMap, labels, labelMap, statuses, subscribe, prefs, savePrefs, ws, t, tasks: ctxTasks } = useApp();
+  const { me, isAdmin, isManager, users, userMap, labels, labelMap, statuses, subscribe, prefs, savePrefs, ws, t, tasks: ctxTasks, boards: ctxBoards } = useApp();
   const [params, setParams] = useSearchParams();
   const [boards, setBoards] = useState(() => {
+    if (Array.isArray(ctxBoards) && ctxBoards.length > 0) {
+      GLOBAL_BOARDS_CACHE = ctxBoards;
+      return ctxBoards;
+    }
+    if (Array.isArray(GLOBAL_BOARDS_CACHE) && GLOBAL_BOARDS_CACHE.length > 0) {
+      return GLOBAL_BOARDS_CACHE;
+    }
     try {
       const cached = localStorage.getItem("circle_boards_cache");
       if (cached) {
         const parsed = JSON.parse(cached);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          const clean = parsed.filter((b) => b && b.id !== "brd_1");
-          if (clean.length > 0) return clean;
+          const clean = parsed.filter((b) => b && b.id !== "brd_1").map((b) => ({ ...b, is_accessible: b.is_accessible ?? true }));
+          if (clean.length > 0) {
+            GLOBAL_BOARDS_CACHE = clean;
+            return clean;
+          }
         }
       }
     } catch {}
     return DEFAULT_BOARDS;
   });
-  const [boardId, setBoardId] = useState(params.get("board") || "");
+  const [boardId, setBoardId] = useState(() => {
+    const fromUrl = params.get("board");
+    if (fromUrl) return fromUrl;
+    if (projectId || params.get("assignee")) return "";
+    if (!isAdmin && me?.department && Array.isArray(boards) && boards.length > 0) {
+      const myBoard = boards.find(
+        (b) => b?.department && b.department.toLowerCase() === me.department.toLowerCase()
+      );
+      if (myBoard) return myBoard.id;
+    }
+    return "";
+  });
   const [editBoard, setEditBoard] = useState(null);
   const [managingMembersBoard, setManagingMembersBoard] = useState(null);
   const [tasks, setTasks] = useState(() => {
@@ -214,24 +263,25 @@ export function TaskWorkspace({ projectId, compactHeader }) {
       GLOBAL_TASKS_CACHE = ctxTasks;
       return ctxTasks;
     }
-    if (GLOBAL_TASKS_CACHE && Array.isArray(GLOBAL_TASKS_CACHE)) {
+    if (GLOBAL_TASKS_CACHE && Array.isArray(GLOBAL_TASKS_CACHE) && GLOBAL_TASKS_CACHE.length > 0) {
       return GLOBAL_TASKS_CACHE;
     }
     try {
-      const cached = localStorage.getItem("circle_tasks_cache");
+      const cached = localStorage.getItem("circle_tasks_cache") || localStorage.getItem("circle_cache_tasks");
       if (cached) {
         const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed)) {
-          GLOBAL_TASKS_CACHE = parsed;
-          return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const normalized = parsed.map((item) => enforceTaskApprovalInvariant(item));
+          GLOBAL_TASKS_CACHE = normalized;
+          return normalized;
         }
       }
     } catch {}
-    return INITIAL_TASKS;
+    return Array.isArray(ctxTasks) ? ctxTasks : INITIAL_TASKS;
   });
   const [loading] = useState(false);
   const [importModal, setImportModal] = useState(null); // null | "csv" | "json"
-  const [allImportBoards, setAllImportBoards] = useState(DEFAULT_BOARDS);
+  const [allImportBoards, setAllImportBoards] = useState(() => GLOBAL_ALL_BOARDS_CACHE || GLOBAL_BOARDS_CACHE || DEFAULT_BOARDS);
   const [importTargetBoardId, setImportTargetBoardId] = useState("");
   const [overrideImportBoard, setOverrideImportBoard] = useState(true);
   const jsonInputRef = useRef(null);
@@ -308,11 +358,18 @@ export function TaskWorkspace({ projectId, compactHeader }) {
   };
 
   const [projects, setProjects] = useState(() => {
+    if (GLOBAL_PROJECTS_CACHE && Object.keys(GLOBAL_PROJECTS_CACHE).length > 0) {
+      return GLOBAL_PROJECTS_CACHE;
+    }
     try {
       const saved = localStorage.getItem("circle_projects_cache") || localStorage.getItem("circle_cache_projects");
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return Object.fromEntries(parsed.map((p) => [p.id, p]));
+        if (Array.isArray(parsed)) {
+          const map = Object.fromEntries(parsed.map((p) => [p.id, p]));
+          GLOBAL_PROJECTS_CACHE = map;
+          return map;
+        }
       }
     } catch {}
     return {};
@@ -338,28 +395,40 @@ export function TaskWorkspace({ projectId, compactHeader }) {
     ...(projectId ? { project_id: projectId } : {}),
     ...(boardId ? { board_id: boardId } : {})
   }), [saved, f, projectId, boardId]);
+  useEffect(() => {
+    if (Array.isArray(ctxBoards) && ctxBoards.length > 0) {
+      GLOBAL_BOARDS_CACHE = ctxBoards;
+      setBoards(ctxBoards);
+    }
+  }, [ctxBoards]);
   const loadBoards = useCallback(() => {
     if (isSuperAdmin) {
       api.get("/boards", { params: { all: "1" } }).then((r) => {
         if (Array.isArray(r.data) && r.data.length > 0) {
+          GLOBAL_ALL_BOARDS_CACHE = r.data;
           setAllImportBoards(r.data);
         }
       }).catch(() => {});
     }
     return api.get("/boards").then((r) => {
       if (Array.isArray(r.data) && r.data.length > 0) {
+        GLOBAL_BOARDS_CACHE = r.data;
         setBoards(r.data);
         scheduleJsonStorageWrite("circle_boards_cache", r.data);
       }
     }).catch(() => {});
   }, [isSuperAdmin]);
-  useEffect(() => { loadBoards(); }, [loadBoards]);
+  useEffect(() => {
+    if (!Array.isArray(ctxBoards) || ctxBoards.length === 0 || (isSuperAdmin && !GLOBAL_ALL_BOARDS_CACHE)) {
+      loadBoards();
+    }
+  }, [loadBoards, ctxBoards, isSuperAdmin]);
   useEffect(() => subscribe((e) => {
     if (e.type === "boards:changed" || e.type === "groups:changed" || e.type === "workspace:updated" || e.type === "org:changed") {
       loadBoards();
     }
   }), [subscribe, loadBoards]);
-  const didAutoSelectBoardRef = useRef(false);
+  const didAutoSelectBoardRef = useRef(Boolean(boardId));
   const loadSeqRef = useRef(0);
   const urlAssigneeParam = params.get("assignee") || "";
   const urlBoardParam = params.get("board") || "";

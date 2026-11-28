@@ -43,6 +43,7 @@ import {
   saveWorkspaceToPostgres,
   saveUploadedFileToPostgres,
   getUploadedFileFromPostgres,
+  getAllUploadedFilesFromPostgres,
   syncUploadedFilesMapToPostgres,
   saveWorkspaceSnapshotToPostgres,
   listWorkspaceSnapshotsFromPostgres,
@@ -171,13 +172,32 @@ async function startServer() {
     frameguard: false
   }));
   app.use(cors());
-  app.use(compression({ level: 6, threshold: 512 }));
-  // Serve public/assets with aggressive browser & CDN caching (7d + 30d stale-while-revalidate)
+  app.use(compression({
+    level: 6,
+    threshold: 512,
+    filter: (req, res) => {
+      const ct = String(res.getHeader('Content-Type') || '').toLowerCase();
+      // Skip re-compressing already-compressed raster images, audio, and video to save CPU on Hostinger
+      if (
+        ct.startsWith('image/webp') ||
+        ct.startsWith('image/jpeg') ||
+        ct.startsWith('image/png') ||
+        ct.startsWith('image/gif') ||
+        ct.startsWith('audio/') ||
+        ct.startsWith('video/')
+      ) {
+        return false;
+      }
+      return compression.filter(req, res);
+    },
+  }));
+  // Serve public/assets with aggressive 1-year immutable browser & CDN caching
   app.use('/assets', express.static(path.join(__dirname, 'public', 'assets'), {
-    maxAge: '7d',
+    maxAge: '365d',
     etag: true,
+    immutable: true,
     setHeaders: (res) => {
-      res.setHeader('Cache-Control', 'public, max-age=604800, stale-while-revalidate=2592000');
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
     }
   }));
   const getClientRateLimitIp = (req: any): string => {
@@ -233,7 +253,7 @@ async function startServer() {
   });
   app.use('/api/', limiter);
 
-  app.use(express.json({ limit: '50mb' }));
+  app.use(express.json({ limit: '200mb' }));
 
   const authRateLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -567,7 +587,11 @@ async function startServer() {
     }
   }
 
-  async function flushDbToFileAsync() {
+  let lastMirrorWriteAt = 0;
+  let pendingForceMirror = false;
+
+  async function flushDbToFileAsync(forceMirror = false) {
+    if (forceMirror) pendingForceMirror = true;
     if (isWritingDb) {
       pendingWrite = true;
       return;
@@ -576,11 +600,19 @@ async function startServer() {
     try {
       do {
         pendingWrite = false;
+        const shouldWriteMirror = pendingForceMirror || Date.now() - lastMirrorWriteAt >= 5000;
+        pendingForceMirror = false;
         const payload = JSON.stringify(db);
-        await fs.promises.writeFile(DB_TMP_FILE, payload, 'utf-8');
-        await fs.promises.rename(DB_TMP_FILE, DB_FILE);
-        await fs.promises.writeFile(DB_MIRROR_TMP_FILE, payload, 'utf-8');
-        await fs.promises.rename(DB_MIRROR_TMP_FILE, DB_MIRROR_FILE);
+        if (shouldWriteMirror) {
+          await Promise.all([
+            fs.promises.writeFile(DB_TMP_FILE, payload, 'utf-8').then(() => fs.promises.rename(DB_TMP_FILE, DB_FILE)),
+            fs.promises.writeFile(DB_MIRROR_TMP_FILE, payload, 'utf-8').then(() => fs.promises.rename(DB_MIRROR_TMP_FILE, DB_MIRROR_FILE)),
+          ]);
+          lastMirrorWriteAt = Date.now();
+        } else {
+          await fs.promises.writeFile(DB_TMP_FILE, payload, 'utf-8');
+          await fs.promises.rename(DB_TMP_FILE, DB_FILE);
+        }
       } while (pendingWrite);
     } catch (e) {
       console.warn('Failed to save DB file asynchronously:', e);
@@ -590,19 +622,16 @@ async function startServer() {
   }
 
   function scheduleAsyncDbFlush(immediate = false) {
-    if (immediate) {
-      if (saveTimer) {
-        clearTimeout(saveTimer);
-        saveTimer = null;
-      }
-      void flushDbToFileAsync();
-      return;
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
     }
-    if (saveTimer) clearTimeout(saveTimer);
+    // Micro-batch immediate writes (40ms) and debounce regular writes (500ms) to avoid blocking the event loop on bursts
+    const delayMs = immediate ? 40 : 500;
     saveTimer = setTimeout(() => {
       saveTimer = null;
-      void flushDbToFileAsync();
-    }, 150);
+      void flushDbToFileAsync(immediate);
+    }, delayMs);
   }
 
   let pgHydrated = false;
@@ -635,23 +664,17 @@ async function startServer() {
     if (options.allowEmptyOverwrite) {
       pgSavePendingOptions.allowEmptyOverwrite = true;
     }
-    if (immediate) {
-      if (pgSaveTimer) {
-        clearTimeout(pgSaveTimer);
-        pgSaveTimer = null;
-      }
-      const opts = { ...pgSavePendingOptions };
-      pgSavePendingOptions = {};
-      void enqueuePostgresSave(opts);
-      return;
+    if (pgSaveTimer) {
+      clearTimeout(pgSaveTimer);
+      pgSaveTimer = null;
     }
-    if (pgSaveTimer) clearTimeout(pgSaveTimer);
+    const delayMs = immediate ? 80 : 1500;
     pgSaveTimer = setTimeout(() => {
       pgSaveTimer = null;
       const opts = { ...pgSavePendingOptions };
       pgSavePendingOptions = {};
       void enqueuePostgresSave(opts);
-    }, 250);
+    }, delayMs);
   }
 
   async function ensurePostgresHydrated() {
@@ -1399,7 +1422,6 @@ async function startServer() {
     const deptMems = (db.users || [])
       .filter((u: any) => {
         if (!u || u.is_bot || u.role === "assistant" || u.user_id === CIRCLE_BOT_ID) return false;
-        if (u.role === "super_admin") return true;
         return String(u.department || "").trim().toLowerCase() === og.name.toLowerCase();
       })
       .map((u: any) => u.user_id);
@@ -1582,7 +1604,6 @@ async function startServer() {
       .filter((u: any) => {
         if (!u || u.is_bot || u.role === "assistant" || u.user_id === CIRCLE_BOT_ID) return false;
         if (leftIds.has(u.user_id)) return false;
-        if (u.role === "super_admin") return true;
         return String(u.department || "").trim().toLowerCase() === cleanDiv;
       })
       .map((u: any) => u.user_id);
@@ -1615,9 +1636,8 @@ async function startServer() {
     }
 
     const effectiveDeptLower = String(user.department || "").trim().toLowerCase();
-    const isSuperAdmin = user.role === "super_admin";
 
-    // 2. Sync official department groups so non-super-admin users ONLY belong to their chosen division's group (unless manually joined)
+    // 2. Sync official department groups so ALL users (including super_admin) ONLY belong to their chosen division's group (unless manually joined)
     const syncGroupList = (list: any[]) => {
       (list || []).forEach((g: any) => {
         if (!g || g.id === "conv_1") return;
@@ -1632,7 +1652,7 @@ async function startServer() {
         const isMatchingDept = Boolean(effectiveDeptLower) && (gNameLower === effectiveDeptLower || g.id === gSlug);
         const manualIds = Array.isArray(g.manually_joined_ids) ? g.manually_joined_ids : [];
         const leftIds = Array.isArray(g.left_member_ids) ? g.left_member_ids : [];
-        const shouldBeMember = !leftIds.includes(uid) && (isSuperAdmin || isMatchingDept || manualIds.includes(uid));
+        const shouldBeMember = !leftIds.includes(uid) && (isMatchingDept || manualIds.includes(uid));
 
         const rawMems = Array.isArray(g.member_ids) ? g.member_ids : (Array.isArray(g.members) ? g.members : []);
         let nextMems = rawMems.filter((id: string) => Boolean(id) && id !== CIRCLE_BOT_ID);
@@ -2537,6 +2557,9 @@ async function startServer() {
         ? String(headerProfile.email).toLowerCase().trim()
         : "";
     const candidateEmail = tokenEmail || (headerProfile?.user_id === payload.uid ? headerEmail : "") || headerEmail;
+    if (isUserExplicitlyDeleted(payload.uid, candidateEmail)) {
+      return null;
+    }
     let found = (db.users || []).find(
       (u: any) =>
         u &&
@@ -2544,7 +2567,9 @@ async function startServer() {
           (candidateEmail && String(u.email || "").toLowerCase().trim() === candidateEmail))
     );
     if (!found && headerProfile && (headerProfile.user_id === payload.uid || (candidateEmail && headerEmail === candidateEmail))) {
-      unmarkUserDeleted(payload.uid, candidateEmail || headerProfile.email);
+      if (isUserExplicitlyDeleted(payload.uid, candidateEmail || headerProfile.email)) {
+        return null;
+      }
       mergeKnownAccountsIntoDb([{ ...headerProfile, user_id: payload.uid }], payload.uid);
       found = (db.users || []).find(
         (u: any) =>
@@ -2557,7 +2582,6 @@ async function startServer() {
     if (found.status === "inactive" || found.status === "rejected") {
       return null;
     }
-    unmarkUserDeleted(found.user_id, found.email);
     if (found.status === "pending") {
       found.status = "active";
       saveDbToFile(true);
@@ -2783,15 +2807,34 @@ async function startServer() {
   let cachedUploadsSig = "";
   let cachedUploadsBase64: Record<string, string> = {};
 
-  function getCachedUploadedFilesBase64(): Record<string, string> {
-    const MAX_UPLOAD_BACKUP_BYTES = 25 * 1024 * 1024;
+  function invalidateUploadedFilesCache() {
+    cachedUploadsSig = "";
+    cachedUploadsBase64 = {};
+  }
+
+  function getCachedUploadedFilesBase64(options: { maxBytes?: number; fresh?: boolean } = {}): Record<string, string> {
+    const MAX_UPLOAD_BACKUP_BYTES = options.maxBytes ?? 60 * 1024 * 1024;
     try {
       if (!fs.existsSync(UPLOADS_DIR)) {
         cachedUploadsSig = "";
         cachedUploadsBase64 = {};
         return {};
       }
-      const names = fs.readdirSync(UPLOADS_DIR).filter((f) => !f.startsWith(".")).sort();
+      const referencedNames = new Set<string>();
+      if (db.files && typeof db.files === "object") {
+        Object.values(db.files).forEach((meta: any) => {
+          if (meta?.filename) referencedNames.add(path.basename(String(meta.filename)));
+        });
+      }
+      const names = fs
+        .readdirSync(UPLOADS_DIR)
+        .filter((f) => !f.startsWith("."))
+        .sort((a, b) => {
+          const aRef = referencedNames.has(a) ? 0 : 1;
+          const bRef = referencedNames.has(b) ? 0 : 1;
+          if (aRef !== bRef) return aRef - bRef;
+          return a.localeCompare(b);
+        });
       const statsList: { fname: string; full: string; size: number; mtimeMs: number }[] = [];
       let totalBytes = 0;
       for (const fname of names) {
@@ -2802,8 +2845,8 @@ async function startServer() {
         totalBytes += stat.size;
         statsList.push({ fname, full, size: stat.size, mtimeMs: stat.mtimeMs });
       }
-      const sig = statsList.map((s) => `${s.fname}:${s.size}:${s.mtimeMs}`).join("|");
-      if (sig === cachedUploadsSig) {
+      const sig = `${MAX_UPLOAD_BACKUP_BYTES}|` + statsList.map((s) => `${s.fname}:${s.size}:${s.mtimeMs}`).join("|");
+      if (!options.fresh && sig === cachedUploadsSig) {
         return cachedUploadsBase64;
       }
       const out: Record<string, string> = {};
@@ -2817,6 +2860,70 @@ async function startServer() {
       console.warn("Backup export upload read warning:", e);
       return {};
     }
+  }
+
+  async function collectFullUploadedFilesForExport(maxBytes = 150 * 1024 * 1024): Promise<Record<string, string>> {
+    const out: Record<string, string> = { ...getCachedUploadedFilesBase64({ maxBytes, fresh: true }) };
+    let totalBytes = Object.values(out).reduce((sum, b64) => sum + Math.floor((b64.length * 3) / 4), 0);
+
+    // Also include any in-memory file buffers not yet on disk
+    if (db.files && typeof db.files === "object") {
+      for (const [fid, meta] of Object.entries<any>(db.files)) {
+        if (!meta || typeof meta !== "object") continue;
+        const safeName = path.basename(String(meta.filename || `${fid}.bin`));
+        if (!safeName || safeName.startsWith(".") || out[safeName]) continue;
+        if (meta.buffer && Buffer.isBuffer(meta.buffer)) {
+          if (totalBytes + meta.buffer.length <= maxBytes) {
+            out[safeName] = meta.buffer.toString("base64");
+            totalBytes += meta.buffer.length;
+          }
+        }
+      }
+    }
+
+    // Also include any files persisted in PostgreSQL that are not currently materialized on disk
+    try {
+      const pgFiles = await getAllUploadedFilesFromPostgres();
+      if (Array.isArray(pgFiles) && pgFiles.length > 0) {
+        const uploadsRoot = path.resolve(UPLOADS_DIR);
+        if (!fs.existsSync(uploadsRoot)) {
+          fs.mkdirSync(uploadsRoot, { recursive: true });
+        }
+        for (const f of pgFiles) {
+          if (!f?.contentBase64) continue;
+          const safeName = path.basename(String(f.filename || `${f.id}.bin`));
+          if (!safeName || safeName.startsWith(".")) continue;
+          if (!out[safeName]) {
+            const approxBytes = Math.floor((f.contentBase64.length * 3) / 4);
+            if (totalBytes + approxBytes <= maxBytes) {
+              out[safeName] = f.contentBase64;
+              totalBytes += approxBytes;
+            }
+          }
+          // Ensure db.files metadata has this file entry as well
+          if (db.files && typeof db.files === "object" && f.id && !db.files[f.id]) {
+            db.files[f.id] = {
+              id: f.id,
+              name: f.originalName || safeName,
+              filename: safeName,
+              mimetype: f.mimetype || "application/octet-stream",
+              size: f.sizeBytes || Math.floor((f.contentBase64.length * 3) / 4),
+            };
+          }
+          // Materialize missing disk file safely inside UPLOADS_DIR
+          try {
+            const dest = path.resolve(uploadsRoot, safeName);
+            if (dest.startsWith(uploadsRoot + path.sep) && !fs.existsSync(dest)) {
+              fs.writeFileSync(dest, Buffer.from(f.contentBase64, "base64"));
+            }
+          } catch {}
+        }
+      }
+    } catch (e) {
+      console.warn("Backup export postgres upload read warning:", e);
+    }
+
+    return out;
   }
 
   function recordServerDeletedIds(ids: (string | undefined | null)[], specificKey?: string) {
@@ -2836,15 +2943,25 @@ async function startServer() {
 
   function buildFullBackupPayload(
     exportedBy: any = { user_id: "system_scheduler", name: "Auto Backup Harian", email: "system@asli.local" },
-    options: { includeFiles?: boolean } = {}
+    options: {
+      includeFiles?: boolean;
+      preloadedFilesBase64?: Record<string, string>;
+      maxFileBytes?: number;
+      freshFiles?: boolean;
+    } = {}
   ) {
-    const uploadedFilesBase64 = options.includeFiles === false ? {} : getCachedUploadedFilesBase64();
+    const uploadedFilesBase64 =
+      options.includeFiles === false
+        ? {}
+        : options.preloadedFilesBase64 ??
+          getCachedUploadedFilesBase64({
+            maxBytes: options.maxFileBytes,
+            fresh: options.freshFiles,
+          });
 
     const backupKeys = [
       "workspace",
       "users",
-      "deleted_user_ids",
-      "deleted_user_emails",
       "labels",
       "notifications",
       "tasks",
@@ -2863,9 +2980,14 @@ async function startServer() {
       "invitations",
       "drive_shortcuts",
       "prefs",
+      "user_preferences",
+      "auto_backup_config",
       "access_requests",
+      "archive_delete_requests",
       "sticker_packs",
       "stickers",
+      "recent_stickers",
+      "statuses",
       "files",
       "meetings",
       "circle_notes",
@@ -2890,7 +3012,20 @@ async function startServer() {
     const snapshotData: Record<string, any> = {};
     for (const key of backupKeys) {
       if (db[key] !== undefined) {
-        snapshotData[key] = JSON.parse(JSON.stringify(db[key]));
+        if (key === "files" && db.files && typeof db.files === "object") {
+          const cleanFiles: Record<string, any> = {};
+          for (const [fid, fmeta] of Object.entries<any>(db.files)) {
+            if (!fmeta || typeof fmeta !== "object") continue;
+            const { buffer: _buf, ...restMeta } = fmeta;
+            cleanFiles[fid] = {
+              ...restMeta,
+              filename: restMeta.filename ? path.basename(String(restMeta.filename)) : restMeta.filename,
+            };
+          }
+          snapshotData.files = cleanFiles;
+        } else {
+          snapshotData[key] = JSON.parse(JSON.stringify(db[key]));
+        }
       }
     }
     if (Array.isArray(snapshotData.users)) {
@@ -2906,7 +3041,7 @@ async function startServer() {
 
     return {
       app: "ASLI Workspace",
-      version: 2,
+      version: 3,
       revision: Number(db.revision || 0),
       exported_at: new Date().toISOString(),
       exported_by: exportedBy,
@@ -3269,17 +3404,24 @@ async function startServer() {
     }
   });
 
-  app.get("/api/admin/backup/export", (req, res) => {
+  app.get("/api/admin/backup/export", async (req, res) => {
     const reqUser = getReqUser(req);
     if (!reqUser || !["super_admin", "workspace_admin"].includes(reqUser.role)) {
       return res.status(403).json({ detail: "Hanya Admin / Super Admin yang dapat mengekspor backup." });
     }
 
-    const payload = buildFullBackupPayload({
-      user_id: reqUser.user_id,
-      name: reqUser.name,
-      email: reqUser.email,
-    });
+    const preloadedFilesBase64 = await collectFullUploadedFilesForExport(150 * 1024 * 1024);
+    const payload = buildFullBackupPayload(
+      {
+        user_id: reqUser.user_id,
+        name: reqUser.name,
+        email: reqUser.email,
+      },
+      {
+        includeFiles: true,
+        preloadedFilesBase64,
+      }
+    );
 
     if (req.query.download === "1" || req.query.download === "true") {
       const parts = getJakartaParts(new Date());
@@ -3291,7 +3433,7 @@ async function startServer() {
     return res.json(payload);
   });
 
-  app.post("/api/admin/backup/restore", (req, res) => {
+  app.post("/api/admin/backup/restore", async (req, res) => {
     const reqUser = getReqUser(req);
     if (!reqUser || !["super_admin", "workspace_admin"].includes(reqUser.role)) {
       return res.status(403).json({ detail: "Hanya Admin / Super Admin yang dapat memulihkan backup." });
@@ -3303,10 +3445,8 @@ async function startServer() {
       return res.status(400).json({ detail: "Format file backup tidak valid." });
     }
 
-    const arrayKeys = [
+    const collectionArrayKeys = [
       "users",
-      "deleted_user_ids",
-      "deleted_user_emails",
       "labels",
       "notifications",
       "tasks",
@@ -3325,64 +3465,153 @@ async function startServer() {
       "invitations",
       "drive_shortcuts",
       "access_requests",
+      "archive_delete_requests",
       "sticker_packs",
       "stickers",
+      "recent_stickers",
+      "statuses",
       "meetings",
       "circle_notes",
       "marketplace_listings",
       "marketplace_orders",
       "marketplace_reviews",
       "marketplace_vouchers",
+    ];
+
+    const tombstoneArrayKeys = [
+      "deleted_user_ids",
+      "deleted_user_emails",
       "deleted_task_ids",
+      "deleted_checkpoint_template_ids",
       "deleted_marketplace_listing_ids",
+      "deleted_entity_ids",
+      "deleted_note_ids",
+      "deleted_meeting_ids",
+      "deleted_gcal_ids",
+      "deleted_meeting_keys",
     ];
 
     const hasRecognizedCollection =
-      arrayKeys.some((k) => Array.isArray(rawData[k])) ||
+      collectionArrayKeys.some((k) => Array.isArray(rawData[k])) ||
       (rawData.workspace && typeof rawData.workspace === "object");
 
     if (!hasRecognizedCollection) {
       return res.status(400).json({ detail: "File backup tidak memiliki koleksi data ASLI Workspace yang valid." });
     }
 
-    for (const k of arrayKeys) {
+    const prevRevision = Number(db.revision || 0);
+
+    for (const k of collectionArrayKeys) {
       if (Array.isArray(rawData[k])) {
-        db[k] = rawData[k];
+        db[k] = JSON.parse(JSON.stringify(rawData[k]));
       }
     }
 
+    // Always restore or reset server tombstone lists so post-backup deletions NEVER filter out restored items
+    for (const tk of tombstoneArrayKeys) {
+      db[tk] = Array.isArray(rawData[tk]) ? JSON.parse(JSON.stringify(rawData[tk])) : [];
+    }
+
     if (rawData.workspace && typeof rawData.workspace === "object") {
-      db.workspace = { ...(db.workspace || {}), ...rawData.workspace };
+      db.workspace = JSON.parse(JSON.stringify(rawData.workspace));
+      if (!Array.isArray(db.workspace.deleted_checkpoint_template_ids)) {
+        db.workspace.deleted_checkpoint_template_ids = [...db.deleted_checkpoint_template_ids];
+      }
     }
     if (rawData.prefs && typeof rawData.prefs === "object") {
-      db.prefs = rawData.prefs;
+      db.prefs = JSON.parse(JSON.stringify(rawData.prefs));
+    }
+    if (rawData.user_preferences && typeof rawData.user_preferences === "object") {
+      db.user_preferences = JSON.parse(JSON.stringify(rawData.user_preferences));
+    }
+    if (rawData.auto_backup_config && typeof rawData.auto_backup_config === "object") {
+      db.auto_backup_config = JSON.parse(JSON.stringify(rawData.auto_backup_config));
     }
     if (rawData.files && typeof rawData.files === "object") {
-      db.files = rawData.files;
+      const normalizedFiles: Record<string, any> = {};
+      for (const [fid, fmeta] of Object.entries<any>(rawData.files)) {
+        if (!fmeta || typeof fmeta !== "object") continue;
+        const { buffer: _buf, ...restMeta } = fmeta;
+        normalizedFiles[fid] = {
+          ...restMeta,
+          id: restMeta.id || fid,
+          filename: restMeta.filename ? path.basename(String(restMeta.filename)) : restMeta.filename,
+        };
+      }
+      db.files = normalizedFiles;
+    } else if (!db.files || typeof db.files !== "object") {
+      db.files = {};
     }
     if (rawData.marketplace_carts && typeof rawData.marketplace_carts === "object") {
-      db.marketplace_carts = rawData.marketplace_carts;
+      db.marketplace_carts = JSON.parse(JSON.stringify(rawData.marketplace_carts));
     }
     if (rawData.marketplace_wishlists && typeof rawData.marketplace_wishlists === "object") {
-      db.marketplace_wishlists = rawData.marketplace_wishlists;
+      db.marketplace_wishlists = JSON.parse(JSON.stringify(rawData.marketplace_wishlists));
     }
     ensureMarketplaceData(db);
 
-    // Restore uploaded binary files safely
+    // Restore uploaded binary files safely inside UPLOADS_DIR and sync to PostgreSQL
     const uploadedBase64 = body.uploaded_files_base64 || rawData.uploaded_files_base64;
+    let restoredFilesCount = 0;
     if (uploadedBase64 && typeof uploadedBase64 === "object") {
       try {
-        if (!fs.existsSync(UPLOADS_DIR)) {
-          fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+        const uploadsRoot = path.resolve(UPLOADS_DIR);
+        if (!fs.existsSync(uploadsRoot)) {
+          fs.mkdirSync(uploadsRoot, { recursive: true });
         }
+        const safeMapForPg: Record<string, string> = {};
         for (const [rawName, b64] of Object.entries(uploadedBase64)) {
           if (typeof b64 !== "string" || !rawName) continue;
-          const safeName = path.basename(rawName);
-          if (!safeName || safeName.startsWith(".")) continue;
-          const dest = path.join(UPLOADS_DIR, safeName);
-          fs.writeFileSync(dest, Buffer.from(b64, "base64"));
+          const safeName = path.basename(String(rawName));
+          if (!safeName || safeName.startsWith(".") || safeName.includes("/") || safeName.includes("\\")) continue;
+          const dest = path.resolve(uploadsRoot, safeName);
+          if (!dest.startsWith(uploadsRoot + path.sep)) continue;
+          const buf = Buffer.from(b64, "base64");
+          fs.writeFileSync(dest, buf);
+          safeMapForPg[safeName] = b64;
+          restoredFilesCount++;
+
+          // Ensure db.files has a matching metadata entry for every restored file
+          const matchedEntry = Object.values<any>(db.files || {}).find(
+            (m: any) => m && (path.basename(String(m.filename || "")) === safeName || m.id === safeName)
+          );
+          if (!matchedEntry) {
+            const derivedId = safeName.replace(/\.[^.]+$/, "");
+            if (derivedId && !db.files[derivedId]) {
+              const ext = path.extname(safeName).toLowerCase();
+              const mimeMap: Record<string, string> = {
+                ".png": "image/png",
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".webp": "image/webp",
+                ".gif": "image/gif",
+                ".svg": "image/svg+xml",
+                ".pdf": "application/pdf",
+                ".mp3": "audio/mpeg",
+                ".wav": "audio/wav",
+                ".ogg": "audio/ogg",
+                ".m4a": "audio/mp4",
+                ".mp4": "video/mp4",
+                ".doc": "application/msword",
+                ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ".xls": "application/vnd.ms-excel",
+                ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                ".zip": "application/zip",
+              };
+              db.files[derivedId] = {
+                id: derivedId,
+                name: safeName,
+                filename: safeName,
+                mimetype: mimeMap[ext] || "application/octet-stream",
+                size: buf.length,
+              };
+            }
+          }
         }
-        void syncUploadedFilesMapToPostgres(uploadedBase64 as Record<string, string>, db.files || {});
+        invalidateUploadedFilesCache();
+        if (Object.keys(safeMapForPg).length > 0) {
+          await syncUploadedFilesMapToPostgres(safeMapForPg, db.files || {}).catch(() => {});
+        }
       } catch (e) {
         console.warn("Backup restore upload write warning:", e);
       }
@@ -3399,6 +3628,10 @@ async function startServer() {
     db.org_aligned_v2 = true;
     db.org_aligned_v3 = true;
 
+    // Bump revision strictly above both previous DB revision and backup revision so client mirrors accept restored state as authoritative
+    db.revision = Math.max(prevRevision, Number(rawData.revision || 0), Number(body.revision || 0)) + 10;
+    db.last_mutated_at = new Date().toISOString();
+
     migrateSecurityAtRest();
     sanitizeConversationsAndMessages();
 
@@ -3407,25 +3640,33 @@ async function startServer() {
       id: `log_restore_${Date.now()}`,
       actor_id: reqUser.user_id,
       actor_name: reqUser.name || "Admin",
-      action: "memulihkan full backup data workspace (chat, task, member, feed, dll)",
+      action: "memulihkan full backup data workspace (chat, task, file, member, feed, dll)",
       created_at: new Date().toISOString(),
     });
 
-    saveDbToFile(true);
+    saveDbToFile(true, { allowEmptyOverwrite: true });
 
+    const restoredAt = new Date().toISOString();
+    broadcast({ type: "workspace:restored", revision: db.revision, restored_at: restoredAt });
     broadcast({ type: "users:changed" });
     broadcast({ type: "tasks:changed" });
+    broadcast({ type: "boards:changed" });
+    broadcast({ type: "projects:changed" });
     broadcast({ type: "posts:changed" });
     broadcast({ type: "notes:changed" });
     broadcast({ type: "conversations:changed" });
     broadcast({ type: "groups:changed" });
+    broadcast({ type: "org:changed", units: db.org_units || [] });
+    broadcast({ type: "drive_shortcuts:changed", data: db.drive_shortcuts || [] });
     broadcast({ type: "workspace:updated", data: db.workspace });
 
     const summary = buildBackupSummary();
     serverBootedFreshSeed = false;
     res.json({
       success: true,
-      restored_at: new Date().toISOString(),
+      restored_at: restoredAt,
+      restored_files: restoredFilesCount,
+      revision: db.revision,
       summary,
     });
   });
@@ -4433,7 +4674,13 @@ async function startServer() {
       .toLowerCase()
       .trim();
 
-    unmarkUserDeleted(tokenPayload.uid, candidateEmail);
+    if (isUserExplicitlyDeleted(tokenPayload.uid, candidateEmail)) {
+      return res.status(401).json({
+        revoked: true,
+        was_removed: true,
+        detail: "Akun Anda telah dihapus oleh Administrator. Silakan daftar dan isi data ulang untuk masuk kembali."
+      });
+    }
 
     let reqUser = (db.users || []).find(
       (u: any) =>
@@ -4483,7 +4730,6 @@ async function startServer() {
     if (reqUser.status === "inactive" || reqUser.status === "rejected") {
       return res.status(401).json({ revoked: true, detail: "Akun telah dinonaktifkan." });
     }
-    unmarkUserDeleted(reqUser.user_id, reqUser.email);
     const tokenTv = Number(tokenPayload.tv || 1);
     if (typeof reqUser.token_version !== "number" || reqUser.token_version < 1) {
       reqUser.token_version = tokenTv;
@@ -4670,6 +4916,12 @@ async function startServer() {
     const user = db.users.find((u: any) => u.email?.toLowerCase() === cleanEmail);
 
     if (!user) {
+      if (isUserExplicitlyDeleted(undefined, cleanEmail)) {
+        return res.status(401).json({
+          was_removed: true,
+          detail: "Akun Anda sebelumnya telah dihapus oleh Super Admin. Silakan daftar ulang dan lengkapi data profil Anda kembali."
+        });
+      }
       recordFailedAuthAttempt(throttleKey);
       return res.status(401).json({ detail: "Akun dengan email tersebut belum terdaftar. Silakan lakukan pendaftaran terlebih dahulu." });
     }
@@ -4973,21 +5225,9 @@ async function startServer() {
     }
 
     const cleanEmail = emailCheck.email;
-    // Unmark from deleted tombstones BEFORE merging known_accounts so a previously deleted account that logs in with Google can be restored or re-registered cleanly
-    unmarkUserDeleted(undefined, cleanEmail);
-    if (Array.isArray(known_accounts) && known_accounts.length > 0) {
-      const matchingKnown = known_accounts.find(
-        (a: any) => a && String(a.email || "").toLowerCase().trim() === cleanEmail
-      );
-      if (matchingKnown?.user_id) {
-        unmarkUserDeleted(String(matchingKnown.user_id), cleanEmail);
-      }
-      mergeKnownAccountsIntoDb(known_accounts);
-    }
+    const wasExplicitlyDeleted = isUserExplicitlyDeleted(undefined, cleanEmail);
+    // Keep deleted tombstones intact during lookup so a user removed by Super Admin is NEVER resurrected from browser known_accounts cache and MUST complete onboarding again.
     let user = db.users.find((u: any) => u.email?.toLowerCase() === cleanEmail);
-    if (user) {
-      unmarkUserDeleted(user.user_id, cleanEmail);
-    }
     if (user && verifiedFirebase?.uid && !user.firebase_uid) {
       user.firebase_uid = verifiedFirebase.uid;
     }
@@ -5056,29 +5296,30 @@ async function startServer() {
       });
     }
 
-    const needsOnboarding = !user || !hasCompletedOnboarding;
+    const needsOnboarding = !user || wasExplicitlyDeleted || !hasCompletedOnboarding;
 
     if (needsOnboarding && (check_only === true || profile_submitted !== true)) {
-      const existingTitle = String(user?.job_title || "").trim();
+      const existingTitle = wasExplicitlyDeleted ? "" : String(user?.job_title || "").trim();
       const sanitizeExistingTitle = ["Staff Member", "Anggota Tim", "Workspace Administrator"].includes(existingTitle)
         ? ""
         : existingTitle;
-      const existingName = String(user?.name || "").trim();
+      const existingName = wasExplicitlyDeleted ? "" : String(user?.name || "").trim();
       const sanitizeExistingName = existingName && existingName !== "Super Admin" ? existingName : "";
       return res.json({
         status: "needs_onboarding",
         requires_profile_data: true,
-        existing_user: Boolean(user),
+        was_removed: wasExplicitlyDeleted,
+        existing_user: Boolean(user && !wasExplicitlyDeleted),
         auto_approve_eligible: isAutoApproveEligible,
         google_profile: {
           email: cleanEmail,
           name: sanitizeExistingName || String(resolvedName || "").trim(),
-          picture: user?.avatar || resolvedPicture || "",
-          department: user?.department || "",
+          picture: (wasExplicitlyDeleted ? resolvedPicture : user?.avatar || resolvedPicture) || "",
+          department: wasExplicitlyDeleted ? "" : (user?.department || ""),
           job_title: sanitizeExistingTitle,
-          phone: user?.phone || "",
-          work_mode: user?.work_mode || "On-site",
-          bio: user?.bio || ""
+          phone: wasExplicitlyDeleted ? "" : (user?.phone || ""),
+          work_mode: wasExplicitlyDeleted ? "On-site" : (user?.work_mode || "On-site"),
+          bio: wasExplicitlyDeleted ? "" : (user?.bio || "")
         }
       });
     }
@@ -6165,7 +6406,9 @@ async function startServer() {
         db.deleted_user_emails.push(String(accessReq.email).toLowerCase().trim());
       }
       const delUid = accessReq.target_user_id;
+      const delEmail = String(accessReq.email || "").toLowerCase().trim();
       db.users = db.users.filter((u: any) => u.user_id !== delUid);
+      if (db.session_user_id === delUid) db.session_user_id = null;
       [db.groups, db.conversations].forEach((list) => {
         (list || []).forEach((g: any) => {
           if (Array.isArray(g.member_ids)) g.member_ids = g.member_ids.filter((id: string) => id !== delUid);
@@ -6184,6 +6427,7 @@ async function startServer() {
         }
       });
       saveDbToFile(true);
+      broadcast({ type: "user:removed", user_id: delUid, email: delEmail });
       broadcast({ type: "access_requests:changed" });
       broadcast({ type: "users:changed" });
       broadcast({ type: "groups:changed" });
@@ -6649,7 +6893,7 @@ async function startServer() {
 
     const targetUser = db.users.find((u: any) => u.user_id === req.params.id);
     if (!targetUser || targetUser.is_bot) {
-      return res.status(404).json({ detail: "Karyawan tidak ditemukan." });
+      return res.status(404).json({ detail: "Employee tidak ditemukan." });
     }
 
     if (callerRole === "department_manager") {
@@ -6750,7 +6994,7 @@ async function startServer() {
   app.delete("/api/admin/users/:id", (req, res) => {
     const reqUser = getReqUser(req);
     if (!reqUser || !["super_admin", "workspace_admin", "department_manager"].includes(reqUser.role)) {
-      return res.status(403).json({ detail: "Hanya Admin / Manajer Divisi yang dapat menghapus karyawan." });
+      return res.status(403).json({ detail: "Hanya Admin / Manajer Divisi yang dapat menghapus employee." });
     }
     const targetUser = db.users.find((u: any) => u.user_id === req.params.id);
     if (!targetUser) return res.status(404).json({ detail: "User not found" });
@@ -6766,14 +7010,16 @@ async function startServer() {
     if (canImmediateDelete && req.query.force === "true") {
       if (!Array.isArray(db.deleted_user_ids)) db.deleted_user_ids = [];
       if (!Array.isArray(db.deleted_user_emails)) db.deleted_user_emails = [];
+      const delEmail = String(targetUser.email || "").toLowerCase().trim();
       if (targetUser.user_id && !db.deleted_user_ids.includes(targetUser.user_id)) {
         db.deleted_user_ids.push(targetUser.user_id);
       }
-      if (targetUser.email && !db.deleted_user_emails.includes(String(targetUser.email).toLowerCase().trim())) {
-        db.deleted_user_emails.push(String(targetUser.email).toLowerCase().trim());
+      if (delEmail && !db.deleted_user_emails.includes(delEmail)) {
+        db.deleted_user_emails.push(delEmail);
       }
       const delUid = targetUser.user_id;
       db.users = db.users.filter((u: any) => u.user_id !== delUid);
+      if (db.session_user_id === delUid) db.session_user_id = null;
       [db.groups, db.conversations].forEach((list) => {
         (list || []).forEach((g: any) => {
           if (Array.isArray(g.member_ids)) g.member_ids = g.member_ids.filter((id: string) => id !== delUid);
@@ -6784,11 +7030,12 @@ async function startServer() {
       if (db.marketplace_carts && delUid) delete db.marketplace_carts[delUid];
       if (db.marketplace_wishlists && delUid) delete db.marketplace_wishlists[delUid];
       saveDbToFile(true);
+      broadcast({ type: "user:removed", user_id: delUid, email: delEmail });
       broadcast({ type: "users:changed" });
       broadcast({ type: "groups:changed" });
       broadcast({ type: "conversations:changed" });
       broadcast({ type: "org:changed", units: db.org_units });
-      return res.json({ success: true, message: `Karyawan ${targetUser.name} berhasil dihapus secara permanen.` });
+      return res.json({ success: true, message: `Employee ${targetUser.name} berhasil dihapus secara permanen.` });
     }
 
     const reqId = `del_req_${Date.now()}`;
@@ -6828,13 +7075,13 @@ async function startServer() {
           members: [CIRCLE_BOT_ID, manager.user_id],
           member_ids: [CIRCLE_BOT_ID, manager.user_id],
           unread: 1,
-          last_message_preview: `Permintaan hapus karyawan: ${targetUser.name}`,
+          last_message_preview: `Permintaan hapus employee: ${targetUser.name}`,
           last_message_at: new Date().toISOString()
         };
         db.conversations.unshift(conv);
       } else {
         conv.unread = (conv.unread || 0) + 1;
-        conv.last_message_preview = `Permintaan hapus karyawan: ${targetUser.name}`;
+        conv.last_message_preview = `Permintaan hapus employee: ${targetUser.name}`;
         conv.last_message_at = new Date().toISOString();
       }
 
@@ -6843,7 +7090,7 @@ async function startServer() {
         conversation_id: conv.id,
         sender_id: CIRCLE_BOT_ID,
         user_id: CIRCLE_BOT_ID,
-        text: `Halo ${manager.name.split(' ')[0]}! Ada permohonan penghapusan karyawan **${targetUser.name}** (${targetUser.department || "General"}) dari ${reqUser.name || "Admin"}. Silakan tinjau card approval di bawah ini:`,
+        text: `Halo ${manager.name.split(' ')[0]}! Ada permohonan penghapusan employee **${targetUser.name}** (${targetUser.department || "General"}) dari ${reqUser.name || "Admin"}. Silakan tinjau card approval di bawah ini:`,
         type: "access_request_card",
         access_request: accessReq,
         created_at: new Date().toISOString()
@@ -9863,23 +10110,35 @@ async function startServer() {
     if (!reqUser?.user_id) {
       return res.status(401).json({ detail: "Autentikasi diperlukan untuk membuat grup." });
     }
-    const groupType = req.body?.group_type || "public";
-    const isVerified = groupType === "department";
+    const rawGroupType = String(req.body?.group_type || "public").trim().toLowerCase();
+    if (rawGroupType === "department") {
+      return res.status(403).json({
+        detail: "Grup bertipe Divisi tidak dapat dibuat secara manual.",
+      });
+    }
+    const groupType = ["public", "private", "project"].includes(rawGroupType) ? rawGroupType : "public";
+    const groupName = String(req.body?.name || "").trim().slice(0, 120);
+    if (!groupName) {
+      return res.status(400).json({ detail: "Nama grup wajib diisi." });
+    }
     const creatorId = reqUser.user_id;
     const rawMembers = Array.isArray(req.body?.member_ids) ? req.body.member_ids : [];
     const rawDeputies = Array.isArray(req.body?.deputy_admin_ids)
       ? req.body.deputy_admin_ids
       : (Array.isArray(req.body?.admin_ids) ? req.body.admin_ids : []);
-    const cleanDeputies = rawDeputies.filter((id: any) => Boolean(id) && id !== CIRCLE_BOT_ID);
+    const cleanDeputies = rawDeputies.filter((id: any) => typeof id === "string" && id.trim() && id !== CIRCLE_BOT_ID);
     const adminIds = Array.from(new Set([creatorId, ...cleanDeputies]));
-    const cleanMembers = Array.from(new Set([creatorId, ...adminIds, ...rawMembers])).filter((id: any) => Boolean(id) && id !== CIRCLE_BOT_ID);
+    const cleanMembers = Array.from(new Set([creatorId, ...adminIds, ...rawMembers])).filter((id: any) => typeof id === "string" && id.trim() && id !== CIRCLE_BOT_ID);
     const g = {
-      ...req.body,
       id: `conv_${Date.now()}`,
+      name: groupName,
+      description: String(req.body?.description || "").trim().slice(0, 1000),
+      location: String(req.body?.location || "").trim().slice(0, 120),
+      image: typeof req.body?.image === "string" ? req.body.image.trim() : "",
       type: "group",
       group_type: groupType,
       is_member: true,
-      is_verified: isVerified,
+      is_verified: false,
       created_by: creatorId,
       admin_ids: adminIds,
       join_requests: [],
@@ -9890,19 +10149,8 @@ async function startServer() {
       last_message_preview: "",
       last_message_at: new Date().toISOString(),
     };
-    delete g.deputy_admin_ids;
     db.groups.push(g);
     db.conversations.push({ ...g });
-
-    if (g.group_type === "department") {
-      const gName = String(g.name || "").trim();
-      if (gName && Array.isArray(db.workspace?.divisions)) {
-        if (!db.workspace.divisions.some((d: string) => d.toLowerCase() === gName.toLowerCase())) {
-          db.workspace.divisions.push(gName);
-          syncDivisionsToOrgUnits(db.workspace.divisions, { removeMissing: false });
-        }
-      }
-    }
 
     saveDbToFile(true);
     broadcast({ type: "groups:changed", data: g });
@@ -9914,8 +10162,8 @@ async function startServer() {
   // Team Stats helper + Endpoint for MonthlyStats / TeamPerformance (scoped per division board)
   function computeTeamStatsForUser(
     reqUser: any,
-    opts: { range?: string; anchor?: string; board_id?: string; department?: string } = {}
-  ) {
+    opts: { range?: string; anchor?: string; board_id?: string; department?: string; _skipPeerScopes?: boolean } = {}
+  ): any {
     const isSuper = reqUser?.role === "super_admin" || reqUser?.role === "workspace_admin";
     const userDept = String(reqUser?.department || "").trim().toLowerCase();
     const range = opts.range || "7d";
@@ -10206,10 +10454,11 @@ async function startServer() {
       task_count: allDbTasks.filter((t: any) => !t.archived && taskMatchesBoard(t, b)).length
     }));
 
-    return {
+    const activeScopeBoardId = scopeMode === "all" ? "all" : (targetBoard?.id || "");
+    const baseResult: any = {
       scope: {
         mode: scopeMode,
-        board_id: scopeMode === "all" ? "all" : (targetBoard?.id || ""),
+        board_id: activeScopeBoardId,
         board_name: scopeMode === "all" ? "Semua Divisi" : (targetBoard?.name || targetBoard?.department || reqUser?.department || "Divisi"),
         department: scopeMode === "all" ? null : (targetBoard?.department || reqUser?.department || null),
         color: scopeMode === "all" ? null : (targetBoard?.color || null),
@@ -10236,6 +10485,36 @@ async function startServer() {
       series,
       people
     };
+
+    if (!opts._skipPeerScopes) {
+      const scopesStats: Record<string, any> = {};
+      if (activeScopeBoardId) {
+        scopesStats[activeScopeBoardId] = baseResult;
+      }
+      for (const b of orderedBoards) {
+        if (!b?.id || b.id === activeScopeBoardId) continue;
+        scopesStats[b.id] = computeTeamStatsForUser(reqUser, {
+          range,
+          anchor,
+          board_id: b.id,
+          _skipPeerScopes: true,
+        });
+      }
+      if (isSuper && activeScopeBoardId !== "all") {
+        scopesStats["all"] = computeTeamStatsForUser(reqUser, {
+          range,
+          anchor,
+          board_id: "all",
+          _skipPeerScopes: true,
+        });
+      }
+      return {
+        ...baseResult,
+        scopes_stats: scopesStats,
+      };
+    }
+
+    return baseResult;
   }
 
   app.get("/api/stats/team", (req, res) => {
@@ -11094,6 +11373,160 @@ async function startServer() {
     res.json(hydrated);
   });
 
+  // Bounded in-memory LRU cache for hot uploaded media (avatars, logos, chat photos)
+  // Eliminates disk syscalls & serves repeat/profile image requests in <0.5ms on Hostinger.
+  const HOT_FILE_CACHE_MAX_BYTES = 64 * 1024 * 1024;
+  const HOT_FILE_CACHE_MAX_SINGLE = 2.5 * 1024 * 1024;
+  const hotFileCache = new Map<string, { buffer: Buffer; mimetype: string; etag: string; name: string }>();
+  let hotFileCacheBytes = 0;
+
+  function computeFileEtag(id: string, buf: Buffer): string {
+    const hash = crypto.createHash("sha1").update(buf).digest("hex").slice(0, 16);
+    return `"${id.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24)}-${buf.length}-${hash}"`;
+  }
+
+  function putHotFileCache(id: string, buffer: Buffer, mimetype: string, name: string) {
+    if (!id || !Buffer.isBuffer(buffer) || buffer.length === 0 || buffer.length > HOT_FILE_CACHE_MAX_SINGLE) {
+      return;
+    }
+    const existing = hotFileCache.get(id);
+    if (existing) {
+      hotFileCacheBytes -= existing.buffer.length;
+      hotFileCache.delete(id);
+    }
+    while (hotFileCacheBytes + buffer.length > HOT_FILE_CACHE_MAX_BYTES && hotFileCache.size > 0) {
+      const oldestKey = hotFileCache.keys().next().value;
+      if (!oldestKey) break;
+      const oldest = hotFileCache.get(oldestKey);
+      if (oldest) hotFileCacheBytes -= oldest.buffer.length;
+      hotFileCache.delete(oldestKey);
+    }
+    const etag = computeFileEtag(id, buffer);
+    hotFileCache.set(id, { buffer, mimetype, etag, name });
+    hotFileCacheBytes += buffer.length;
+  }
+
+  function getHotFileCache(id: string) {
+    const entry = hotFileCache.get(id);
+    if (!entry) return null;
+    // Refresh LRU order
+    hotFileCache.delete(id);
+    hotFileCache.set(id, entry);
+    return entry;
+  }
+
+  function sendCachedBufferResponse(
+    req: any,
+    res: any,
+    entry: { buffer: Buffer; mimetype: string; etag: string; name: string },
+    { isDownload = false, dlName = "", cacheControl = "public, max-age=31536000, immutable" } = {}
+  ) {
+    res.setHeader("ETag", entry.etag);
+    if (!isDownload) {
+      res.setHeader("Cache-Control", cacheControl);
+      const ifNoneMatch = String(req.headers?.["if-none-match"] || "").trim();
+      if (ifNoneMatch && (ifNoneMatch === entry.etag || ifNoneMatch === `W/${entry.etag}`)) {
+        return res.status(304).end();
+      }
+    } else {
+      const cleanDl = (dlName || entry.name || "file").replace(/["\r\n]/g, "");
+      res.setHeader("Content-Disposition", `attachment; filename="${cleanDl}"`);
+    }
+    res.setHeader("Content-Type", entry.mimetype || "application/octet-stream");
+    res.setHeader("Content-Length", String(entry.buffer.length));
+    return res.end(entry.buffer);
+  }
+
+  async function resolveAndCacheFileBuffer(rawId: string, defaultMime = "application/octet-stream") {
+    const safeId = path.basename(String(rawId || ""));
+    if (!safeId || safeId.startsWith(".")) return null;
+
+    const cached = getHotFileCache(safeId);
+    if (cached) return cached;
+
+    const file = db.files[safeId] || db.files[rawId];
+    const uploadsRoot = path.resolve(UPLOADS_DIR);
+    const mimeFromExt = (fname: string) => {
+      const ext = path.extname(fname).toLowerCase();
+      if (ext === ".webp") return "image/webp";
+      if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
+      if (ext === ".png") return "image/png";
+      if (ext === ".gif") return "image/gif";
+      if (ext === ".svg") return "image/svg+xml";
+      if (ext === ".pdf") return "application/pdf";
+      if (ext === ".mp3") return "audio/mpeg";
+      if (ext === ".wav") return "audio/wav";
+      return defaultMime;
+    };
+
+    if (file?.filename) {
+      const safeFilename = path.basename(String(file.filename));
+      const diskPath = path.resolve(uploadsRoot, safeFilename);
+      if (diskPath.startsWith(uploadsRoot + path.sep)) {
+        try {
+          const stat = await fs.promises.stat(diskPath);
+          if (stat.isFile()) {
+            const mimetype = file.mimetype || mimeFromExt(safeFilename);
+            if (stat.size <= HOT_FILE_CACHE_MAX_SINGLE) {
+              const buf = await fs.promises.readFile(diskPath);
+              const name = file.name || safeFilename;
+              putHotFileCache(safeId, buf, mimetype, name);
+              return getHotFileCache(safeId) || { buffer: buf, mimetype, etag: computeFileEtag(safeId, buf), name };
+            }
+            return { diskPath, mimetype, name: file.name || safeFilename };
+          }
+        } catch {}
+      }
+    }
+
+    if (file && Buffer.isBuffer(file.buffer)) {
+      const mimetype = file.mimetype || defaultMime;
+      const name = file.name || file.filename || `${safeId}.bin`;
+      putHotFileCache(safeId, file.buffer, mimetype, name);
+      return getHotFileCache(safeId) || { buffer: file.buffer, mimetype, etag: computeFileEtag(safeId, file.buffer), name };
+    }
+
+    // Async disk lookup by file id prefix (useful after backup restore if metadata was partial)
+    try {
+      const entries = await fs.promises.readdir(uploadsRoot);
+      const diskMatch = entries.find((fname) => fname === safeId || fname.startsWith(`${safeId}.`));
+      if (diskMatch) {
+        const matchedPath = path.resolve(uploadsRoot, diskMatch);
+        if (matchedPath.startsWith(uploadsRoot + path.sep)) {
+          const stat = await fs.promises.stat(matchedPath);
+          if (stat.isFile()) {
+            const mimetype = mimeFromExt(diskMatch);
+            if (stat.size <= HOT_FILE_CACHE_MAX_SINGLE) {
+              const buf = await fs.promises.readFile(matchedPath);
+              putHotFileCache(safeId, buf, mimetype, diskMatch);
+              return getHotFileCache(safeId) || { buffer: buf, mimetype, etag: computeFileEtag(safeId, buf), name: diskMatch };
+            }
+            return { diskPath: matchedPath, mimetype, name: diskMatch };
+          }
+        }
+      }
+    } catch {}
+
+    const pgFile = await getUploadedFileFromPostgres(safeId);
+    if (pgFile?.contentBase64) {
+      const buf = Buffer.from(pgFile.contentBase64, "base64");
+      const pgSafeName = path.basename(pgFile.filename || `${safeId}.bin`);
+      const pgDest = path.resolve(uploadsRoot, pgSafeName);
+      if (pgDest.startsWith(uploadsRoot + path.sep)) {
+        void fs.promises
+          .mkdir(uploadsRoot, { recursive: true })
+          .then(() => fs.promises.writeFile(pgDest, buf))
+          .catch(() => {});
+      }
+      const mimetype = pgFile.mimetype || mimeFromExt(pgSafeName);
+      const name = pgFile.originalName || pgSafeName;
+      putHotFileCache(safeId, buf, mimetype, name);
+      return getHotFileCache(safeId) || { buffer: buf, mimetype, etag: computeFileEtag(safeId, buf), name };
+    }
+
+    return null;
+  }
+
   app.post("/api/upload", upload.single("file"), async (req: any, res) => {
     const reqUser = getReqUser(req);
     if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
@@ -11106,8 +11539,11 @@ async function startServer() {
     const filename = `${fileId}${ext}`;
     const diskPath = path.join(UPLOADS_DIR, filename);
 
+    // Warm RAM LRU cache immediately so the uploaded avatar/photo loads in <0.5ms right away
+    putHotFileCache(fileId, req.file.buffer, req.file.mimetype || "image/png", req.file.originalname);
+
     try {
-      fs.writeFileSync(diskPath, req.file.buffer);
+      await fs.promises.writeFile(diskPath, req.file.buffer);
     } catch (e) {
       console.warn("Failed to write uploaded file to disk:", e);
     }
@@ -11119,18 +11555,18 @@ async function startServer() {
       mimetype: req.file.mimetype || "image/png",
       size: req.file.size
     };
-    try {
-      await saveUploadedFileToPostgres({
-        id: fileId,
-        filename,
-        originalName: req.file.originalname,
-        mimetype: req.file.mimetype || "image/png",
-        sizeBytes: req.file.size,
-        buffer: req.file.buffer,
-      });
-    } catch (e) {
+    invalidateUploadedFilesCache();
+    // Persist binary to PostgreSQL in the background after fast local disk write so uploads return immediately
+    void saveUploadedFileToPostgres({
+      id: fileId,
+      filename,
+      originalName: req.file.originalname,
+      mimetype: req.file.mimetype || "image/png",
+      sizeBytes: req.file.size,
+      buffer: req.file.buffer,
+    }).catch((e) => {
       console.warn("Failed to persist uploaded file in PostgreSQL:", e);
-    }
+    });
     saveDbToFile();
     res.json({
       id: fileId,
@@ -11141,103 +11577,61 @@ async function startServer() {
   });
 
   app.get("/api/files/:id", async (req, res) => {
-    const file = db.files[req.params.id];
+    const safeId = path.basename(String(req.params.id || ""));
     const isDownload = req.query.download === "1" || req.query.download === "true";
-    const dlName = (file?.name || file?.filename || `${req.params.id}.png`).replace(/["\r\n]/g, "");
-    if (!isDownload) {
-      res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
+    const resolved: any = await resolveAndCacheFileBuffer(safeId, "application/octet-stream");
+    if (resolved?.buffer) {
+      return sendCachedBufferResponse(req, res, resolved, {
+        isDownload,
+        dlName: resolved.name || `${safeId}.png`,
+        cacheControl: "public, max-age=31536000, immutable",
+      });
     }
-    if (file?.filename) {
-      const diskPath = path.join(UPLOADS_DIR, file.filename);
-      if (fs.existsSync(diskPath)) {
-        res.setHeader("Content-Type", file.mimetype || "image/png");
-        if (isDownload) {
-          res.setHeader("Content-Disposition", `attachment; filename="${dlName}"`);
-        }
-        return res.sendFile(diskPath);
+    if (resolved?.diskPath) {
+      if (!isDownload) {
+        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      } else {
+        const cleanDl = String(resolved.name || `${safeId}.bin`).replace(/["\r\n]/g, "");
+        res.setHeader("Content-Disposition", `attachment; filename="${cleanDl}"`);
       }
+      res.setHeader("Content-Type", resolved.mimetype || "application/octet-stream");
+      return res.sendFile(resolved.diskPath);
     }
-    if (file && file.buffer) {
-      res.setHeader("Content-Type", file.mimetype || "image/png");
-      if (isDownload) {
-        res.setHeader("Content-Disposition", `attachment; filename="${dlName}"`);
-      }
-      return res.send(file.buffer);
-    }
-    const pgFile = await getUploadedFileFromPostgres(req.params.id);
-    if (pgFile?.contentBase64) {
-      const buf = Buffer.from(pgFile.contentBase64, "base64");
-      try {
-        if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-        await fs.promises.writeFile(path.join(UPLOADS_DIR, path.basename(pgFile.filename)), buf);
-      } catch {}
-      res.setHeader("Content-Type", pgFile.mimetype || "image/png");
-      if (isDownload) {
-        const pgName = (pgFile.originalName || pgFile.filename || `${req.params.id}.png`).replace(/["\r\n]/g, "");
-        res.setHeader("Content-Disposition", `attachment; filename="${pgName}"`);
-      }
-      return res.send(buf);
-    }
-    // High-resolution workplace fallback
     res.redirect("/assets/aistudio/SIGN_DEPAN_2_86dd649d.jpg");
   });
 
   app.get("/api/public/logo/:id", async (req, res) => {
-    res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
     if (req.params.id === "default_workspace_logo") {
       return res.redirect("/assets/aistudio/657343220_18309991366279811_6828424809008890253_n_c00cf220.png");
     }
-    const file = db.files[req.params.id];
-    if (file?.filename) {
-      const diskPath = path.join(UPLOADS_DIR, file.filename);
-      if (fs.existsSync(diskPath)) {
-        res.setHeader("Content-Type", file.mimetype || "image/png");
-        return res.sendFile(diskPath);
-      }
+    const resolved: any = await resolveAndCacheFileBuffer(req.params.id, "image/png");
+    if (resolved?.buffer) {
+      return sendCachedBufferResponse(req, res, resolved, {
+        cacheControl: "public, max-age=31536000, immutable",
+      });
     }
-    if (file && file.buffer) {
-      res.setHeader("Content-Type", file.mimetype || "image/png");
-      return res.send(file.buffer);
-    }
-    const pgFile = await getUploadedFileFromPostgres(req.params.id);
-    if (pgFile?.contentBase64) {
-      const buf = Buffer.from(pgFile.contentBase64, "base64");
-      try {
-        if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-        await fs.promises.writeFile(path.join(UPLOADS_DIR, path.basename(pgFile.filename)), buf);
-      } catch {}
-      res.setHeader("Content-Type", pgFile.mimetype || "image/png");
-      return res.send(buf);
+    if (resolved?.diskPath) {
+      res.setHeader("Content-Type", resolved.mimetype || "image/png");
+      return res.sendFile(resolved.diskPath);
     }
     res.redirect("/assets/aistudio/657343220_18309991366279811_6828424809008890253_n_c00cf220.png");
   });
 
   app.get("/api/public/login-image/:id", async (req, res) => {
-    res.setHeader("Cache-Control", "public, max-age=86400, stale-while-revalidate=604800");
+    res.setHeader("Cache-Control", "public, max-age=604800, stale-while-revalidate=2592000");
     if (req.params.id === "default_login_bg") {
       return res.redirect("/assets/aistudio/SIGN_DEPAN_2_86dd649d.jpg");
     }
-    const file = db.files[req.params.id];
-    if (file?.filename) {
-      const diskPath = path.join(UPLOADS_DIR, file.filename);
-      if (fs.existsSync(diskPath)) {
-        res.setHeader("Content-Type", file.mimetype || "image/png");
-        return res.sendFile(diskPath);
-      }
+    const resolved: any = await resolveAndCacheFileBuffer(req.params.id, "image/png");
+    if (resolved?.buffer) {
+      return sendCachedBufferResponse(req, res, resolved, {
+        cacheControl: "public, max-age=604800, stale-while-revalidate=2592000",
+      });
     }
-    if (file && file.buffer) {
-      res.setHeader("Content-Type", file.mimetype || "image/png");
-      return res.send(file.buffer);
-    }
-    const pgFile = await getUploadedFileFromPostgres(req.params.id);
-    if (pgFile?.contentBase64) {
-      const buf = Buffer.from(pgFile.contentBase64, "base64");
-      try {
-        if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-        await fs.promises.writeFile(path.join(UPLOADS_DIR, path.basename(pgFile.filename)), buf);
-      } catch {}
-      res.setHeader("Content-Type", pgFile.mimetype || "image/png");
-      return res.send(buf);
+    if (resolved?.diskPath) {
+      res.setHeader("Content-Type", resolved.mimetype || "image/png");
+      return res.sendFile(resolved.diskPath);
     }
     res.redirect("/assets/aistudio/SIGN_DEPAN_2_86dd649d.jpg");
   });
@@ -12046,12 +12440,18 @@ async function startServer() {
     return circleConv;
   }
 
+  const lastSyncedUserGroupSig = new Map<string, string>();
+
   function buildConversationsListForUser(reqUser: any, maxMsgsPerConv = 50) {
     const userId = reqUser?.user_id;
     if (!userId) return [];
 
     ensureUserCircleConversation(userId);
-    syncUserDivisionAndGroupMembership(reqUser);
+    const syncSig = `${Number(db.revision || 0)}|${String(reqUser.department || "")}|${String(reqUser.role || "")}`;
+    if (lastSyncedUserGroupSig.get(userId) !== syncSig) {
+      syncUserDivisionAndGroupMembership(reqUser);
+      lastSyncedUserGroupSig.set(userId, syncSig);
+    }
 
     // Ensure General group ('conv_1') includes user unless they explicitly left
     for (const c of db.conversations || []) {
@@ -12165,8 +12565,12 @@ async function startServer() {
     res.json(buildConversationsListForUser(reqUser, 50));
   });
 
+  let lastBootstrapMaintenanceAt = 0;
+  let bootstrapCacheRev = -1;
+  const bootstrapResponseCache = new Map<string, string>();
+
   // Unified high-speed bootstrap endpoint: replaces 11+ parallel HTTP requests on boot/reload
-  // with 1 single compressed roundtrip + weak ETag (304 Not Modified when workspace revision hasn't changed).
+  // with 1 single compressed roundtrip + weak ETag (304 Not Modified) + revision-keyed RAM cache.
   app.get("/api/bootstrap", (req, res) => {
     const reqUser = getReqUser(req);
     if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
@@ -12174,7 +12578,11 @@ async function startServer() {
 
     setUserOnlineStatus(uid, true);
 
-    if (normalizeDbTasksSaklek() || autoArchiveCheck() > 0) saveDbToFile();
+    const nowMs = Date.now();
+    if (nowMs - lastBootstrapMaintenanceAt > 60_000) {
+      lastBootstrapMaintenanceAt = nowMs;
+      if (normalizeDbTasksSaklek() || autoArchiveCheck() > 0) saveDbToFile();
+    }
 
     const rev = Number(db.revision || 0);
     const etag = `W/"boot-${uid}-${rev}"`;
@@ -12184,10 +12592,20 @@ async function startServer() {
       return res.status(304).end();
     }
 
+    if (bootstrapCacheRev !== rev) {
+      bootstrapResponseCache.clear();
+      bootstrapCacheRev = rev;
+    }
+    const cacheKey = `${uid}:${reqUser.role || ""}:${reqUser.department || ""}`;
+    const cachedJson = bootstrapResponseCache.get(cacheKey);
+    if (cachedJson) {
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      return res.send(cachedJson);
+    }
+
     const myNotifs = (db.notifications || []).filter((n: any) => n.user_id === uid);
     const unreadNotifs = myNotifs.filter((n: any) => !n.read).length;
 
-    const nowMs = Date.now();
     const accessibleTasks = (db.tasks || [])
       .filter((t: any) => !t.archived && isTaskAccessible(t, reqUser))
       .map((t: any) => {
@@ -12262,7 +12680,110 @@ async function startServer() {
         return String(b.updated_at || b.created_at || "").localeCompare(String(a.updated_at || a.created_at || ""));
       });
 
-    res.json({
+    syncDivisionsToBoards();
+    const boardCounts: Record<string, number> = {};
+    (db.tasks || []).forEach((t: any) => {
+      if (t.board_id && !t.archived) {
+        boardCounts[t.board_id] = (boardCounts[t.board_id] || 0) + 1;
+      }
+    });
+
+    // Pre-index human users by department once in O(U) instead of O(B * U)
+    const allHumanUserIds: string[] = [];
+    const deptUserIdsMap = new Map<string, string[]>();
+    for (const u of db.users || []) {
+      if (!u || u.is_bot || u.role === "assistant" || u.user_id === CIRCLE_BOT_ID) continue;
+      allHumanUserIds.push(u.user_id);
+      const dk = String(u.department || "").trim().toLowerCase();
+      if (dk) {
+        let arr = deptUserIdsMap.get(dk);
+        if (!arr) {
+          arr = [];
+          deptUserIdsMap.set(dk, arr);
+        }
+        arr.push(u.user_id);
+      }
+    }
+
+    const userDept = String(reqUser.department || "").trim().toLowerCase();
+    const isSuper = reqUser.role === "super_admin" || reqUser.role === "workspace_admin";
+    const isManagerOrAdmin = ["super_admin", "workspace_admin", "department_manager", "project_manager"].includes(reqUser.role);
+    const enrichedBoards = (db.boards || []).map((b: any) => {
+      const boardDept = String(b.department || "").trim().toLowerCase();
+      const isCollab = Boolean(
+        b.is_collaborative ||
+        b.board_type === "collaborative" ||
+        b.board_type === "project" ||
+        b.project_id ||
+        !boardDept ||
+        boardDept === "semua divisi" ||
+        boardDept === "all" ||
+        boardDept === "kolaborasi"
+      );
+      const isDeptMember = Boolean(userDept && boardDept === userDept);
+      const isInvited = Boolean(Array.isArray(b.invited_member_ids) && b.invited_member_ids.includes(uid));
+      const isCollabMember = Boolean(
+        isCollab &&
+        (b.all_workspace_members !== false ||
+          boardDept === "semua divisi" ||
+          (Array.isArray(b.member_ids) && b.member_ids.includes(uid)))
+      );
+      const isCreator = b.created_by === uid;
+      const deptMembers = boardDept ? (deptUserIdsMap.get(boardDept) || []) : [];
+      const invitedMembers = Array.isArray(b.invited_member_ids) ? b.invited_member_ids : [];
+      const explicitCollabMembers = isCollab && Array.isArray(b.member_ids) ? b.member_ids : [];
+      const totalMemberIds = isCollab && b.all_workspace_members !== false
+        ? allHumanUserIds
+        : Array.from(new Set([...deptMembers, ...invitedMembers, ...explicitCollabMembers]));
+      return {
+        ...b,
+        board_type: isCollab ? (b.board_type || "collaborative") : "department",
+        is_collaborative: isCollab,
+        all_workspace_members: b.all_workspace_members !== false,
+        task_count: boardCounts[b.id] || 0,
+        dept_members_count: deptMembers.length,
+        invited_members_count: invitedMembers.length,
+        member_ids: totalMemberIds,
+        is_dept_member: isDeptMember,
+        is_invited: isInvited,
+        is_accessible: isSuper || isDeptMember || isInvited || isCollabMember || isCreator,
+      };
+    });
+    const visibleBoards = isSuper ? enrichedBoards : enrichedBoards.filter((b: any) => b.is_accessible);
+    const sortedOrgUnits = [...(db.org_units || [])].sort((a: any, b: any) => (a.order ?? 999) - (b.order ?? 999));
+    const stickersPayload = {
+      recent: db.recent_stickers || [],
+      frequent: [],
+      packs: db.sticker_packs && db.sticker_packs.length ? db.sticker_packs : DEFAULT_PACKS,
+      stickers: db.stickers && db.stickers.length ? db.stickers : DEFAULT_STICKERS,
+    };
+
+    const adminPayload = isManagerOrAdmin
+      ? {
+          admin_stats: {
+            total_employees: db.users.length,
+            active_employees: db.users.filter((u: any) => u.status === "active").length,
+            pending_employees: db.users.filter((u: any) => u.status === "pending").length,
+            departments: db.workspace.divisions?.length || 4,
+            groups: db.conversations.filter((c: any) => c.type === "group").length,
+            active_projects: db.projects.filter((p: any) => p.status === "active").length,
+            open_tasks: db.tasks.filter((t: any) => t.status !== "done" && !t.archived).length,
+            overdue_tasks: db.tasks.filter(
+              (t: any) => t.status !== "done" && !t.archived && t.deadline && new Date(t.deadline).getTime() < nowMs
+            ).length,
+          },
+          audit_logs: (db.audit_logs || []).slice(0, 100).map((log: any) => ({
+            ...log,
+            actor_name: resolveActorName(log?.actor_id, log?.actor_name, db.users),
+            action: humanizeLogAction(log?.action || "", db.users),
+          })),
+          invitations: db.invitations || [],
+          access_requests: db.access_requests || [],
+          ...(isSuper ? { recovery_key: getDecryptedRecoveryKey() } : {}),
+        }
+      : {};
+
+    const payloadJson = JSON.stringify({
       rev,
       workspace: db.workspace,
       users: sanitizeUsersList(db.users),
@@ -12271,8 +12792,12 @@ async function startServer() {
         items: myNotifs.slice(0, 80),
         unread: unreadNotifs,
       },
-      conversations: buildConversationsListForUser(reqUser, 20),
+      conversations: buildConversationsListForUser(reqUser, 30),
       tasks: accessibleTasks,
+      boards: visibleBoards,
+      all_boards: isSuper ? enrichedBoards : undefined,
+      org_units: sortedOrgUnits,
+      stickers: stickersPayload,
       drive_shortcuts: db.drive_shortcuts,
       posts: topPosts,
       trending: computeTrendingTags(),
@@ -12281,7 +12806,16 @@ async function startServer() {
       notes: userNotes,
       projects: Array.isArray(db.projects) ? db.projects : [],
       stats_team: computeTeamStatsForUser(reqUser, { range: "7d" }),
+      ...adminPayload,
     });
+
+    if (bootstrapResponseCache.size >= 64) {
+      const oldestKey = bootstrapResponseCache.keys().next().value;
+      if (oldestKey) bootstrapResponseCache.delete(oldestKey);
+    }
+    bootstrapResponseCache.set(cacheKey, payloadJson);
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    return res.send(payloadJson);
   });
 
   app.post("/api/conversations/dm", (req, res) => {
@@ -12680,17 +13214,20 @@ async function startServer() {
 
           applyCircleBotEffects(result);
 
-          const botMsg = {
+          const botMsg: Record<string, any> = {
             id: `msg_bot_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
             conversation_id: id,
             sender_id: "user_circle_assistant",
             user_id: "user_circle_assistant",
             text: replyText,
-            type: "text",
+            type: result.report ? "assistant_report" : "text",
+            ...(result.report ? { assistant_report: result.report } : {}),
             created_at: new Date().toISOString()
           };
           db.messages.push(botMsg);
-          const cleanPreview = replyText.replace(/\*\*/g, "").replace(/\s+/g, " ").trim().slice(0, 120);
+          const cleanPreview = result.report
+            ? `${result.report.title} (${result.report.summary?.progress_percent ?? 0}%)`
+            : replyText.replace(/\*\*/g, "").replace(/\s+/g, " ").trim().slice(0, 120);
           conv.last_message_preview = cleanPreview || replyText;
           conv.last_message_at = botMsg.created_at;
           broadcast({ type: "message:new", data: { ...botMsg, member_ids: mems } });
@@ -12737,7 +13274,7 @@ async function startServer() {
     if (result.createdTask || fx.needsSave || fx.tasksChanged || fx.projectsChanged || fx.remindersChanged || fx.meetingsChanged || fx.postsChanged || fx.pollsChanged || fx.notificationsChanged) {
       saveDbToFile();
     }
-    res.json({ answer: result.text, created_task: result.createdTask || null, effects: fx });
+    res.json({ answer: result.text, report: result.report || null, created_task: result.createdTask || null, effects: fx });
   });
 
   app.post("/api/conversations/:id/read", (req, res) => {
@@ -13110,7 +13647,7 @@ async function startServer() {
 
       const invEntry = {
         user_id: targetUid,
-        name: targetUser.name || "Karyawan",
+        name: targetUser.name || "Employee",
         avatar: targetUser.avatar || targetUser.picture || "",
         department: targetUser.department || "",
         job_title: targetUser.job_title || "",
@@ -13462,17 +13999,54 @@ async function startServer() {
       return res.status(403).json({ detail: "Hanya pembuat atau admin grup yang dapat mengubah pengaturan grup." });
     }
 
-    const { created_by: _ignoreCreator, ...safePatch } = req.body || {};
+    const isExistingDept = primary.group_type === "department" || String(primary.id || "").startsWith("group_official_");
+    const rawPatch = req.body && typeof req.body === "object" ? req.body : {};
+    if (!isExistingDept && String(rawPatch.group_type || "").trim().toLowerCase() === "department") {
+      return res.status(403).json({ detail: "Tipe grup tidak dapat diubah menjadi Divisi." });
+    }
+
+    const safePatch: Record<string, any> = {};
+    if (typeof rawPatch.name === "string" && rawPatch.name.trim()) {
+      safePatch.name = rawPatch.name.trim().slice(0, 120);
+    }
+    if (typeof rawPatch.description === "string") {
+      safePatch.description = rawPatch.description.trim().slice(0, 1000);
+    }
+    if (typeof rawPatch.location === "string") {
+      safePatch.location = rawPatch.location.trim().slice(0, 120);
+    }
+    if (typeof rawPatch.image === "string") {
+      safePatch.image = rawPatch.image.trim();
+    }
+    if (typeof rawPatch.archived === "boolean") {
+      safePatch.archived = rawPatch.archived;
+    }
+    if (isExistingDept) {
+      safePatch.group_type = "department";
+    } else if (typeof rawPatch.group_type === "string") {
+      const normalizedType = rawPatch.group_type.trim().toLowerCase();
+      if (["public", "private", "project"].includes(normalizedType)) {
+        safePatch.group_type = normalizedType;
+      }
+    }
+
     const creatorId = primary.created_by;
+    const requestedAdmins = Array.isArray(rawPatch.deputy_admin_ids)
+      ? rawPatch.deputy_admin_ids
+      : Array.isArray(rawPatch.admin_ids)
+      ? rawPatch.admin_ids
+      : null;
+
     let updated: any = null;
     [db.groups, db.conversations].forEach((list) => {
       const g = list.find((x: any) => x.id === req.params.id);
       if (g) {
         Object.assign(g, safePatch);
         g.is_verified = Boolean(g.group_type === "department" || String(g.id || "").startsWith("group_official_"));
-        if (Array.isArray(safePatch.deputy_admin_ids) || Array.isArray(safePatch.admin_ids)) {
-          const requestedAdmins = Array.isArray(safePatch.deputy_admin_ids) ? safePatch.deputy_admin_ids : safePatch.admin_ids;
-          const nextAdmins = Array.from(new Set([creatorId, ...requestedAdmins].filter((id: any) => Boolean(id) && id !== CIRCLE_BOT_ID)));
+        if (requestedAdmins) {
+          const nextAdmins = Array.from(
+            new Set([creatorId, ...requestedAdmins].filter((id: any) => typeof id === "string" && id.trim() && id !== CIRCLE_BOT_ID))
+          );
           g.admin_ids = nextAdmins;
           g.member_ids = Array.from(new Set([...(g.member_ids || []), ...nextAdmins]));
           g.members = g.member_ids;
@@ -14951,6 +15525,276 @@ async function startServer() {
     res.json({ success: true, message: msg, note: syncedNote });
   });
 
+  app.post("/api/conversations/:id/form-approvals", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+
+    const { id } = req.params;
+    const conv = (db.conversations || []).find((c: any) => c.id === id);
+    if (!conv) return res.status(404).json({ detail: "Conversation not found" });
+
+    const mems = Array.isArray(conv.member_ids)
+      ? conv.member_ids
+      : Array.isArray(conv.members)
+      ? conv.members
+      : [];
+    const isSuperAdmin = ["super_admin", "workspace_admin"].includes(reqUser.role);
+    if (!mems.includes(reqUser.user_id) && !isSuperAdmin) {
+      return res.status(403).json({ detail: "Anda bukan anggota percakapan ini." });
+    }
+
+    const { form_type, form_label, title, fields, approver_ids, attachments } = req.body || {};
+    const cleanApproverIds = Array.from(
+      new Set(
+        (Array.isArray(approver_ids) ? approver_ids : []).filter(
+          (uid: any) => typeof uid === "string" && uid.trim().length > 0
+        )
+      )
+    ) as string[];
+
+    if (cleanApproverIds.length === 0) {
+      return res.status(400).json({ detail: "Pilih minimal 1 orang tujuan approval." });
+    }
+
+    const cleanFormType = ["leave", "item_request", "reimbursement"].includes(form_type)
+      ? form_type
+      : "leave";
+    const defaultLabel =
+      cleanFormType === "item_request"
+        ? "Form Request Barang"
+        : cleanFormType === "reimbursement"
+        ? "Form Reimbursement & Dana"
+        : "Form Izin Cuti";
+    const cleanLabel = String(form_label || defaultLabel).trim();
+    const cleanTitle = String(title || cleanLabel).trim();
+    const nowIso = new Date().toISOString();
+
+    const rawAttachments = Array.isArray(attachments)
+      ? attachments
+      : Array.isArray(fields?.attachments)
+      ? fields.attachments
+      : [];
+    const cleanAttachments = rawAttachments
+      .filter((a: any) => a && typeof a.id === "string" && a.id.trim().length > 0)
+      .slice(0, 10)
+      .map((a: any) => ({
+        id: String(a.id).trim(),
+        name: String(a.name || "Lampiran").trim(),
+        content_type: String(a.content_type || ""),
+        size: Number(a.size) || 0,
+      }));
+    const cleanFields = fields && typeof fields === "object" ? { ...fields } : {};
+    if (cleanAttachments.length > 0) {
+      cleanFields.attachments = cleanAttachments;
+    }
+
+    const formApprovalObj = {
+      id: `fappr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      form_type: cleanFormType,
+      form_label: cleanLabel,
+      title: cleanTitle,
+      fields: cleanFields,
+      attachments: cleanAttachments,
+      requester_id: reqUser.user_id,
+      requester_name: reqUser.name || "Anggota",
+      requester_department: reqUser.department || "Umum",
+      requester_job_title: reqUser.job_title || "Employee",
+      approver_ids: cleanApproverIds,
+      approvals: [],
+      rejections: [],
+      status: "pending",
+      progress: 0,
+      created_at: nowIso,
+    };
+
+    const msg = {
+      id: `msg_appr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      conversation_id: id,
+      sender_id: reqUser.user_id,
+      user_id: reqUser.user_id,
+      type: "form_approval",
+      form_approval: formApprovalObj,
+      mention_ids: cleanApproverIds,
+      text: `📋 ${cleanLabel}: ${cleanTitle}`,
+      attachments: [],
+      created_at: nowIso,
+    };
+
+    db.messages = db.messages || [];
+    db.messages.push(msg);
+
+    conv.last_message_preview = `📋 ${cleanLabel}: ${cleanTitle}`;
+    conv.last_message_at = nowIso;
+    conv.reads = conv.reads || {};
+    conv.reads[reqUser.user_id] = Date.now();
+
+    saveDbToFile(true);
+
+    const notifiedUserIds = cleanApproverIds.filter((uid) => uid && uid !== reqUser.user_id);
+    broadcast({
+      type: "message:new",
+      data: {
+        ...msg,
+        member_ids: mems,
+        conversation_type: conv.type,
+        conversation_name: conv.name,
+        notified_user_ids: notifiedUserIds,
+      },
+    });
+    broadcast({ type: "conversations:changed" });
+
+    const senderSafe = sanitizeUser(reqUser);
+    notifiedUserIds.forEach((uid) => {
+      createNotification({
+        user_id: uid,
+        title: `Pengajuan ${cleanLabel} dari ${reqUser.name || "Rekan Kerja"}`,
+        body: cleanTitle,
+        type: "approval_request",
+        category: "messages",
+        actor_id: reqUser.user_id,
+        sender: senderSafe,
+        link: `/messages/${id}`,
+        conversation_id: id,
+      });
+    });
+
+    res.json({ success: true, message: msg, form_approval: formApprovalObj });
+  });
+
+  app.post("/api/messages/:id/form-approval-decide", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+
+    const msgIdx = (db.messages || []).findIndex((m: any) => m && m.id === req.params.id);
+    if (msgIdx === -1) return res.status(404).json({ detail: "Pesan tidak ditemukan." });
+
+    const msg = db.messages[msgIdx];
+    if (!msg.form_approval) {
+      return res.status(400).json({ detail: "Pesan ini bukan Approval Card." });
+    }
+
+    const appr = msg.form_approval;
+    const approverIds: string[] = Array.isArray(appr.approver_ids) ? appr.approver_ids : [];
+    const conv = (db.conversations || []).find((c: any) => c.id === msg.conversation_id);
+    const convMembers: string[] = Array.isArray(conv?.member_ids)
+      ? conv.member_ids
+      : Array.isArray(conv?.members)
+      ? conv.members
+      : [];
+    const isAdminOrSuper = ["super_admin", "workspace_admin"].includes(reqUser.role);
+    const isAuthorizedApprover =
+      isAdminOrSuper ||
+      (approverIds.length > 0
+        ? approverIds.includes(reqUser.user_id)
+        : convMembers.includes(reqUser.user_id));
+    if (!isAuthorizedApprover) {
+      return res.status(403).json({
+        detail: "Hanya pihak approver yang ditunjuk atau Admin yang dapat memberikan keputusan.",
+      });
+    }
+
+    const rawDecision = req.body?.decision;
+    const decision =
+      rawDecision === "reject"
+        ? "reject"
+        : rawDecision === "unapprove"
+        ? "unapprove"
+        : "approve";
+    const note = String(req.body?.note || "").trim().slice(0, 500);
+    const nowIso = new Date().toISOString();
+
+    const prevApprovals = Array.isArray(appr.approvals) ? appr.approvals : [];
+    const prevRejections = Array.isArray(appr.rejections) ? appr.rejections : [];
+
+    const nextApprovals = prevApprovals.filter(
+      (a: any) => (typeof a === "string" ? a : a?.user_id) !== reqUser.user_id
+    );
+    const nextRejections = prevRejections.filter(
+      (r: any) => (typeof r === "string" ? r : r?.user_id) !== reqUser.user_id
+    );
+
+    if (decision === "approve") {
+      nextApprovals.push({
+        user_id: reqUser.user_id,
+        name: reqUser.name || "Approver",
+        note,
+        at: nowIso,
+      });
+    } else if (decision === "reject") {
+      nextRejections.push({
+        user_id: reqUser.user_id,
+        name: reqUser.name || "Approver",
+        note,
+        at: nowIso,
+      });
+    }
+
+    const totalNeeded = Math.max(1, approverIds.length || 1);
+    const uniqueApprovedIds = Array.from(
+      new Set(
+        nextApprovals
+          .map((a: any) => (typeof a === "string" ? a : a?.user_id))
+          .filter((uid: any) => typeof uid === "string" && uid.length > 0)
+      )
+    );
+    const approvedCount = Math.min(totalNeeded, uniqueApprovedIds.length);
+    const progress = Math.min(100, Math.round((approvedCount / totalNeeded) * 100));
+    const status =
+      nextRejections.length > 0
+        ? "rejected"
+        : approvedCount >= totalNeeded
+        ? "approved"
+        : approvedCount > 0
+        ? "partial"
+        : "pending";
+
+    msg.form_approval = {
+      ...appr,
+      approvals: nextApprovals,
+      rejections: nextRejections,
+      progress,
+      status,
+      updated_at: nowIso,
+    };
+    msg.updated_at = nowIso;
+    db.messages[msgIdx] = msg;
+
+    if (conv) {
+      const convMsgs = (db.messages || []).filter((m: any) => m.conversation_id === conv.id && !m.deleted);
+      const lastConvMsg = convMsgs[convMsgs.length - 1];
+      if (lastConvMsg && lastConvMsg.id === msg.id) {
+        conv.last_message_preview =
+          status === "approved"
+            ? `✓ ${appr.form_label}: ${appr.title} (100%)`
+            : status === "rejected"
+            ? `✕ ${appr.form_label}: ${appr.title} (Ditolak)`
+            : `📋 ${appr.form_label}: ${appr.title} (${progress}%)`;
+      }
+    }
+
+    saveDbToFile(true);
+    broadcast({ type: "message:update", data: msg });
+
+    if (decision !== "unapprove" && appr.requester_id && appr.requester_id !== reqUser.user_id) {
+      createNotification({
+        user_id: appr.requester_id,
+        title:
+          decision === "approve"
+            ? `${reqUser.name || "Approver"} menyetujui ${appr.form_label} (${progress}%)`
+            : `${reqUser.name || "Approver"} menolak / minta revisi ${appr.form_label}`,
+        body: note ? `${appr.title} · Catatan: "${note}"` : appr.title,
+        type: "approval_decision",
+        category: "messages",
+        actor_id: reqUser.user_id,
+        sender: sanitizeUser(reqUser),
+        link: `/messages/${msg.conversation_id}`,
+        conversation_id: msg.conversation_id,
+      });
+    }
+
+    res.json({ success: true, message: msg, form_approval: msg.form_approval });
+  });
+
   app.get("/api/workspace", (req, res) => {
     ensureWorkspaceCheckpointTemplates();
     res.json(db.workspace);
@@ -14964,10 +15808,11 @@ async function startServer() {
     const touchesSuperAdminOnly =
       req.body?.marketplace_enabled !== undefined ||
       req.body?.marketplace_config !== undefined ||
-      req.body?.custom_copywriting !== undefined;
+      req.body?.custom_copywriting !== undefined ||
+      req.body?.notification_sound_config !== undefined;
     if (touchesSuperAdminOnly && reqUser.role !== "super_admin") {
       return res.status(403).json({
-        detail: "Hanya Super Admin yang dapat mengubah copywriting dan pengaturan Marketplace.",
+        detail: "Hanya Super Admin yang dapat mengubah copywriting, suara notifikasi kustom, dan pengaturan Marketplace.",
       });
     }
     const touchesAccessPolicy =
@@ -15037,8 +15882,8 @@ async function startServer() {
         actor_id: reqUser.user_id,
         actor_name: reqUser.name || "Super Admin",
         action: nextPayload.marketplace_enabled
-          ? "mengaktifkan fitur Marketplace Karyawan"
-          : "menonaktifkan fitur Marketplace Karyawan",
+          ? "mengaktifkan fitur Marketplace Employee"
+          : "menonaktifkan fitur Marketplace Employee",
         created_at: new Date().toISOString(),
       });
     }

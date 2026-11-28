@@ -62,7 +62,7 @@ export default function Employees() {
     >
       <PageHeader
         icon={Users}
-        title={t("employee_title", "Karyawan")}
+        title={t("employee_title", "Employee")}
         subtitle={`${list.length}/${humanUsers.length} · ${t("employee_subtitle", "Daftar seluruh anggota tim aktif di workspace.")}`}
       />
 
@@ -98,7 +98,7 @@ export default function Employees() {
       </div>
 
       {!list.length ? (
-        <Empty icon={Users} title={t("employee_empty_title", "Tidak ada karyawan")} text={t("employee_empty_desc", "Coba ubah kata kunci pencarian atau filter divisi.")} />
+        <Empty icon={Users} title={t("employee_empty_title", "Tidak ada employee")} text={t("employee_empty_desc", "Coba ubah kata kunci pencarian atau filter divisi.")} />
       ) : (
         <div className="grid grid-cols-1 gap-3.5 sm:gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 min-w-0">
           {list.map((u) => (

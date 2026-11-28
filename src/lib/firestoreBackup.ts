@@ -1,4 +1,4 @@
-import { initializeApp, getApps } from 'firebase/app';
+import { initializeApp, getApps, onLog, setLogLevel as setFirebaseAppLogLevel } from 'firebase/app';
 import { getAuth, onAuthStateChanged, User } from 'firebase/auth';
 import {
   getFirestore,
@@ -17,6 +17,7 @@ import {
   Timestamp,
   enableNetwork,
   disableNetwork,
+  setLogLevel as setFirestoreLogLevel,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import {
@@ -39,6 +40,24 @@ function createFirestoreInstance(): Firestore {
 }
 export const firestoreDb = createFirestoreInstance();
 export const firebaseAuth = getAuth(app);
+
+// Silence raw @firebase/firestore internal console.error spam (e.g. resource-exhausted backoff loop)
+// while intercepting quota/backoff events in real-time via onLog below.
+try {
+  setFirebaseAppLogLevel('silent');
+  setFirestoreLogLevel('silent');
+} catch {}
+
+const quotaAbortListeners = new Set<(err: Error) => void>();
+function notifyQuotaAborters(reason: string) {
+  const err = new Error(reason);
+  quotaAbortListeners.forEach((abort) => {
+    try {
+      abort(err);
+    } catch {}
+  });
+  quotaAbortListeners.clear();
+}
 
 export const SHARED_LIVE_BACKUP_ID = 'shared_workspace_live';
 const QUOTA_PAUSE_KEY = `circle_firestore_quota_paused_until_${firebaseConfig.projectId || 'default'}`;
@@ -159,9 +178,17 @@ function activateQuotaPause(customUntilMs?: number): string {
     try {
       localStorage.setItem(QUOTA_PAUSE_KEY, String(until));
     } catch {}
+    if (typeof fetch === 'function') {
+      void fetch('/api/workspace/firestore-quota-pause', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paused_until: until }),
+      }).catch(() => {});
+    }
   }
   // Immediately abort Firestore SDK internal PersistentWriteStream exponential backoff queue
   void disableNetwork(firestoreDb).catch(() => {});
+  notifyQuotaAborters('Quota exceeded: Free daily write units per project reached.');
   return FIRESTORE_CONSOLE_UPGRADE_URL;
 }
 
@@ -178,8 +205,33 @@ export function syncServerQuotaPauseUntil(untilMs: number): boolean {
   return true;
 }
 
+try {
+  onLog(
+    (logEvent) => {
+      const msg = String(logEvent?.message || '').toLowerCase();
+      if (
+        msg.includes('resource-exhausted') ||
+        msg.includes('quota limit exceeded') ||
+        msg.includes('quota exceeded') ||
+        msg.includes('maximum backoff delay')
+      ) {
+        const upgradeUrl = activateQuotaPause();
+        updateCloudSyncStatus({
+          syncing: false,
+          lastError:
+            'Quota exceeded. Kuota tulis harian gratis Firestore tercapai (reset besok UTC). Data tetap aman tersimpan di server & IndexedDB lokal.',
+          lastErrorIsQuota: true,
+          quotaUpgradeUrl: upgradeUrl,
+        });
+      }
+    },
+    { level: 'warn' }
+  );
+} catch {}
+
 async function testConnection() {
   if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+  if (isFirestoreQuotaPaused()) return;
   try {
     await getDocFromServer(doc(firestoreDb, 'test', 'connection'));
   } catch (error) {
@@ -259,7 +311,12 @@ function formatReadableFirestoreError(error: unknown): {
 } {
   const raw = error instanceof Error ? error.message : String(error || '');
   const lower = raw.toLowerCase();
-  if (lower.includes('quota') || lower.includes('resource-exhausted')) {
+  if (
+    lower.includes('quota') ||
+    lower.includes('resource-exhausted') ||
+    lower.includes('firestore write timeout') ||
+    lower.includes('maximum backoff')
+  ) {
     const upgradeUrl = activateQuotaPause();
     return {
       message:
@@ -327,9 +384,7 @@ export function handleFirestoreError(
     lastErrorIsQuota: formatted.isQuota,
     quotaUpgradeUrl: formatted.upgradeUrl,
   });
-  if (formatted.isQuota && options?.silentConsoleOnQuota) {
-    console.warn('Firestore quota reached — sync paused until UTC midnight:', path);
-  } else {
+  if (!formatted.isQuota && !options?.silentConsoleOnQuota) {
     console.error('Firestore Error: ', JSON.stringify(errInfo));
   }
   throw new Error(JSON.stringify(errInfo));
@@ -339,7 +394,7 @@ async function guardedFirestoreWrite<T>(
   fn: () => Promise<T>,
   operationType: OperationType,
   path: string,
-  timeoutMs = 12000,
+  timeoutMs = 6000,
   options?: { silentConsoleOnQuota?: boolean }
 ): Promise<T> {
   if (isFirestoreQuotaPaused()) {
@@ -354,10 +409,13 @@ async function guardedFirestoreWrite<T>(
     throw new Error('Quota exceeded (paused until next UTC day).');
   }
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let abortHandler: ((err: Error) => void) | undefined;
   try {
     return await Promise.race([
       fn(),
       new Promise<never>((_, reject) => {
+        abortHandler = (err: Error) => reject(err);
+        quotaAbortListeners.add(abortHandler);
         timer = setTimeout(() => {
           reject(new Error('Firestore write timeout (unavailable/network).'));
         }, timeoutMs);
@@ -367,6 +425,7 @@ async function guardedFirestoreWrite<T>(
     return handleFirestoreError(error, operationType, path, options);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
+    if (abortHandler) quotaAbortListeners.delete(abortHandler);
   }
 }
 

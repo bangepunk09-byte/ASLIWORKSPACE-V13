@@ -1,17 +1,26 @@
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
-import { Settings as Cog, Sun, Moon, Monitor, Upload, Download, RotateCcw, FileSpreadsheet, Search, Check, Plus } from "lucide-react";
+import { Settings as Cog, Sun, Moon, Monitor, Upload, Download, RotateCcw, FileSpreadsheet, Search, Check, Plus, Volume2, Music, Play, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { useApp } from "../context/AppContext";
-import { api } from "../lib/api";
+import { api, errMsg, uploadFile } from "../lib/api";
 import { PageHeader, RichCopyField } from "../components/common";
 import { Switch } from "../components/ui/switch";
+import { AppSelect } from "../components/ui/select";
+import { Slider } from "../components/ui/slider";
 import ThemeEditor from "./settings/ThemeEditor";
 import BackgroundEditor from "./settings/BackgroundEditor";
 import { UserProfileSettings } from "./settings/UserProfileSettings";
 import { Card, AdminOverview, PeopleAccess, WorkspaceBranding, DivisionsAdmin, ItemTypesAdmin, WeeklyReportCard, LabelsAdmin, StatusesAdmin, ProfileFieldsAdmin, StickersAdmin, AssistantBranding, MarketplaceSettingsCard } from "./settings/AdminPanels";
 import { DEFAULT_COPYWRITING, COPYWRITING_GROUPS, getEffectiveCopywriting, cleanCopywritingMap, generateCopywritingCsv, parseCopywritingCsv } from "../lib/i18n";
 import { DEFAULT_MARKETPLACE_COPYWRITING, reconcileMarketplaceEnabledCache } from "./marketplace/marketplaceStore";
-import { playSound } from "../lib/sound";
+import {
+  playSound,
+  playSoundPreview,
+  NOTIFICATION_SOUND_PRESETS,
+  DEFAULT_WS_SOUND_CONFIG,
+  getWorkspaceSoundConfig,
+  setWorkspaceSoundConfig,
+} from "../lib/sound";
 import { PWAInstallButton } from "../components/PWAInstallButton";
 import BackupRestorePanel, { prefetchBackupSummary } from "./settings/BackupRestorePanel";
 import {
@@ -41,8 +50,351 @@ function Appearance() {
   );
 }
 
+function SuperAdminNotificationSoundCard() {
+  const { me, ws, setSession, reloadWs } = useApp();
+  const [cfg, setCfg] = useState(() => ({
+    ...DEFAULT_WS_SOUND_CONFIG,
+    ...getWorkspaceSoundConfig(),
+    ...(ws?.notification_sound_config || {}),
+  }));
+  const [saving, setSaving] = useState(false);
+  const [uploadingChannel, setUploadingChannel] = useState(null);
+
+  useEffect(() => {
+    if (ws?.notification_sound_config) {
+      setCfg((prev) => ({
+        ...prev,
+        ...DEFAULT_WS_SOUND_CONFIG,
+        ...ws.notification_sound_config,
+      }));
+    }
+  }, [ws?.notification_sound_config]);
+
+  if (me?.role !== "super_admin") return null;
+
+  const updateDraft = (patch) => {
+    setCfg((prev) => {
+      const next = { ...prev, ...patch };
+      setWorkspaceSoundConfig(next);
+      return next;
+    });
+  };
+
+  const handleUploadCustomSound = async (channel, e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("audio/") && !/\.(mp3|wav|ogg|m4a|aac|webm)$/i.test(file.name || "")) {
+      toast.error("Pilih file audio (.mp3, .wav, .ogg, atau .m4a)");
+      e.target.value = "";
+      return;
+    }
+    setUploadingChannel(channel);
+    try {
+      const uploaded = await uploadFile(file);
+      if (channel === "message") {
+        updateDraft({
+          message_preset: "custom",
+          message_custom_file_id: uploaded.id,
+          message_custom_name: file.name,
+        });
+        playSoundPreview("custom", { customFileId: uploaded.id, volume: cfg.volume });
+      } else {
+        updateDraft({
+          notif_preset: "custom",
+          notif_custom_file_id: uploaded.id,
+          notif_custom_name: file.name,
+        });
+        playSoundPreview("custom", { customFileId: uploaded.id, volume: cfg.volume });
+      }
+      toast.success(`Audio kustom "${file.name}" berhasil diunggah. Klik Simpan Suara Notifikasi.`);
+    } catch (err) {
+      toast.error(errMsg(err, "Gagal mengunggah file audio"));
+    } finally {
+      setUploadingChannel(null);
+      e.target.value = "";
+    }
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      setWorkspaceSoundConfig(cfg);
+      const { data } = await api.patch("/workspace", {
+        notification_sound_config: cfg,
+      });
+      if (data && typeof data === "object") {
+        setSession((s) => (s ? { ...s, workspace: data } : s));
+      } else {
+        await reloadWs();
+      }
+      toast.success("Pengaturan custom suara notifikasi berhasil disimpan untuk workspace!");
+    } catch (err) {
+      toast.error(errMsg(err, "Gagal menyimpan suara notifikasi"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleResetDefault = async () => {
+    const def = { ...DEFAULT_WS_SOUND_CONFIG };
+    setCfg(def);
+    setWorkspaceSoundConfig(def);
+    setSaving(true);
+    try {
+      const { data } = await api.patch("/workspace", {
+        notification_sound_config: def,
+      });
+      if (data && typeof data === "object") {
+        setSession((s) => (s ? { ...s, workspace: data } : s));
+      }
+      toast.success("Suara notifikasi dikembalikan ke default!");
+    } catch (err) {
+      toast.error(errMsg(err, "Gagal mereset suara notifikasi"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card title="Custom Suara Notifikasi (Khusus Super Admin)" testid="super-admin-notif-sound-card">
+      <div className="space-y-4">
+        <div className="flex items-center justify-between gap-2 rounded-xl bg-brand/10 border border-brand/20 px-3 py-2 text-xs font-medium text-brand">
+          <span className="flex items-center gap-2">
+            <Volume2 size={15} className="shrink-0" />
+            <span>Hanya Super Admin yang dapat mengatur nada atau mengunggah suara notifikasi kustom untuk seluruh workspace.</span>
+          </span>
+          <span className="shrink-0 rounded-full bg-brand px-2.5 py-0.5 text-[10px] font-bold text-white uppercase tracking-wider">
+            Super Admin
+          </span>
+        </div>
+
+        {/* 1. Suara Notifikasi Pesan Masuk */}
+        <div className="rounded-2xl border bg-surface2/60 p-3.5 space-y-3 overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-xs font-bold text-ink flex items-center gap-1.5">
+                <Music size={14} className="text-brand shrink-0" />
+                <span>Suara Notifikasi Pesan Masuk (Chat Pribadi & Grup)</span>
+              </p>
+              <p className="text-[11px] text-sub">
+                Diputar saat ada pesan baru atau mention di obrolan.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() =>
+                playSoundPreview(cfg.message_preset, {
+                  customFileId: cfg.message_custom_file_id,
+                  volume: cfg.volume,
+                })
+              }
+              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 px-3 text-xs font-bold text-rose-600 dark:text-rose-300 transition-colors cursor-pointer"
+              data-testid="preview-msg-sound-btn"
+            >
+              <Play size={12} className="fill-current" /> Uji Suara Pesan
+            </button>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 min-w-0">
+            <div className="flex-1 min-w-0">
+              <AppSelect
+                value={cfg.message_preset || "bbm"}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  updateDraft({ message_preset: val });
+                  playSoundPreview(val, {
+                    customFileId: cfg.message_custom_file_id,
+                    volume: cfg.volume,
+                  });
+                }}
+                className="h-10 w-full min-w-0 rounded-xl border bg-surface px-3 text-xs sm:text-sm font-semibold text-ink"
+                data-testid="msg-sound-preset-select"
+              >
+                {NOTIFICATION_SOUND_PRESETS.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} — {p.desc}
+                  </option>
+                ))}
+                {cfg.message_custom_file_id && (
+                  <option value="custom">
+                    🎵 Audio Kustom: {cfg.message_custom_name || "File Audio"}
+                  </option>
+                )}
+              </AppSelect>
+            </div>
+
+            <label className="inline-flex h-10 shrink-0 whitespace-nowrap items-center justify-center gap-1.5 rounded-xl border bg-surface hover:bg-surface2 px-3.5 text-xs font-bold text-ink cursor-pointer transition-colors shadow-2xs">
+              <Upload size={14} className="text-brand shrink-0" />
+              <span>{uploadingChannel === "message" ? "Mengunggah..." : "Unggah Audio"}</span>
+              <input
+                type="file"
+                accept="audio/*,.mp3,.wav,.ogg,.m4a"
+                hidden
+                disabled={uploadingChannel === "message"}
+                onChange={(e) => handleUploadCustomSound("message", e)}
+                data-testid="upload-msg-sound-input"
+              />
+            </label>
+          </div>
+
+          {cfg.message_custom_file_id && (
+            <div className="flex items-center justify-between gap-2 rounded-xl border bg-surface px-3 py-2 text-xs">
+              <span className="truncate font-semibold text-ink">
+                🎵 File Audio Kustom: <b className="text-brand">{cfg.message_custom_name || cfg.message_custom_file_id}</b>
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  updateDraft({
+                    message_preset: "bbm",
+                    message_custom_file_id: "",
+                    message_custom_name: "",
+                  })
+                }
+                className="inline-flex items-center gap-1 text-rose-600 hover:underline font-semibold shrink-0 cursor-pointer"
+                data-testid="remove-msg-custom-sound-btn"
+              >
+                <Trash2 size={12} /> Hapus File
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* 2. Suara Notifikasi Umum, Tugas & Approval */}
+        <div className="rounded-2xl border bg-surface2/60 p-3.5 space-y-3 overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-xs font-bold text-ink flex items-center gap-1.5">
+                <BellRing size={14} className="text-emerald-600 shrink-0" />
+                <span>Suara Notifikasi Tugas, Approval & Sistem</span>
+              </p>
+              <p className="text-[11px] text-sub">
+                Diputar saat ada penugasan baru, Form Approval masuk, atau pengumuman workspace.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() =>
+                playSoundPreview(cfg.notif_preset, {
+                  customFileId: cfg.notif_custom_file_id,
+                  volume: cfg.volume,
+                })
+              }
+              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 px-3 text-xs font-bold text-emerald-700 dark:text-emerald-300 transition-colors cursor-pointer"
+              data-testid="preview-sys-sound-btn"
+            >
+              <Play size={12} className="fill-current" /> Uji Suara Notifikasi
+            </button>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 min-w-0">
+            <div className="flex-1 min-w-0">
+              <AppSelect
+                value={cfg.notif_preset || "marimba"}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  updateDraft({ notif_preset: val });
+                  playSoundPreview(val, {
+                    customFileId: cfg.notif_custom_file_id,
+                    volume: cfg.volume,
+                  });
+                }}
+                className="h-10 w-full min-w-0 rounded-xl border bg-surface px-3 text-xs sm:text-sm font-semibold text-ink"
+                data-testid="sys-sound-preset-select"
+              >
+                {NOTIFICATION_SOUND_PRESETS.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} — {p.desc}
+                  </option>
+                ))}
+                {cfg.notif_custom_file_id && (
+                  <option value="custom">
+                    🎵 Audio Kustom: {cfg.notif_custom_name || "File Audio"}
+                  </option>
+                )}
+              </AppSelect>
+            </div>
+
+            <label className="inline-flex h-10 shrink-0 whitespace-nowrap items-center justify-center gap-1.5 rounded-xl border bg-surface hover:bg-surface2 px-3.5 text-xs font-bold text-ink cursor-pointer transition-colors shadow-2xs">
+              <Upload size={14} className="text-emerald-600 shrink-0" />
+              <span>{uploadingChannel === "notif" ? "Mengunggah..." : "Unggah Audio"}</span>
+              <input
+                type="file"
+                accept="audio/*,.mp3,.wav,.ogg,.m4a"
+                hidden
+                disabled={uploadingChannel === "notif"}
+                onChange={(e) => handleUploadCustomSound("notif", e)}
+                data-testid="upload-sys-sound-input"
+              />
+            </label>
+          </div>
+
+          {cfg.notif_custom_file_id && (
+            <div className="flex items-center justify-between gap-2 rounded-xl border bg-surface px-3 py-2 text-xs">
+              <span className="truncate font-semibold text-ink">
+                🎵 File Audio Kustom: <b className="text-emerald-600">{cfg.notif_custom_name || cfg.notif_custom_file_id}</b>
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  updateDraft({
+                    notif_preset: "marimba",
+                    notif_custom_file_id: "",
+                    notif_custom_name: "",
+                  })
+                }
+                className="inline-flex items-center gap-1 text-rose-600 hover:underline font-semibold shrink-0 cursor-pointer"
+                data-testid="remove-sys-custom-sound-btn"
+              >
+                <Trash2 size={12} /> Hapus File
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* 3. Volume Slider */}
+        <div className="rounded-2xl border bg-surface2/60 p-3.5">
+          <div className="mb-2 flex items-center justify-between text-xs font-bold text-ink">
+            <span>Volume Suara Notifikasi</span>
+            <span className="text-brand">{cfg.volume ?? 100}%</span>
+          </div>
+          <Slider
+            min={10}
+            max={100}
+            step={5}
+            value={[Number(cfg.volume) || 100]}
+            onValueChange={([v]) => updateDraft({ volume: v })}
+            data-testid="notif-sound-volume-slider"
+          />
+        </div>
+
+        <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+          <button
+            type="button"
+            disabled={saving}
+            onClick={handleResetDefault}
+            className="btn-ghost h-9 rounded-xl border px-3.5 text-xs font-semibold cursor-pointer"
+            data-testid="reset-notif-sound-btn"
+          >
+            Reset Default
+          </button>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={handleSave}
+            className="btn-accent h-9 rounded-xl px-4 text-xs font-bold shadow-xs cursor-pointer disabled:opacity-50"
+            data-testid="save-notif-sound-btn"
+          >
+            {saving ? "Menyimpan..." : "Simpan Suara Notifikasi"}
+          </button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 function NotificationPrefs() {
-  const { prefs, savePrefs, showTopNotif } = useApp();
+  const { me, prefs, savePrefs, showTopNotif } = useApp();
   const n = prefs.notifications || {};
   const [testing, setTesting] = useState(false);
   const [perm, setPerm] = useState(() => getNotificationPermission());
@@ -240,6 +592,8 @@ function NotificationPrefs() {
           </label>
         </div>
       </Card>
+
+      {me?.role === "super_admin" && <SuperAdminNotificationSoundCard />}
 
       <Card title="Uji Coba Popup Notifikasi" testid="test-notification-card">
         <p className="text-xs text-sub mb-3.5">
@@ -714,7 +1068,7 @@ export default function Settings() {
     ["notifications", t("settings_tab_notifications", "Notifikasi & PWA")],
     ["appearance", t("settings_tab_appearance", "Tema & Tampilan")],
     ...(isAdmin ? [["workspace", t("settings_tab_workspace", "Identitas Workspace")], ["copywriting", t("settings_tab_copywriting", "Kustomisasi Teks")], ["admin", t("settings_tab_admin", "Ringkasan Admin")], ["access", t("settings_tab_access", "Tim, Divisi & Akses")], ["backup", t("settings_tab_backup", "Backup & Restore")]] : []),
-    ...(isSuperAdmin ? [["marketplace", t("settings_tab_marketplace", "Marketplace Karyawan")]] : []),
+    ...(isSuperAdmin ? [["marketplace", t("settings_tab_marketplace", "Marketplace Employee")]] : []),
     ...(isManager ? [["labels", t("settings_tab_labels", "Brand & Label")], ["statuses", t("settings_tab_statuses", "Status Tugas")]] : []),
     ["background", t("settings_tab_background", "Latar Dashboard")],
     ...(isAdmin ? [["fields", t("settings_tab_fields", "Kolom Profil")], ["stickers", t("settings_tab_stickers", "Stiker Tim")]] : [])

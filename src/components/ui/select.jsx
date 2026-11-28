@@ -13,7 +13,7 @@ const SelectGroup = SelectPrimitive.Group
 const SelectValue = SelectPrimitive.Value
 
 const UNIFIED_DROPDOWN_TRIGGER_CLASS =
-  "group inline-flex h-10 w-full items-center justify-between gap-2 whitespace-nowrap rounded-xl border border-border bg-surface2/75 px-3.5 py-0 text-xs sm:text-sm font-semibold leading-normal text-ink shadow-xs transition-colors duration-100 ease-out hover:bg-surface2 focus:outline-none focus:border-brand disabled:cursor-not-allowed disabled:opacity-50 [&>span]:inline-flex [&>span]:items-center [&>span]:truncate [&>span]:leading-normal cursor-pointer"
+  "group inline-flex h-10 w-full min-w-0 max-w-full overflow-hidden items-center justify-between gap-2 whitespace-nowrap rounded-xl border border-border bg-surface2/75 px-3.5 py-0 text-xs sm:text-sm font-semibold leading-normal text-ink shadow-xs transition-colors duration-100 ease-out hover:bg-surface2 focus:outline-none focus:border-brand disabled:cursor-not-allowed disabled:opacity-50 [&>span]:inline-flex [&>span]:min-w-0 [&>span]:flex-1 [&>span]:overflow-hidden [&>span]:items-center [&>span]:truncate [&>span]:leading-normal cursor-pointer"
 
 const SelectTrigger = React.forwardRef(({ className, children, ...props }, ref) => (
   <SelectPrimitive.Trigger
@@ -261,7 +261,7 @@ const AppSelect = React.forwardRef(
       const encoded = encode(item.value);
       return (
         <SelectItem key={`${encoded}_${idx}`} value={encoded} disabled={item.disabled}>
-          <span className="inline-flex items-center gap-2 min-w-0 leading-normal">
+          <span className="inline-flex items-center gap-2 min-w-0 max-w-full overflow-hidden leading-normal">
             {item.color && (
               <span
                 className="h-2.5 w-2.5 rounded-full shrink-0"

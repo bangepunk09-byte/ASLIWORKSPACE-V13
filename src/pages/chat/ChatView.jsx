@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import MessageItem from "./MessageItem";
 import Composer from "./Composer";
 import CreatePollDialog from "./CreatePollDialog";
+import CreateApprovalDialog from "./CreateApprovalDialog";
 import {
   CHAT_CACHE,
   clearChatCache,
@@ -84,6 +85,8 @@ function areMessagesEquivalent(a, b) {
       x.pinned !== y.pinned ||
       x.updated_at !== y.updated_at ||
       x.sticky_note?.progress !== y.sticky_note?.progress ||
+      x.form_approval?.progress !== y.form_approval?.progress ||
+      x.form_approval?.status !== y.form_approval?.status ||
       x.poll?.total_votes !== y.poll?.total_votes ||
       JSON.stringify(x.reactions || null) !== JSON.stringify(y.reactions || null)
     ) {
@@ -98,7 +101,9 @@ function areMessagesEquivalent(a, b) {
     lastA?.edited === lastB?.edited &&
     lastA?.deleted === lastB?.deleted &&
     lastA?.pinned === lastB?.pinned &&
-    lastA?.sticky_note?.progress === lastB?.sticky_note?.progress
+    lastA?.sticky_note?.progress === lastB?.sticky_note?.progress &&
+    lastA?.form_approval?.progress === lastB?.form_approval?.progress &&
+    lastA?.form_approval?.status === lastB?.form_approval?.status
   );
 }
 
@@ -208,7 +213,7 @@ function Panel({ conv, reload, onClose, onLeft }) {
                 {tr("chat_join_requests_title", "Permintaan Bergabung")} ({conv.join_requests.length})
               </p>
               {conv.join_requests.map((req) => {
-                const ru = userMap[req.user_id] || { user_id: req.user_id, name: req.name || "Karyawan" };
+                const ru = userMap[req.user_id] || { user_id: req.user_id, name: req.name || "Employee" };
                 return (
                   <div key={req.user_id} className="flex items-center justify-between gap-2 rounded-xl bg-surface p-2 border border-amber-100 dark:border-amber-900/50">
                     <button type="button" onClick={() => navigate(`/people/${req.user_id}`)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
@@ -247,7 +252,7 @@ function Panel({ conv, reload, onClose, onLeft }) {
                 {tr("chat_sent_invitations_title", "Undangan Terkirim")} ({conv.invitations.length})
               </p>
               {conv.invitations.map((inv) => {
-                const iu = userMap[inv.user_id] || { user_id: inv.user_id, name: inv.name || "Karyawan" };
+                const iu = userMap[inv.user_id] || { user_id: inv.user_id, name: inv.name || "Employee" };
                 return (
                   <div key={inv.user_id} className="flex items-center justify-between gap-2 rounded-xl bg-surface p-2 border border-sky-100 dark:border-sky-900/50">
                     <button type="button" onClick={() => navigate(`/people/${inv.user_id}`)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
@@ -489,6 +494,7 @@ export default function ChatView({ cid, initialConv = null, onChange, onRead, on
   const [panel, setPanel] = useState(window.innerWidth >= 1280);
   const [mobilePanel, setMobilePanel] = useState(false);
   const [poll, setPoll] = useState(false);
+  const [approvalOpen, setApprovalOpen] = useState(false);
   const [taskFrom, setTaskFrom] = useState(null);
   const [featureHubOpen, setFeatureHubOpen] = useState(false);
   const [search, setSearch] = useState(null);
@@ -827,7 +833,7 @@ export default function ChatView({ cid, initialConv = null, onChange, onRead, on
     // Instant client-side search first
     const localMatches = (Array.isArray(msgs) ? msgs : []).filter((m) => (m.text || "").toLowerCase().includes(qLower));
     setResults(localMatches);
-    const t = setTimeout(() => api.get(`/conversations/${cid}/messages`, { params: { q: search } }).then((r) => setResults(Array.isArray(r.data) ? r.data : [])), 20);
+    const t = setTimeout(() => api.get(`/conversations/${cid}/messages`, { params: { q: search } }).then((r) => setResults(Array.isArray(r.data) ? r.data : [])), 220);
     return () => clearTimeout(t);
   }, [search, cid]);
 
@@ -1110,7 +1116,7 @@ export default function ChatView({ cid, initialConv = null, onChange, onRead, on
                   </p>
                 ) : isCircleAssistantConv && (
                   <p className="mt-1.5 text-xs text-sub leading-relaxed">
-                    {tr("chat_circle_welcome_desc", "Tanyakan apa saja soal data live workspace: jumlah karyawan, load tim, tugas telat per divisi, proyek, feed Beranda, polling, atau ketik")} <code className="rounded bg-surface2 px-1 py-0.5">/task judul</code>.
+                    {tr("chat_circle_welcome_desc", "Tanyakan apa saja soal data live workspace: jumlah employee, load tim, tugas telat per divisi, proyek, feed Beranda, polling, atau ketik")} <code className="rounded bg-surface2 px-1 py-0.5">/task judul</code>.
                   </p>
                 )}
               </div>
@@ -1167,11 +1173,12 @@ export default function ChatView({ cid, initialConv = null, onChange, onRead, on
               </button>
             )}
           </div>
-        ) : <Composer ref={composerRef} conv={activeConv} reply={reply} onCancelReply={() => setReply(null)} onPoll={() => setPoll(true)} onSent={handleSent} isCircleConv={isCircleAssistantConv} onOpenFeatureHub={() => setFeatureHubOpen(true)} />}
+        ) : <Composer ref={composerRef} conv={activeConv} reply={reply} onCancelReply={() => setReply(null)} onPoll={() => setPoll(true)} onApproval={() => setApprovalOpen(true)} onSent={handleSent} isCircleConv={isCircleAssistantConv} onOpenFeatureHub={() => setFeatureHubOpen(true)} />}
       </div>
       {panel && <aside className="hidden w-[320px] shrink-0 border-l bg-surface xl:block"><Panel conv={activeConv} reload={() => { loadConv(); onChange(); }} onClose={() => setPanel(false)} onLeft={onLeft} /></aside>}
       <Sheet open={mobilePanel} onOpenChange={setMobilePanel}><SheetContent className="w-full bg-surface p-0 sm:max-w-sm"><SheetHeader className="sr-only"><SheetTitle>{tr("chat_detail_title", "Detail")}</SheetTitle></SheetHeader><Panel conv={activeConv} reload={() => { loadConv(); onChange(); }} onClose={() => setMobilePanel(false)} onLeft={onLeft} /></SheetContent></Sheet>
       <CreatePollDialog open={poll} onOpenChange={setPoll} conversationId={cid} onCreated={handleSent} />
+      <CreateApprovalDialog open={approvalOpen} onOpenChange={setApprovalOpen} conv={activeConv} onCreated={handleSent} />
       <TaskCreate open={!!taskFrom} onOpenChange={(v) => !v && setTaskFrom(null)} preset={taskFrom ? { title: (taskFrom.text || "Tugas dari pesan").slice(0, 120), description: `<p>${(taskFrom.text || "").replace(/</g, "&lt;")}</p><p><i>Dari obrolan: ${title}</i></p>`, conversation_id: cid, message_id: taskFrom.id } : null} onCreated={(t) => { setTaskFrom(null); api.post(`/tasks/${t.id}/share`, { conversation_id: cid }).catch(() => {}); loadConv(); }} />
       <CircleFeatureHub
         open={featureHubOpen}

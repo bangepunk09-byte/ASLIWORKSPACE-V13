@@ -372,7 +372,7 @@ export function ensureMarketplaceData(db: Record<string, any>) {
         user_id: "user_admin1",
         name: fallbackName,
         department: fallbackDept,
-        job_title: "Karyawan",
+        job_title: "Employee",
       };
     };
 
@@ -540,7 +540,7 @@ export function registerMarketplaceRoutes(app: Express, deps: MarketplaceDeps) {
             name: seller.name,
             avatar: seller.avatar || seller.picture || "",
             department: seller.department || item.seller_department || "Workspace",
-            job_title: seller.job_title || "Karyawan",
+            job_title: seller.job_title || "Employee",
             online: Boolean(seller.online),
           }
         : {
@@ -548,7 +548,7 @@ export function registerMarketplaceRoutes(app: Express, deps: MarketplaceDeps) {
             name: item.seller_name || "Rekan Kerja",
             avatar: "",
             department: item.seller_department || "Workspace",
-            job_title: "Karyawan",
+            job_title: "Employee",
             online: false,
           },
     };
@@ -682,7 +682,7 @@ export function registerMarketplaceRoutes(app: Express, deps: MarketplaceDeps) {
         ...gatewayMeta,
         gateway_enabled: false,
         method,
-        channel: "Potong Gaji / Kasbon Karyawan",
+        channel: "Potong Gaji / Kasbon Employee",
         reference_code: `PAYROLL-${orderNumber}`,
         expires_at: expiresAt,
         instruction: "Tagihan akan dijadwalkan otomatis ke pemotongan payroll siklus bulan berjalan setelah konfirmasi.",
@@ -717,8 +717,8 @@ export function registerMarketplaceRoutes(app: Express, deps: MarketplaceDeps) {
           gross_amount: Math.round(Number(order.total_amount || 0)),
         },
         customer_details: {
-          first_name: buyer?.name || order.buyer_name || "Karyawan",
-          email: buyer?.email || "karyawan@workspace.local",
+          first_name: buyer?.name || order.buyer_name || "Employee",
+          email: buyer?.email || "employee@workspace.local",
           phone: order.buyer_phone || "",
         },
         item_details: (order.items || []).map((it: any) => ({
@@ -911,7 +911,7 @@ export function registerMarketplaceRoutes(app: Express, deps: MarketplaceDeps) {
     db.activity.unshift({
       id: `act_mkt_${Date.now()}`,
       user_id: reqUser.user_id,
-      action: `menambahkan produk "${listing.title}" di Marketplace Karyawan`,
+      action: `menambahkan produk "${listing.title}" di Marketplace Employee`,
       created_at: now,
     });
     saveDbToFile();
@@ -1652,7 +1652,7 @@ export function registerMarketplaceRoutes(app: Express, deps: MarketplaceDeps) {
         status: "paid_processing",
         label:
           order.payment_method === "payroll"
-            ? "Otorisasi potong gaji karyawan dikonfirmasi · Penjual menyiapkan pesanan"
+            ? "Otorisasi potong gaji employee dikonfirmasi · Penjual menyiapkan pesanan"
             : order.payment_info?.gateway_enabled
             ? `Pembayaran ${order.payment_channel} terverifikasi otomatis via ${activeGatewayLabel} · Penjual menyiapkan pesanan`
             : `Pembayaran ${order.payment_channel} berhasil terverifikasi · Penjual menyiapkan pesanan`,

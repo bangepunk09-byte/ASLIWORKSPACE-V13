@@ -27,15 +27,8 @@ import { Avatar, PageHeader, GhostButton } from "../components/common";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { AppSelect } from "../components/ui/select";
 
-export const INITIAL_UNITS = [
-  { id: "unit_mgmt", name: "Management", division: "Management", description: "Board of Directors & Executive Leadership", level: "Executive", color: "#FF5364", head_id: "user_superadmin_saeful", parent_id: null, order: 0 },
-  { id: "unit_mkt", name: "Marketing", division: "Marketing", description: "Brand Marketing, Campaign & Social Media Growth", level: "Division", color: "#10B981", head_id: null, parent_id: "unit_mgmt", order: 1 },
-  { id: "unit_sales", name: "Sales", division: "Sales", description: "Enterprise Sales, Partnership & Business Development", level: "Division", color: "#F59E0B", head_id: null, parent_id: "unit_mgmt", order: 2 },
-  { id: "unit_it", name: "IT", division: "IT", description: "IT Infrastructure, Security & Internal Support", level: "Division", color: "#06B6D4", head_id: "user_admin1", parent_id: "unit_mgmt", order: 3 },
-  { id: "unit_fin", name: "Finance", division: "Finance", description: "Financial Planning, Accounting & Treasury", level: "Division", color: "#14B8A6", head_id: null, parent_id: "unit_mgmt", order: 4 },
-  { id: "unit_legal", name: "Legal", division: "Legal", description: "Corporate Legal, Compliance & Contracts", level: "Division", color: "#6366F1", head_id: null, parent_id: "unit_mgmt", order: 5 },
-  { id: "unit_hrga", name: "HRGA", division: "HRGA", description: "Human Resources, Talent & General Affairs", level: "Division", color: "#F97316", head_id: null, parent_id: "unit_mgmt", order: 6 }
-];
+import { INITIAL_UNITS, ORG_UNITS_CACHE_BOX, hydrateOrgUnitsCache } from "../lib/bootstrapCaches";
+export { INITIAL_UNITS, hydrateOrgUnitsCache };
 
 const UNIT_COLORS = [
   "#FF5364",
@@ -51,14 +44,7 @@ const UNIT_COLORS = [
   "#64748B"
 ];
 
-let ORG_UNITS_CACHE = INITIAL_UNITS;
-try {
-  const saved = localStorage.getItem("circle_org_units_cache");
-  if (saved) {
-    const parsed = JSON.parse(saved);
-    if (Array.isArray(parsed) && parsed.length > 0) ORG_UNITS_CACHE = parsed;
-  }
-} catch {}
+let ORG_UNITS_CACHE = ORG_UNITS_CACHE_BOX.units || INITIAL_UNITS;
 
 function UnitDialog({ state, setState, units, levels, humanUsers, divisions, onDone }) {
   const { t: tr } = useApp();
@@ -646,7 +632,7 @@ function Table({ units, humanUsers, divisions, reload, canMove }) {
         org_unit_id: payload.org_unit_id || null,
         manager_id: payload.manager_id || null
       });
-      toast.success("Data organisasi karyawan berhasil disimpan!");
+      toast.success("Data organisasi employee berhasil disimpan!");
       reload();
     } catch (e) {
       toast.error(errMsg(e));
@@ -668,7 +654,7 @@ function Table({ units, humanUsers, divisions, reload, canMove }) {
       <table className="w-full min-w-[820px] text-sm">
         <thead>
           <tr className="border-b text-left text-xs font-bold uppercase tracking-wider text-sub">
-            <th className="p-3.5">{tr("org_table_col_employee", "Karyawan")}</th>
+            <th className="p-3.5">{tr("org_table_col_employee", "Employee")}</th>
             <th className="p-3.5">{tr("org_table_col_job", "Jabatan")}</th>
             <th className="p-3.5">{tr("org_table_col_division", "Divisi")}</th>
             <th className="p-3.5">{tr("org_table_col_unit", "Unit Organisasi")}</th>
@@ -777,8 +763,14 @@ function Table({ units, humanUsers, divisions, reload, canMove }) {
 }
 
 export default function Org() {
-  const { users, ws, isAdmin, isManager, reloadUsers, reloadWs, subscribe, t } = useApp();
-  const [units, setUnits] = useState(ORG_UNITS_CACHE);
+  const { users, ws, orgUnits: ctxOrgUnits, isAdmin, isManager, reloadUsers, reloadWs, subscribe, t } = useApp();
+  const [units, setUnits] = useState(() => {
+    if (Array.isArray(ctxOrgUnits) && ctxOrgUnits.length > 0) {
+      ORG_UNITS_CACHE = ctxOrgUnits;
+      return ctxOrgUnits;
+    }
+    return ORG_UNITS_CACHE;
+  });
   const [view, setView] = useState("chart");
   const [q, setQ] = useState("");
   const [dlg, setDlg] = useState(null);
@@ -790,6 +782,13 @@ export default function Org() {
     () => (users || []).filter((u) => !u.is_bot && u.role !== "assistant" && u.user_id !== "user_circle_assistant"),
     [users]
   );
+
+  useEffect(() => {
+    if (Array.isArray(ctxOrgUnits) && ctxOrgUnits.length > 0) {
+      ORG_UNITS_CACHE = ctxOrgUnits;
+      setUnits(ctxOrgUnits);
+    }
+  }, [ctxOrgUnits]);
 
   const load = () =>
     api
@@ -806,8 +805,10 @@ export default function Org() {
       .catch(() => {});
 
   useEffect(() => {
-    load();
-  }, []);
+    if (!Array.isArray(ctxOrgUnits) || ctxOrgUnits.length === 0) {
+      load();
+    }
+  }, [ctxOrgUnits]);
 
   useEffect(() => {
     return subscribe((evt) => {

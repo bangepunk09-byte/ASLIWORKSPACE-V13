@@ -50,6 +50,71 @@ export function isUserAssignedToTask(t: any, uid: string): boolean {
   return (Array.isArray(t.assignee_ids) && t.assignee_ids.includes(uid)) || t.assignee_id === uid;
 }
 
+export function computeTaskProgressPercent(t: any): number {
+  if (!t) return 0;
+  const isDone = t.status === "done" || Boolean(t.archived);
+  const approvedBy = t.approvals?.approved_by || t.approval?.approved_by || [];
+  const approvalCount = Array.isArray(approvedBy) ? approvedBy.length : 0;
+  if (isDone || approvalCount >= 2) return 100;
+  const approvalPct = approvalCount === 1 ? 50 : 0;
+  const cps = Array.isArray(t.checkpoints) ? t.checkpoints : [];
+  if (cps.length > 0) {
+    if (typeof t.progress === "number" && Number.isFinite(t.progress)) {
+      return Math.min(100, Math.max(0, Math.round(t.progress)));
+    }
+    const doneCp = cps.filter((c: any) => c?.done || c?.completed || c?.status === "done").length;
+    return Math.min(100, Math.max(0, Math.round((doneCp / cps.length) * 100)));
+  }
+  const explicitProgress = typeof t.progress === "number" && Number.isFinite(t.progress) ? t.progress : null;
+  if (explicitProgress !== null) {
+    return Math.min(100, Math.max(0, Math.round(Math.max(explicitProgress, approvalPct))));
+  }
+  const st = String(t.status || "").toLowerCase();
+  if (st === "in_review" || st === "review") return Math.max(80, approvalPct);
+  if (st === "in_progress" || st === "doing") return Math.max(40, approvalPct);
+  return approvalPct;
+}
+
+export interface AssistantReportItem {
+  id: string;
+  number_str: string;
+  title: string;
+  status: string;
+  priority: string;
+  progress: number;
+  board_id: string | null;
+  board_name: string;
+  assignee_ids: string[];
+  assignee_names: string[];
+  deadline: string | null;
+  deadline_wib: string;
+  is_done: boolean;
+  is_overdue: boolean;
+  is_under_6h: boolean;
+  is_due_today: boolean;
+  is_due_tomorrow: boolean;
+  late_duration: string | null;
+}
+
+export interface AssistantReportPayload {
+  kind: "task_report";
+  title: string;
+  subtitle?: string;
+  load_status?: "optimal" | "stabil" | "pressure" | null;
+  load_label?: string | null;
+  summary: {
+    total: number;
+    done: number;
+    active: number;
+    overdue: number;
+    due_soon: number;
+    progress_percent: number;
+    progress_mode: "completion" | "average";
+  };
+  items: AssistantReportItem[];
+  total_items: number;
+}
+
 export interface PersonWorkload {
   user_id: string;
   name: string;
@@ -175,7 +240,7 @@ export function computeWorkspaceWorkload(
       user_id: u.user_id,
       name: u.name || u.email || u.user_id,
       department: u.department || "Umum",
-      job_title: u.job_title || (u.role === "super_admin" ? "Super Administrator" : "Karyawan"),
+      job_title: u.job_title || (u.role === "super_admin" ? "Super Administrator" : "Employee"),
       role: u.role || "member",
       online: Boolean(u.online),
       account_status: u.status || "active",
@@ -261,6 +326,7 @@ export function buildWorkspaceIntelligence(db: Record<string, any>, senderUser?:
       title: t.title || "Tanpa Judul",
       status: t.status || "todo",
       priority: t.priority || "medium",
+      progress: computeTaskProgressPercent(t),
       archived: Boolean(t.archived),
       is_done: isDone,
       board_id: t.board_id || null,
@@ -704,8 +770,8 @@ function formatFullOverview(intel: ReturnType<typeof buildWorkspaceIntelligence>
   const sections: string[] = [
     `📊 **Ringkasan Lengkap Workspace (${intel.generated_at_wib})**`,
     ``,
-    `👥 **Karyawan:** **${intel.employees.total} orang** (${intel.employees.active} aktif, ${intel.employees.online} sedang online)`,
-    `⚡ **Beban Kerja Karyawan:** ${intel.workload_summary.optimal_count} Optimal · ${intel.workload_summary.stabil_count} Stabil · ${intel.workload_summary.pressure_count} Under Pressure`,
+    `👥 **Employee:** **${intel.employees.total} orang** (${intel.employees.active} aktif, ${intel.employees.online} sedang online)`,
+    `⚡ **Beban Kerja Employee:** ${intel.workload_summary.optimal_count} Optimal · ${intel.workload_summary.stabil_count} Stabil · ${intel.workload_summary.pressure_count} Under Pressure`,
     `📌 **Tugas (Task):** **${intel.tasks.total} total** (${intel.tasks.active} aktif, ${intel.tasks.done} selesai, **${intel.tasks.overdue_count} telat/overdue**, ${intel.tasks.under_6h_count} deadline <6 jam)`,
     `🗂️ **Proyek & Board:** ${intel.projects.length} proyek · ${intel.boards.length} board divisi`,
     `📰 **Beranda & Chat:** ${intel.feed.posts_count} postingan (${intel.feed.comments_count} komentar) · ${intel.chat.groups_count} grup chat · ${intel.polls.length} polling`,
@@ -744,7 +810,7 @@ export function answerWorkspaceQuestionDeterministically(
   const hasOverdueKw = /(telat|terlambat|terlewat|overdue|molor|lewat batas|lewat deadline|lewat tenggat)/i.test(norm);
   const hasDeadlineKw = /(deadline|tenggat|jatuh tempo|6 jam|hari ini|besok|mendesak|urgent deadline)/i.test(norm);
   const hasLoadKw = /(\bload\b|beban|kapasitas|workload|optimal|stabil|pressure|under pressure|sibuk|padat|luang|santai|kosong|overload|performa tim|kondisi tim)/i.test(norm);
-  const hasEmployeeKw = /(karyawan|pegawai|karyawati|staff|staf|\bmbr\b|member|anggota|orang|personil|sdm|headcount|siapa saja|siapa aja|online|hadir)/i.test(norm);
+  const hasEmployeeKw = /(employee|karyawan|pegawai|karyawati|staff|staf|\bmbr\b|member|anggota|orang|personil|sdm|headcount|siapa saja|siapa aja|online|hadir)/i.test(norm);
   const hasTaskKw = /(task|tugas|pekerjaan|kerjaan|todo|progress|review|done|selesai|prioritas|urgent|high|medium|low|kanban)/i.test(norm);
   const hasOverviewKw = /(ringkasan|overview|summary|laporan|briefing|semua data|rekap|statistik|dashboard|apa kabar workspace|kondisi workspace)/i.test(norm);
   const hasHelpKw = /^(halo|hai|hi|hello|pagi|siang|sore|malam|tes|test|p)\b|(\bbantuan\b|\bhelp\b|bisa apa|bisa tanya|fitur|perintah|panduan|menu)/i.test(norm);
@@ -771,7 +837,7 @@ export function answerWorkspaceQuestionDeterministically(
 
   const answerBlocks: string[] = [];
 
-  // 1. Specific Division / Team queries (e.g. "load team marketing", "tugas telat team marketing", "karyawan marketing")
+  // 1. Specific Division / Team queries (e.g. "load team marketing", "tugas telat team marketing", "employee marketing")
   if (targetDiv) {
     const matchedMultipleSpecific = (hasEmployeeKw ? 1 : 0) + (hasLoadKw ? 1 : 0) + (hasOverdueKw ? 1 : 0);
 
@@ -803,7 +869,7 @@ export function answerWorkspaceQuestionDeterministically(
     if (hasEmployeeKw) {
       const empLines = targetDiv.members.length > 0
         ? targetDiv.members.map((m) => `• **${m.name}** — ${m.job_title} (${m.online ? "Online" : "Offline"} · Load: ${m.status_label}, ${m.active} tugas aktif)`).join("\n")
-        : "• Belum ada karyawan di divisi ini.";
+        : "• Belum ada employee di divisi ini.";
       answerBlocks.push(`👥 **Anggota Tim ${targetDiv.name}: ${targetDiv.member_count} orang** (${targetDiv.online_count} online)\n${empLines}`);
     }
 
@@ -860,13 +926,13 @@ export function answerWorkspaceQuestionDeterministically(
     const emptyDepts = intel.divisions.filter((d) => d.member_count === 0).map((d) => d.name);
 
     const empText = [
-      `👥 **Data Karyawan ${intel.workspace_name}**`,
-      `• Total Karyawan: **${intel.employees.total} orang** (${intel.employees.active} aktif, ${intel.employees.online} sedang online)`,
+      `👥 **Data Employee ${intel.workspace_name}**`,
+      `• Total Employee: **${intel.employees.total} orang** (${intel.employees.active} aktif, ${intel.employees.online} sedang online)`,
       ...(intel.employees.inactive > 0 ? [`• Nonaktif/Suspended: ${intel.employees.inactive} orang`] : []),
       ...(intel.access_requests.pending_count > 0 ? [`• Menunggu Approval Akses: ${intel.access_requests.pending_count} orang`] : []),
       ``,
       `🏢 **Sebaran per Divisi:**`,
-      ...(byDeptLines.length ? byDeptLines : ["• Belum ada karyawan terdaftar."]),
+      ...(byDeptLines.length ? byDeptLines : ["• Belum ada employee terdaftar."]),
       ...(emptyDepts.length ? [`• _Divisi belum memiliki anggota: ${emptyDepts.join(", ")}_`] : [])
     ].join("\n");
     answerBlocks.push(empText);
@@ -913,13 +979,13 @@ export function answerWorkspaceQuestionDeterministically(
 
     answerBlocks.push([
       `📊 **Analisa Load / Beban Kerja Workspace**`,
-      `• Ringkasan Karyawan: **${intel.workload_summary.optimal_count} Optimal** · **${intel.workload_summary.stabil_count} Stabil** · **${intel.workload_summary.pressure_count} Under Pressure**`,
+      `• Ringkasan Employee: **${intel.workload_summary.optimal_count} Optimal** · **${intel.workload_summary.stabil_count} Stabil** · **${intel.workload_summary.pressure_count} Under Pressure**`,
       `• Total Tugas Aktif Berjalan: **${intel.workload_summary.total_active_tasks} tugas**`,
       ``,
       `🏢 **Load per Divisi:**`,
       ...divLoadLines,
       ``,
-      `👤 **Load per Karyawan${wantsBusiest ? " (Tertinggi / Sibuk)" : wantsFree ? " (Kapasitas Luang)" : ""}:**`,
+      `👤 **Load per Employee${wantsBusiest ? " (Tertinggi / Sibuk)" : wantsFree ? " (Kapasitas Luang)" : ""}:**`,
       ...peopleLoadLines
     ].join("\n"));
   }
@@ -1089,7 +1155,7 @@ export function answerWorkspaceQuestionDeterministically(
     ``,
     formatFullOverview(intel),
     ``,
-    `💡 _Tips: Anda bisa tanya lebih spesifik, misalnya "Berapa jumlah karyawan?", "Berapa load team Marketing?", "Tugas yang telat di IT?", atau "Feed & polling terbaru"._`
+    `💡 _Tips: Anda bisa tanya lebih spesifik, misalnya "Berapa jumlah employee?", "Berapa load team Marketing?", "Tugas yang telat di IT?", atau "Feed & polling terbaru"._`
   ].join("\n");
 }
 
@@ -1106,12 +1172,236 @@ function getGeminiClient(): GoogleGenAI | null {
   });
 }
 
+function toReportItem(t: any): AssistantReportItem {
+  return {
+    id: String(t.id || ""),
+    number_str: String(t.number_str || t.id || "TSK"),
+    title: String(t.title || "Tanpa Judul"),
+    status: String(t.status || "todo"),
+    priority: String(t.priority || "medium"),
+    progress: typeof t.progress === "number" ? Math.min(100, Math.max(0, Math.round(t.progress))) : computeTaskProgressPercent(t),
+    board_id: t.board_id || null,
+    board_name: String(t.board_name || "Tanpa Board"),
+    assignee_ids: Array.isArray(t.assignee_ids) ? t.assignee_ids.slice(0, 8) : [],
+    assignee_names: Array.isArray(t.assignee_names) ? t.assignee_names.slice(0, 8) : [],
+    deadline: t.deadline || null,
+    deadline_wib: String(t.deadline_wib || "-"),
+    is_done: Boolean(t.is_done),
+    is_overdue: Boolean(t.is_overdue),
+    is_under_6h: Boolean(t.is_under_6h),
+    is_due_today: Boolean(t.is_due_today),
+    is_due_tomorrow: Boolean(t.is_due_tomorrow),
+    late_duration: t.late_duration || null
+  };
+}
+
+function buildTaskReportPayload(params: {
+  title: string;
+  subtitle?: string;
+  loadStatus?: "optimal" | "stabil" | "pressure" | null;
+  loadLabel?: string | null;
+  tasks: any[];
+  doneCount?: number;
+  totalCount?: number;
+  maxItems?: number;
+}): AssistantReportPayload {
+  const { title, subtitle, loadStatus = null, loadLabel = null, tasks, maxItems = 25 } = params;
+  const list = Array.isArray(tasks) ? tasks : [];
+  const activeCount = list.filter((t) => !t.is_done).length;
+  const overdueCount = list.filter((t) => t.is_overdue).length;
+  const dueSoonCount = list.filter((t) => !t.is_overdue && (t.is_under_6h || t.is_due_today || t.is_due_tomorrow)).length;
+  const doneCount = typeof params.doneCount === "number" ? params.doneCount : list.filter((t) => t.is_done).length;
+  const totalCount = typeof params.totalCount === "number" ? params.totalCount : doneCount + activeCount;
+
+  let progressPercent = 0;
+  let progressMode: "completion" | "average" = "completion";
+  if (totalCount > 0 && doneCount > 0) {
+    progressPercent = Math.min(100, Math.max(0, Math.round((doneCount / totalCount) * 100)));
+    progressMode = "completion";
+  } else if (list.length > 0) {
+    const sum = list.reduce((acc, t) => acc + (typeof t.progress === "number" ? t.progress : computeTaskProgressPercent(t)), 0);
+    progressPercent = Math.min(100, Math.max(0, Math.round(sum / list.length)));
+    progressMode = "average";
+  } else if (totalCount > 0 && activeCount === 0) {
+    progressPercent = 100;
+    progressMode = "completion";
+  }
+
+  return {
+    kind: "task_report",
+    title,
+    subtitle,
+    load_status: loadStatus,
+    load_label: loadLabel,
+    summary: {
+      total: totalCount,
+      done: doneCount,
+      active: activeCount,
+      overdue: overdueCount,
+      due_soon: dueSoonCount,
+      progress_percent: progressPercent,
+      progress_mode: progressMode
+    },
+    items: list.slice(0, maxItems).map(toReportItem),
+    total_items: list.length
+  };
+}
+
+function extractStructuredTaskReport(
+  question: string,
+  intel: ReturnType<typeof buildWorkspaceIntelligence>
+): AssistantReportPayload | null {
+  const norm = normalizeText(question);
+  if (!norm) return null;
+
+  // Do not turn general creative/copywriting/brainstorming prompts into task cards
+  const isCreativeOrFreeform = /(buatin|buatkan|bikin|tulis|caption|strategi|ide|brainstorm|sop|translate|terjemah|ringkas|rangkum|email|surat|coding|script|hitung|kalkulasi)/i.test(norm);
+  if (isCreativeOrFreeform) return null;
+
+  const targetDiv = findMentionedDivision(norm, intel);
+  const targetPerson = findMentionedPerson(norm, intel);
+  const targetLabel = findMentionedLabel(norm, intel);
+  const targetProject = findMentionedProject(norm, intel);
+  const asksAboutMe = /\b(saya|aku|punyaku|milikku|taskku|tugasku|gue|gw)\b/i.test(norm);
+
+  const hasOverdueKw = /(telat|terlambat|terlewat|overdue|molor|lewat batas|lewat deadline|lewat tenggat)/i.test(norm);
+  const hasDeadlineKw = /(deadline|tenggat|jatuh tempo|6 jam|hari ini|besok|mendesak|urgent deadline)/i.test(norm);
+  const hasLoadKw = /(\bload\b|beban|kapasitas|workload|optimal|stabil|pressure|under pressure|sibuk|padat|luang|santai|kosong|overload|performa tim|kondisi tim)/i.test(norm);
+  const hasEmployeeKw = /(employee|karyawan|pegawai|karyawati|staff|staf|\bmbr\b|member|anggota|orang|personil|sdm|headcount|siapa saja|siapa aja|online|hadir)/i.test(norm);
+  const hasTaskKw = /(task|tugas|pekerjaan|kerjaan|todo|progress|progres|review|done|selesai|prioritas|urgent|high|medium|low|kanban)/i.test(norm);
+
+  // 1. Specific Person (or "tugas saya")
+  if ((targetPerson || (asksAboutMe && intel.my_summary)) && (hasTaskKw || hasOverdueKw || hasDeadlineKw || hasLoadKw)) {
+    const person = targetPerson || intel.my_summary?.workload;
+    if (person) {
+      const personTasks = intel.tasks.all_active.filter((t) => t.assignee_ids.includes(person.user_id));
+      const personOverdue = intel.tasks.overdue_list.filter((t) => t.assignee_ids.includes(person.user_id));
+      if (hasOverdueKw) {
+        return buildTaskReportPayload({
+          title: `Tugas Terlambat · ${person.name}`,
+          subtitle: [person.department, person.job_title].filter(Boolean).join(" · "),
+          loadStatus: person.status,
+          loadLabel: person.status_label,
+          tasks: personOverdue,
+          doneCount: 0,
+          totalCount: personOverdue.length
+        });
+      }
+      return buildTaskReportPayload({
+        title: `Tugas Aktif ${person.name}`,
+        subtitle: [person.department, person.job_title].filter(Boolean).join(" · "),
+        loadStatus: person.status,
+        loadLabel: person.status_label,
+        tasks: personTasks,
+        doneCount: person.done,
+        totalCount: person.done + personTasks.length
+      });
+    }
+  }
+
+  // 2. Specific Division task / overdue / deadline report
+  if (targetDiv && !hasEmployeeKw) {
+    if (hasOverdueKw) {
+      return buildTaskReportPayload({
+        title: `Tugas Terlambat · Tim ${targetDiv.name}`,
+        loadStatus: targetDiv.load_status,
+        loadLabel: targetDiv.load_status_label,
+        tasks: targetDiv.overdue_tasks,
+        doneCount: 0,
+        totalCount: targetDiv.overdue_tasks.length
+      });
+    }
+    if (hasDeadlineKw) {
+      const urgentDiv = [...targetDiv.overdue_tasks, ...targetDiv.under_6h_tasks, ...targetDiv.due_today_tasks, ...targetDiv.due_tomorrow_tasks];
+      const uniqueUrgent = Array.from(new Map(urgentDiv.map((t) => [t.id, t])).values());
+      return buildTaskReportPayload({
+        title: `Deadline Mendesak · Tim ${targetDiv.name}`,
+        loadStatus: targetDiv.load_status,
+        loadLabel: targetDiv.load_status_label,
+        tasks: uniqueUrgent,
+        doneCount: 0,
+        totalCount: uniqueUrgent.length
+      });
+    }
+    if (hasTaskKw && !hasLoadKw) {
+      return buildTaskReportPayload({
+        title: `Tugas Aktif · Tim ${targetDiv.name}`,
+        loadStatus: targetDiv.load_status,
+        loadLabel: targetDiv.load_status_label,
+        tasks: targetDiv.active_tasks,
+        doneCount: targetDiv.done_tasks_count,
+        totalCount: targetDiv.total_tasks
+      });
+    }
+  }
+
+  // 3. Specific Project
+  if (targetProject) {
+    const pTasks = intel.tasks.all_active.filter((t) => t.project_id === targetProject.id);
+    return buildTaskReportPayload({
+      title: `Progres Proyek · ${targetProject.name}`,
+      subtitle: `Status: ${targetProject.status}`,
+      tasks: pTasks,
+      doneCount: targetProject.done_tasks,
+      totalCount: targetProject.total_tasks
+    });
+  }
+
+  // 4. Specific Brand / Label
+  if (targetLabel) {
+    const labelTasks = intel.tasks.all_active.filter((t) => t.label_names.includes(targetLabel.name));
+    return buildTaskReportPayload({
+      title: `Tugas Label · ${targetLabel.name}`,
+      tasks: labelTasks,
+      doneCount: targetLabel.done,
+      totalCount: targetLabel.total
+    });
+  }
+
+  // 5. Workspace-wide overdue tasks
+  if (hasOverdueKw && !hasEmployeeKw && !hasLoadKw) {
+    return buildTaskReportPayload({
+      title: `Laporan Tugas Terlambat`,
+      subtitle: intel.workspace_name,
+      tasks: intel.tasks.overdue_list,
+      doneCount: 0,
+      totalCount: intel.tasks.overdue_count
+    });
+  }
+
+  // 6. Workspace-wide urgent deadlines
+  if (hasDeadlineKw && !hasOverdueKw && !hasEmployeeKw && !hasLoadKw) {
+    const urgentAll = [...intel.tasks.under_6h_list, ...intel.tasks.due_today_list, ...intel.tasks.due_tomorrow_list];
+    const uniqueUrgent = Array.from(new Map(urgentAll.map((t) => [t.id, t])).values());
+    return buildTaskReportPayload({
+      title: `Monitoring Deadline Terdekat`,
+      subtitle: intel.workspace_name,
+      tasks: uniqueUrgent,
+      doneCount: 0,
+      totalCount: uniqueUrgent.length
+    });
+  }
+
+  // 7. General task breakdown
+  if (hasTaskKw && !hasEmployeeKw && !hasLoadKw && !hasOverdueKw && !hasDeadlineKw) {
+    return buildTaskReportPayload({
+      title: `Ringkasan Tugas Workspace`,
+      subtitle: intel.workspace_name,
+      tasks: intel.tasks.all_active,
+      doneCount: intel.tasks.done,
+      totalCount: intel.tasks.total
+    });
+  }
+
+  return null;
+}
+
 export async function generateCircleBotReply(params: {
   db: Record<string, any>;
   senderUser: any;
   question: string;
   historyMessages?: any[];
-}): Promise<{ text: string; createdTask?: any; effects?: CircleReplyEffects }> {
+}): Promise<{ text: string; createdTask?: any; effects?: CircleReplyEffects; report?: AssistantReportPayload | null }> {
   const { db, senderUser, question, historyMessages = [] } = params;
   const trimmed = (question || "").trim();
   const now = new Date();
@@ -1137,7 +1427,14 @@ export async function generateCircleBotReply(params: {
     };
   }
 
+  const structuredReport = extractStructuredTaskReport(trimmed, intel);
   const deterministicReply = answerWorkspaceQuestionDeterministically(trimmed, db, senderUser, now);
+
+  // If this is a structured task report query, return instant deterministic + structured payload
+  // so it renders immediately in the interactive Executive Summary + Compact List card without AI latency.
+  if (structuredReport) {
+    return { text: deterministicReply, report: structuredReport };
+  }
 
   // If GEMINI_API_KEY is available, use gemini-4-hydrogen grounded strictly on real live snapshot
   if (!ai) {
@@ -1154,13 +1451,13 @@ export async function generateCircleBotReply(params: {
     const systemInstruction = [
       `Kamu adalah Asli (ditenagai oleh Google Gemini AI), asisten AI eksekutif, analis data, & partner brainstorming untuk workspace perusahaan "${intel.workspace_name}".`,
       `KEMAMPUAN UTAMAMU:`,
-      `A) ANALISA DATA WORKSPACE LIVE: Menjawab pertanyaan tentang data internal workspace (karyawan, divisi, beban kerja/load Optimal/Stabil/Under Pressure, tugas telat/overdue, ketepatan waktu/SLA, deadline, proyek, board, feed Beranda, chat, polling, meeting, drive, permintaan akses, aktivitas, KPI) secara AKURAT, JELAS, dan INFORMATIF.`,
+      `A) ANALISA DATA WORKSPACE LIVE: Menjawab pertanyaan tentang data internal workspace (employee, divisi, beban kerja/load Optimal/Stabil/Under Pressure, tugas telat/overdue, ketepatan waktu/SLA, deadline, proyek, board, feed Beranda, chat, polling, meeting, drive, permintaan akses, aktivitas, KPI) secara AKURAT, JELAS, dan INFORMATIF.`,
       `B) ASISTEN AI GEMINI SERBAGUNA: Membantu pengguna untuk brainstorming ide kreatif/kampanye, menyusun strategi bisnis/marketing, copywriting, membuat SOP, menganalisa masalah, coding/teknis, menerjemahkan bahasa, merangkum teks, maupun menjawab pertanyaan pengetahuan umum dengan cerdas dan solutif.`,
       ``,
       `ATURAN KERAS (WAJIB DIPATUHI):`,
       `1. Untuk setiap pertanyaan mengenai data internal workspace, HANYA gunakan angka, nama orang, nama divisi, judul tugas (TSK-xxx), dan status yang ADA di dalam DATA LIVE WORKSPACE JSON di bawah. DILARANG KERAS mengarang data internal. Jika nilainya 0, nyatakan 0 secara jujur.`,
       `2. Untuk pertanyaan umum, kreatif, brainstorming, copywriting, strategi, atau diskusi bebas di luar data internal, jawablah secara cerdas, mendalam, terstruktur, dan solutif layaknya Gemini AI profesional.`,
-      `3. Definisi Status Load Tim & Karyawan di workspace ini:`,
+      `3. Definisi Status Load Tim & Employee di workspace ini:`,
       `   - Optimal: Tidak ada tugas telat/deadline < 6 jam, dan beban tugas masih ringan (atau deadline >= 2 hari).`,
       `   - Stabil: Ada >= 3 tugas deadline <= besok, atau ada deadline hari ini (>= 6 jam), atau >= 5 tugas aktif dengan deadline >= 2 hari.`,
       `   - Under Pressure: Ada tugas telat (overdue > 0), atau deadline < 6 jam, atau >= 5 tugas deadline <= besok, atau >= 8 tugas aktif.`,

@@ -10,6 +10,8 @@ import { Avatar, StatusBadge, PriorityBadge, fmtTime, ImageLightbox, VerifiedBad
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../../components/ui/dropdown-menu";
 import { AppSelect } from "../../components/ui/select";
 import PollCard from "./PollCard";
+import ApprovalRequestCard from "./ApprovalRequestCard";
+import AssistantReportCard, { detectAssistantReport } from "./AssistantReportCard";
 import { StickerTile } from "./Composer";
 
 const STICKY_THEMES = {
@@ -448,7 +450,7 @@ const AccessRequestCard = memo(function AccessRequestCard({ m }) {
         department: req.department
       });
       if (isDeleteReq) {
-        toast.success(`Karyawan ${req.name} berhasil dihapus.`);
+        toast.success(`Employee ${req.name} berhasil dihapus.`);
       } else if (isPasswordReset) {
         toast.success(`Reset password untuk ${req.name} telah di-approve!`);
       } else {
@@ -501,7 +503,7 @@ const AccessRequestCard = memo(function AccessRequestCard({ m }) {
           </div>
           <div className="min-w-0 flex-1">
             <h4 className="text-xs font-bold text-ink leading-tight truncate">
-              {isDeleteReq ? tr("chat_access_del_title", "Approval Hapus Karyawan") : isPasswordReset ? tr("chat_access_pw_title", "Permintaan Reset Password") : tr("chat_access_login_title", "Permintaan Akses Masuk")}
+              {isDeleteReq ? tr("chat_access_del_title", "Approval Hapus Employee") : isPasswordReset ? tr("chat_access_pw_title", "Permintaan Reset Password") : tr("chat_access_login_title", "Permintaan Akses Masuk")}
             </h4>
             <p className="text-[10px] text-sub font-medium truncate">{tr("chat_access_subtitle", "Asisten Workspace: Asli")}</p>
           </div>
@@ -536,7 +538,7 @@ const AccessRequestCard = memo(function AccessRequestCard({ m }) {
           </div>
           <div className="rounded-lg border bg-surface2/40 px-2.5 py-1.5">
             <span className="block text-[10px] uppercase font-bold text-sub tracking-wider">{tr("chat_access_job_label", "Jabatan / Posisi")}</span>
-            <span className="font-semibold text-ink truncate block">{req.job_title || tr("common_role_employee", "Karyawan")}</span>
+            <span className="font-semibold text-ink truncate block">{req.job_title || tr("common_role_employee", "Employee")}</span>
           </div>
         </div>
 
@@ -573,7 +575,7 @@ const AccessRequestCard = memo(function AccessRequestCard({ m }) {
                     className="h-8 flex-1 rounded-xl border bg-surface px-2.5 text-xs font-semibold text-ink"
                     data-testid="access-role-select"
                   >
-                    <option value="employee">{tr("common_role_employee", "Karyawan")}</option>
+                    <option value="employee">{tr("common_role_employee", "Employee")}</option>
                     <option value="project_manager">{tr("common_role_project_manager", "Project Manager")}</option>
                     <option value="department_manager">Department Manager</option>
                     <option value="workspace_admin">{tr("common_role_workspace_admin", "Workspace Admin")}</option>
@@ -885,17 +887,21 @@ function MessageItem({ m, mine, grouped, conv, onReply, onCreateTask, readBy }) 
   };
   const save = act(async () => { await api.patch(`/messages/${m.id}`, { text: val }); setEditing(false); }, "success");
 
-  const bubble = isMine ? "bg-brand text-white rounded-br-md shadow-xs" : "bg-surface border border-slate-200/80 dark:border-slate-700 text-ink rounded-bl-md shadow-xs";
+  const bubble = isMine
+    ? "chat-bubble-mine rounded-br-md shadow-xs"
+    : "chat-bubble-other border border-slate-200/80 dark:border-slate-700 rounded-bl-md shadow-xs";
   const images = (m.attachments || []).filter((a) => a.content_type?.startsWith("image/") || (!a.content_type && /\.(png|jpe?g|gif|webp|svg)$/i.test(a.name || "")));
   const docs = (m.attachments || []).filter((a) => !images.includes(a));
   const isPoll = m.type === "poll" || Boolean(m.poll_id || m.poll);
   const isStickyNote = m.type === "sticky_note" || Boolean(m.sticky_note);
-  const plain = m.type === "sticker" || isPoll || isStickyNote || m.type === "task" || m.type === "approval_card" || m.type === "access_request_card";
+  const isFormApproval = m.type === "form_approval" || Boolean(m.form_approval);
+  const isAssistantReport = useMemo(() => detectAssistantReport(m), [m]);
+  const plain = m.type === "sticker" || isPoll || isStickyNote || isFormApproval || isAssistantReport || m.type === "task" || m.type === "approval_card" || m.type === "access_request_card";
   const renderedBody = useMemo(
-    () => (m.text && !isPoll && !isStickyNote && m.type !== "access_request_card"
+    () => (m.text && !isPoll && !isStickyNote && !isFormApproval && !isAssistantReport && m.type !== "access_request_card"
       ? renderText(m.text, userMap, isMine, m.mention_ids)
       : null),
-    [m.text, m.type, isPoll, isStickyNote, userMap, isMine, m.mention_ids]
+    [m.text, m.type, isPoll, isStickyNote, isFormApproval, isAssistantReport, userMap, isMine, m.mention_ids]
   );
   return (
     <div className={`group flex w-full gap-2 sm:gap-2.5 ${isMine ? "flex-row-reverse justify-start" : "flex-row justify-start"} ${grouped ? "mt-0.5" : "mt-3.5 sm:mt-4"}`} data-testid={`message-${m.id}`}>
@@ -904,7 +910,7 @@ function MessageItem({ m, mine, grouped, conv, onReply, onCreateTask, readBy }) 
           {!grouped && senderId && <Link to={`/people/${senderId}`} className="block w-fit rounded-full"><Avatar user={sender} size={28} /></Link>}
         </div>
       )}
-      <div className={`flex min-w-0 max-w-[86%] sm:max-w-[70%] flex-col ${isMine ? "items-end" : "items-start"}`}>
+      <div className={`flex min-w-0 ${isFormApproval || isAssistantReport ? "max-w-[92%] sm:max-w-[84%] lg:max-w-[78%]" : "max-w-[86%] sm:max-w-[70%]"} flex-col ${isMine ? "items-end" : "items-start"}`}>
         {!grouped && (
           <p className={`mb-1 px-1 text-[11px] text-sub ${isMine ? "text-right" : "text-left"}`}>
             {isMine ? (
@@ -927,9 +933,11 @@ function MessageItem({ m, mine, grouped, conv, onReply, onCreateTask, readBy }) 
               {m.type === "sticker" && m.sticker && <StickerTile s={m.sticker} size={120} />}
               {isPoll && <PollCard pollId={m.poll_id || m.poll?.id} poll={m.poll} />}
               {isStickyNote && m.sticky_note && <StickyNoteMessageCard m={m} />}
+              {isFormApproval && m.form_approval && <ApprovalRequestCard m={m} />}
+              {isAssistantReport && <AssistantReportCard m={m} />}
               {(m.type === "task" || m.type === "approval_card") && m.task && <TaskPreview m={m} />}
               {m.type === "access_request_card" && (m.access_request || m.data) && <AccessRequestCard m={m} />}
-              {(m.text && !isPoll && !isStickyNote && m.type !== "access_request_card") && (editing ? (
+              {(m.text && !isPoll && !isStickyNote && !isFormApproval && !isAssistantReport && m.type !== "access_request_card") && (editing ? (
                 <div className="flex flex-col gap-1"><textarea value={val} onChange={(e) => setVal(e.target.value)} className="w-72 max-w-full rounded-xl border bg-surface p-2 text-sm text-ink" data-testid="edit-message-input" />
                   <div className="flex gap-2 text-xs"><button onClick={save} className="font-semibold text-brand" data-testid="save-edit-btn">{tr("chat_msg_save_edit", "Simpan")}</button><button onClick={() => setEditing(false)} className="text-sub">{tr("chat_msg_cancel_edit", "Batal")}</button></div></div>
               ) : <div className={`${plain ? "mt-1 text-sm" : `rounded-2xl px-3.5 py-2 text-[14.5px] leading-relaxed ${bubble}`} whitespace-pre-wrap break-words`}>{renderedBody}{m.edited && <span className="ml-1 text-[10px] opacity-70">{tr("chat_msg_edited", "· diedit")}</span>}</div>)}

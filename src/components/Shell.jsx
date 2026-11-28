@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useState } from "react";
+import { memo, Suspense, useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   Home,
@@ -39,7 +39,12 @@ import { isSoundEnabled, setSoundEnabled, playSound } from "../lib/sound";
 import TopNotificationPopup from "./TopNotificationPopup";
 import { PWAInstallButton, OfflineIndicator } from "./PWAInstallButton";
 import { usePWAInstall } from "../hooks/usePWAInstall";
-import { preloadRoute } from "../lib/routePreload";
+import { preloadRoute, prefetchRouteData } from "../lib/routePreload";
+
+const warmNavTarget = (path) => {
+  preloadRoute(path);
+  prefetchRouteData(path);
+};
 
 const NAV = [
   { to: "/", icon: Home, label: "Dashboard", id: "home", group: "main" },
@@ -49,7 +54,7 @@ const NAV = [
   { to: "/groups", icon: Hash, label: "Grup", id: "groups", group: "collab" },
   { to: "/directory", icon: HardDrive, label: "Direktori Drive", id: "directory", group: "collab" },
   { to: "/marketplace", icon: ShoppingBag, label: "Marketplace", id: "marketplace", group: "collab", requiresMarketplace: true },
-  { to: "/employee", icon: Users, label: "Karyawan", id: "employee", group: "org" },
+  { to: "/employee", icon: Users, label: "Employee", id: "employee", group: "org" },
   { to: "/org", icon: Network, label: "Struktur Organisasi", id: "org", group: "org" },
   { to: "/tasks", icon: CheckSquare, label: "Tugas", id: "tasks", group: "main" },
   { to: "/projects", icon: FolderKanban, label: "Proyek", id: "projects", group: "org" },
@@ -63,7 +68,7 @@ const MOBILE_TABS = [
   { to: "/tasks", icon: CheckSquare, label: "Tugas", id: "tasks" },
 ];
 
-function NavItem({ item, compact, unread, onClick }) {
+const NavItem = memo(function NavItem({ item, compact, unread, onClick }) {
   const { t } = useApp();
   const Icon = item.icon;
   const label = t(`nav_${item.id}`, item.label);
@@ -75,10 +80,10 @@ function NavItem({ item, compact, unread, onClick }) {
         playSound("tab");
         onClick?.(e);
       }}
-      onMouseEnter={() => preloadRoute(item.to)}
-      onPointerDown={() => preloadRoute(item.to)}
-      onFocus={() => preloadRoute(item.to)}
-      onTouchStart={() => preloadRoute(item.to)}
+      onMouseEnter={() => warmNavTarget(item.to)}
+      onPointerDown={() => warmNavTarget(item.to)}
+      onFocus={() => warmNavTarget(item.to)}
+      onTouchStart={() => warmNavTarget(item.to)}
       data-testid={`sidebar-${item.id}-link`}
       title={label}
       className={({ isActive }) =>
@@ -106,10 +111,10 @@ function NavItem({ item, compact, unread, onClick }) {
       )}
     </NavLink>
   );
-}
+});
 
 
-function Sidebar({ compact, setCompact, openSearch }) {
+const Sidebar = memo(function Sidebar({ compact, setCompact, openSearch }) {
   const { me, ws, savePrefs, logout, unread, isDemo, t, updateAvailabilityStatus } = useApp();
   const [soundOn, setSoundOn] = useState(() => isSoundEnabled());
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
@@ -367,7 +372,7 @@ function Sidebar({ compact, setCompact, openSearch }) {
       </div>
     </aside>
   );
-}
+});
 
 function MobileNav({ openSearch }) {
   const [more, setMore] = useState(false);
@@ -464,8 +469,8 @@ function MobileNav({ openSearch }) {
             to={n.to}
             end={n.to === "/"}
             onClick={() => playSound("tab")}
-            onPointerDown={() => preloadRoute(n.to)}
-            onTouchStart={() => preloadRoute(n.to)}
+            onPointerDown={() => warmNavTarget(n.to)}
+            onTouchStart={() => warmNavTarget(n.to)}
             data-testid={`mobile-nav-${n.id}`}
             className={({ isActive }) =>
               `relative flex h-14 min-h-[44px] flex-col items-center justify-center gap-0.5 transition-colors ${
@@ -583,8 +588,8 @@ function MobileNav({ openSearch }) {
                     key={n.id}
                     to={n.to}
                     onClick={() => setMore(false)}
-                    onMouseEnter={() => preloadRoute(n.to)}
-                    onTouchStart={() => preloadRoute(n.to)}
+                    onMouseEnter={() => warmNavTarget(n.to)}
+                    onTouchStart={() => warmNavTarget(n.to)}
                     data-testid={`more-nav-${n.id}`}
                     className={({ isActive }) =>
                       `flex min-h-[72px] flex-col items-center justify-center gap-1.5 rounded-2xl border p-2.5 text-xs font-semibold transition-colors ${
@@ -612,8 +617,8 @@ function MobileNav({ openSearch }) {
                     key={n.id}
                     to={n.to}
                     onClick={() => setMore(false)}
-                    onMouseEnter={() => preloadRoute(n.to)}
-                    onTouchStart={() => preloadRoute(n.to)}
+                    onMouseEnter={() => warmNavTarget(n.to)}
+                    onTouchStart={() => warmNavTarget(n.to)}
                     data-testid={`more-nav-${n.id}`}
                     className={({ isActive }) =>
                       `flex min-h-[72px] flex-col items-center justify-center gap-1.5 rounded-2xl border p-2.5 text-xs font-semibold transition-colors ${
@@ -641,6 +646,8 @@ function MobileNav({ openSearch }) {
                     key={n.id}
                     to={n.to}
                     onClick={() => setMore(false)}
+                    onMouseEnter={() => warmNavTarget(n.to)}
+                    onTouchStart={() => warmNavTarget(n.to)}
                     data-testid={`more-nav-${n.id}`}
                     className="flex h-12 items-center gap-2.5 rounded-2xl border border-slate-200/70 dark:border-slate-800 bg-surface2/60 px-3.5 text-xs font-semibold text-ink hover:bg-surface2"
                   >

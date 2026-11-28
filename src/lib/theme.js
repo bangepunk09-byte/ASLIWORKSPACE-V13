@@ -10,6 +10,8 @@ export const DEFAULTS = {
     accent: "#FF5364",
     accentHover: "#F04456",
     accent2: "#6C8CFF",
+    chatBubbleMine: "#FF5364",
+    chatBubbleOther: "#FFFFFF",
   },
   dark: {
     bg: "#101522",
@@ -22,16 +24,30 @@ export const DEFAULTS = {
     accent: "#FF5364",
     accentHover: "#F04456",
     accent2: "#7C9BFF",
+    chatBubbleMine: "#FF5364",
+    chatBubbleOther: "#171E2E",
   },
 };
 const SOFT = {
   light: { red: "#FFF0F2", blue: "#DDEEFF", purple: "#EEE6FF", green: "#DFF7E8", yellow: "#FFF3C4" },
   dark: { red: "#3A2230", blue: "#1E2F4A", purple: "#2C2546", green: "#1B3A2E", yellow: "#3A3420" },
 };
+export const CHAT_BUBBLE_PRESETS = [
+  { id: "coral", name: "Coral Brand", mine: "#FF5364", otherLight: "#FFFFFF", otherDark: "#171E2E" },
+  { id: "rose_tint", name: "Soft Rose", mine: "#E11D48", otherLight: "#FFF0F2", otherDark: "#2A1822" },
+  { id: "ocean", name: "Ocean Blue", mine: "#2563EB", otherLight: "#EFF6FF", otherDark: "#172544" },
+  { id: "emerald", name: "Emerald Mint", mine: "#10B981", otherLight: "#ECFDF5", otherDark: "#132E25" },
+  { id: "violet", name: "Royal Violet", mine: "#7C3AED", otherLight: "#F5F3FF", otherDark: "#251B42" },
+  { id: "indigo", name: "Deep Indigo", mine: "#4F46E5", otherLight: "#EEF2FF", otherDark: "#1E1B4B" },
+  { id: "amber", name: "Warm Amber", mine: "#D97706", otherLight: "#FFFBEB", otherDark: "#2E2212" },
+  { id: "slate", name: "Minimal Slate", mine: "#334155", otherLight: "#F1F5F9", otherDark: "#1E293B" },
+];
 export const TOKEN_LABELS = {
   accent: "Aksen Utama",
   accentHover: "Aksen Hover",
   accent2: "Aksen Sekunder",
+  chatBubbleMine: "Chat Bubble Anda (Pesan Keluar)",
+  chatBubbleOther: "Chat Bubble Masuk (Lawan Bicara)",
   bg: "Latar Utama",
   surface: "Kartu & Permukaan",
   surface2: "Permukaan Sekunder",
@@ -51,6 +67,8 @@ const VAR = {
   accent: "--c-accent",
   accentHover: "--c-accent-hover",
   accent2: "--c-accent2",
+  chatBubbleMine: "--c-chat-mine",
+  chatBubbleOther: "--c-chat-other",
 };
 
 export function resolveMode(mode) {
@@ -59,12 +77,36 @@ export function resolveMode(mode) {
   return "light";
 }
 
+function lum(hex) {
+  const h = (hex || "#000").replace("#", "");
+  const n = h.length === 3 ? h.split("").map((c) => c + c).join("") : h.slice(0, 6);
+  const rgb = [0, 2, 4].map((i) => parseInt(n.slice(i, i + 2), 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+}
+export function contrast(a, b) {
+  const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p);
+  return (x + 0.05) / (y + 0.05);
+}
+export const isHex = (v) => /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(v || "");
+
+export function getReadableTextColor(bgHex, fallback = "#FFFFFF") {
+  if (!isHex(bgHex)) return fallback;
+  return lum(bgHex) > 0.42 ? "#20283B" : "#FFFFFF";
+}
+
 export function buildTheme(wsTheme, prefs, draft) {
   const personal = draft || prefs?.theme || {};
   const mode = resolveMode(prefs?.theme_mode || "light");
   const wsMode = wsTheme?.[mode] || {};
   const pMode = personal?.[mode] || {};
-  const tokens = { ...DEFAULTS[mode], ...wsMode, ...pMode };
+  const merged = { ...DEFAULTS[mode], ...wsMode, ...pMode };
+  const hasExplicitMine = Boolean(pMode.chatBubbleMine || wsMode.chatBubbleMine);
+  const hasExplicitOther = Boolean(pMode.chatBubbleOther || wsMode.chatBubbleOther);
+  const tokens = {
+    ...merged,
+    chatBubbleMine: hasExplicitMine ? merged.chatBubbleMine : (merged.accent || DEFAULTS[mode].chatBubbleMine),
+    chatBubbleOther: hasExplicitOther ? merged.chatBubbleOther : (merged.surface || DEFAULTS[mode].chatBubbleOther),
+  };
   return {
     mode,
     tokens,
@@ -81,6 +123,13 @@ export function applyTheme(t) {
   root.setAttribute("data-shape", shape);
   Object.entries(VAR).forEach(([k, v]) => root.style.setProperty(v, t.tokens[k]));
   Object.entries(SOFT[t.mode]).forEach(([k, v]) => root.style.setProperty(`--s-${k}`, v));
+
+  const mineBg = t.tokens.chatBubbleMine || t.tokens.accent || "#FF5364";
+  const otherBg = t.tokens.chatBubbleOther || t.tokens.surface || (t.mode === "dark" ? "#171E2E" : "#FFFFFF");
+  root.style.setProperty("--c-chat-mine", mineBg);
+  root.style.setProperty("--c-chat-mine-text", getReadableTextColor(mineBg, "#FFFFFF"));
+  root.style.setProperty("--c-chat-other", otherBg);
+  root.style.setProperty("--c-chat-other-text", getReadableTextColor(otherBg, t.mode === "dark" ? "#F4F6FC" : "#20283B"));
 
   if (shape === "pill") {
     root.style.setProperty("--radius", `${Math.max(14, baseRadius)}px`);
@@ -107,18 +156,6 @@ export function applyTheme(t) {
   const themeMetaTags = document.querySelectorAll('meta[name="theme-color"]');
   themeMetaTags.forEach((tag) => tag.setAttribute("content", headerColor));
 }
-
-function lum(hex) {
-  const h = (hex || "#000").replace("#", "");
-  const n = h.length === 3 ? h.split("").map((c) => c + c).join("") : h.slice(0, 6);
-  const rgb = [0, 2, 4].map((i) => parseInt(n.slice(i, i + 2), 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
-  return 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
-}
-export function contrast(a, b) {
-  const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p);
-  return (x + 0.05) / (y + 0.05);
-}
-export const isHex = (v) => /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(v || "");
 
 export const BG_PRESETS = {
   solid: ["#F5F7FB", "#FFF0F2", "#DDEEFF", "#EEE6FF", "#DFF7E8", "#FFF3C4", "#101522", "#1E2F4A"],
