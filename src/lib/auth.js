@@ -2,6 +2,7 @@ import { initializeApp, getApps } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
 
 import firebaseConfig from '../../firebase-applet-config.json';
+import { roomStorageKey } from './roomContext';
 
 const app = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -36,8 +37,8 @@ let hasGmailScope = false;
 function getActiveWorkspaceUserId() {
   try {
     const raw =
-      sessionStorage.getItem('circle_tab_session_cache') ||
-      localStorage.getItem('circle_session_cache');
+      sessionStorage.getItem(roomStorageKey('circle_tab_session_cache')) ||
+      localStorage.getItem(roomStorageKey('circle_session_cache'));
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed?.user?.user_id) return String(parsed.user.user_id);
@@ -145,8 +146,17 @@ async function runPopupSignIn(targetProvider, { withCalendarScope = false, withG
       cachedGmailAccessToken = realToken;
       hasGmailScope = true;
     }
+    const fbUser = result.user;
+    const idToken = (await fbUser?.getIdToken?.().catch(() => '')) || '';
+    const resolvedEmail = fbUser?.email || '';
+    const resolvedName = fbUser?.displayName || (resolvedEmail ? resolvedEmail.split('@')[0] : '');
+    const resolvedPic = fbUser?.photoURL || '';
     return {
-      user: result.user,
+      user: fbUser,
+      email: resolvedEmail,
+      name: resolvedName,
+      picture: resolvedPic,
+      idToken,
       accessToken: realToken,
       isRealOAuth: Boolean(realToken),
     };

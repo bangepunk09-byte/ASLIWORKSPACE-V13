@@ -1,5 +1,6 @@
 import axios from "axios";
 import { getKnownAccountsFromVault, upsertAccountInVault, attemptAutoHydrateServer } from "./persistentMirror";
+import { getActiveRoomSlug, setActiveRoomSlug, roomStorageKey } from "./roomContext";
 
 export const BASE = "";
 export const api = axios.create({ baseURL: `/api`, withCredentials: true });
@@ -8,14 +9,25 @@ let activeTabUserId = null;
 let activeAuthToken = null;
 let authGeneration = 0;
 let recoveryInFlight = null;
-let cachedProfileHeader = { uid: null, token: null, value: "", expiresAt: 0 };
+let cachedProfileHeader = { uid: null, token: null, room: null, value: "", expiresAt: 0 };
+
+export function switchActiveRoom(slug) {
+  const clean = setActiveRoomSlug(slug);
+  activeTabUserId = null;
+  activeAuthToken = null;
+  authGeneration += 1;
+  apiGetCache.clear();
+  apiInflightGets.clear();
+  invalidateProfileHeaderCache();
+  return clean;
+}
 
 export function getAuthGeneration() {
   return authGeneration;
 }
 
 export function invalidateProfileHeaderCache() {
-  cachedProfileHeader = { uid: null, token: null, value: "", expiresAt: 0 };
+  cachedProfileHeader = { uid: null, token: null, room: null, value: "", expiresAt: 0 };
 }
 
 const CACHEABLE_GET_PREFIXES = [
@@ -43,6 +55,7 @@ const apiInflightGets = new Map();
 
 function buildGetCacheKey(url, params) {
   const uid = getAuthUserId() || "anon";
+  const room = getActiveRoomSlug();
   let paramKey = "";
   if (params && typeof params === "object") {
     const entries = Object.entries(params)
@@ -52,7 +65,7 @@ function buildGetCacheKey(url, params) {
       paramKey = `?${entries.map(([k, v]) => `${k}=${String(v)}`).join("&")}`;
     }
   }
-  return `${uid}::${url}${paramKey}`;
+  return `${room}::${uid}::${url}${paramKey}`;
 }
 
 function isCacheableGetUrl(url) {
@@ -84,10 +97,11 @@ export function setAuthToken(token) {
   activeAuthToken = next;
   invalidateProfileHeaderCache();
   try {
+    const tokKey = roomStorageKey("circle_active_token");
     if (next) {
-      sessionStorage.setItem("circle_active_token", next);
+      sessionStorage.setItem(tokKey, next);
     } else {
-      sessionStorage.removeItem("circle_active_token");
+      sessionStorage.removeItem(tokKey);
     }
   } catch {}
 }
@@ -95,12 +109,12 @@ export function setAuthToken(token) {
 export function getAuthToken() {
   if (activeAuthToken) return activeAuthToken;
   try {
-    const tabTok = sessionStorage.getItem("circle_active_token");
+    const tabTok = sessionStorage.getItem(roomStorageKey("circle_active_token"));
     if (tabTok) {
       activeAuthToken = tabTok;
       return tabTok;
     }
-    const tabSess = sessionStorage.getItem("circle_tab_session_cache");
+    const tabSess = sessionStorage.getItem(roomStorageKey("circle_tab_session_cache"));
     if (tabSess) {
       const parsed = JSON.parse(tabSess);
       if (parsed?.token) {
@@ -108,7 +122,7 @@ export function getAuthToken() {
         return activeAuthToken;
       }
     }
-    const cached = localStorage.getItem("circle_session_cache");
+    const cached = localStorage.getItem(roomStorageKey("circle_session_cache"));
     if (cached) {
       const parsed = JSON.parse(cached);
       if (parsed?.token) {
@@ -130,10 +144,11 @@ export function setAuthUserId(uid) {
   activeTabUserId = next;
   invalidateProfileHeaderCache();
   try {
+    const uidKey = roomStorageKey("circle_active_user_id");
     if (next) {
-      sessionStorage.setItem("circle_active_user_id", next);
+      sessionStorage.setItem(uidKey, next);
     } else {
-      sessionStorage.removeItem("circle_active_user_id");
+      sessionStorage.removeItem(uidKey);
     }
   } catch {}
 }
@@ -141,12 +156,12 @@ export function setAuthUserId(uid) {
 export function getAuthUserId() {
   if (activeTabUserId) return activeTabUserId;
   try {
-    const tabUid = sessionStorage.getItem("circle_active_user_id");
+    const tabUid = sessionStorage.getItem(roomStorageKey("circle_active_user_id"));
     if (tabUid) {
       activeTabUserId = tabUid;
       return tabUid;
     }
-    const tabSess = sessionStorage.getItem("circle_tab_session_cache");
+    const tabSess = sessionStorage.getItem(roomStorageKey("circle_tab_session_cache"));
     if (tabSess) {
       const parsed = JSON.parse(tabSess);
       if (parsed?.user?.user_id) {
@@ -154,7 +169,7 @@ export function getAuthUserId() {
         return activeTabUserId;
       }
     }
-    const cached = localStorage.getItem("circle_session_cache");
+    const cached = localStorage.getItem(roomStorageKey("circle_session_cache"));
     if (cached) {
       const parsed = JSON.parse(cached);
       if (parsed?.user?.user_id) {
@@ -168,8 +183,8 @@ export function getAuthUserId() {
 
 export function getCachedSessionUser() {
   try {
-    const tabSess = sessionStorage.getItem("circle_tab_session_cache");
-    const raw = tabSess || localStorage.getItem("circle_session_cache");
+    const tabSess = sessionStorage.getItem(roomStorageKey("circle_tab_session_cache"));
+    const raw = tabSess || localStorage.getItem(roomStorageKey("circle_session_cache"));
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed?.user?.user_id) return parsed.user;
@@ -190,8 +205,12 @@ function encodeBase64Json(obj) {
 api.interceptors.request.use((config) => {
   const token = getAuthToken();
   const uid = getAuthUserId();
+  const activeRoom = getActiveRoomSlug();
   config._authGen = authGeneration;
   config.headers = config.headers || {};
+  if (activeRoom && !config.headers["X-Workspace-Room"]) {
+    config.headers["X-Workspace-Room"] = activeRoom;
+  }
   if (token) {
     config.headers["Authorization"] = `Bearer ${token}`;
   }
@@ -205,6 +224,7 @@ api.interceptors.request.use((config) => {
     cachedProfileHeader.value &&
     cachedProfileHeader.uid === uid &&
     cachedProfileHeader.token === token &&
+    cachedProfileHeader.room === activeRoom &&
     nowTs < cachedProfileHeader.expiresAt
   ) {
     config.headers["x-user-profile"] = cachedProfileHeader.value;
@@ -222,7 +242,7 @@ api.interceptors.request.use((config) => {
         department: sessUser.department || vaultMatch?.department || "Marketing",
         job_title: sessUser.job_title || vaultMatch?.job_title || "Staff Member",
         org_unit_id: sessUser.org_unit_id || vaultMatch?.org_unit_id || null,
-        status: "active",
+        status: sessUser.status || "pending",
         avatar:
           sessUser.avatar && !String(sessUser.avatar).startsWith("data:")
             ? sessUser.avatar
@@ -231,23 +251,20 @@ api.interceptors.request.use((config) => {
       };
       const encoded = encodeBase64Json(compactProfile);
       if (encoded && encoded.length < 4096) {
-        cachedProfileHeader = { uid, token, value: encoded, expiresAt: nowTs + 5000 };
+        cachedProfileHeader = { uid, token, room: activeRoom, value: encoded, expiresAt: nowTs + 5000 };
         config.headers["x-user-profile"] = encoded;
       }
     }
   }
 
-  // Automatically include known registered accounts from local vault on auth endpoints
-  // so login/reset after a container restart always recognizes previously registered users.
+  // Only pass known_accounts to password-reset endpoints when needed; NEVER attach to login/google lookup
   const reqUrl = String(config.url || "");
   if (
     config.method === "post" &&
     config.data &&
     typeof config.data === "object" &&
     !(config.data instanceof FormData) &&
-    (reqUrl.includes("/auth/login") ||
-      reqUrl.includes("/auth/google") ||
-      reqUrl.includes("/auth/forgot-password") ||
+    (reqUrl.includes("/auth/forgot-password") ||
       reqUrl.includes("/auth/reset-with-recovery-key"))
   ) {
     const known = getKnownAccountsFromVault();
@@ -283,8 +300,10 @@ async function recoverActiveSession() {
         setAuthUserId(data.user.user_id);
         upsertAccountInVault(data.account_vault_entry || data.user);
         try {
-          const tabRaw = sessionStorage.getItem("circle_tab_session_cache");
-          const locRaw = localStorage.getItem("circle_session_cache");
+          const tabKey = roomStorageKey("circle_tab_session_cache");
+          const locKey = roomStorageKey("circle_session_cache");
+          const tabRaw = sessionStorage.getItem(tabKey);
+          const locRaw = localStorage.getItem(locKey);
           const prev = JSON.parse(tabRaw || locRaw || "{}");
           const next = {
             ...prev,
@@ -293,8 +312,8 @@ async function recoverActiveSession() {
             workspace: data.workspace || prev.workspace,
           };
           const serialized = JSON.stringify(next);
-          sessionStorage.setItem("circle_tab_session_cache", serialized);
-          localStorage.setItem("circle_session_cache", serialized);
+          sessionStorage.setItem(tabKey, serialized);
+          localStorage.setItem(locKey, serialized);
         } catch {}
         return true;
       }
@@ -327,6 +346,8 @@ api.interceptors.response.use(
       reqUrl.includes("/auth/reset-with-recovery-key") ||
       reqUrl.includes("/auth/google") ||
       reqUrl.includes("/auth/session-recover") ||
+      reqUrl.includes("/saas/") ||
+      reqUrl.includes("/platform-owner/") ||
       reqUrl.includes("/workspace/persistence-status") ||
       reqUrl.includes("/workspace/auto-hydrate") ||
       reqUrl.includes("/public/");
@@ -351,8 +372,8 @@ api.interceptors.response.use(
       }
 
       if (getAuthToken() || getAuthUserId()) {
-        // Attempt silent session recovery once before kicking the user out
-        if (originalConfig && !originalConfig._retriedAfterRecover) {
+        const wasExplicitlyRevoked = Boolean(err?.response?.data?.was_removed || err?.response?.data?.revoked);
+        if (!wasExplicitlyRevoked && originalConfig && !originalConfig._retriedAfterRecover) {
           originalConfig._retriedAfterRecover = true;
           const recovered = await recoverActiveSession();
           // Re-check if user logged in manually while recovery was in-flight
@@ -388,7 +409,11 @@ api.interceptors.response.use(
 
         if (typeof reqAuthGen !== "number" || reqAuthGen === authGeneration) {
           try {
-            window.dispatchEvent(new CustomEvent("circle:session-expired", { detail: { authGen: reqAuthGen ?? authGeneration } }));
+            window.dispatchEvent(
+              new CustomEvent("circle:session-expired", {
+                detail: { authGen: reqAuthGen ?? authGeneration, wasRemoved: wasExplicitlyRevoked },
+              })
+            );
           } catch {}
         }
       }
@@ -441,14 +466,24 @@ api.get = function cachedApiGet(url, config) {
   return reqPromise;
 };
 
-export const fileUrl = (id) => (id ? `/api/files/${id}` : "");
+export const fileUrl = (id) => {
+  if (!id) return "";
+  const slug = getActiveRoomSlug();
+  const base = `/api/files/${id}`;
+  if (slug && slug !== "asli-workspace") {
+    return `${base}?room=${encodeURIComponent(slug)}`;
+  }
+  return base;
+};
 export const wsUrl = () => {
   const token = getAuthToken();
   const uid = getAuthUserId();
+  const slug = getActiveRoomSlug();
   const base = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/api/ws`;
   const params = new URLSearchParams();
   if (token) params.set("token", token);
   if (uid) params.set("user_id", uid);
+  if (slug) params.set("room", slug);
   const qs = params.toString();
   return qs ? `${base}?${qs}` : base;
 };

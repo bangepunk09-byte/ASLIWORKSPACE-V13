@@ -18,6 +18,7 @@ export const routeLoaders = {
   "/archives": () => import("../pages/EmployeeArchives"),
   "/settings": () => import("../pages/Settings"),
   "/onboarding": () => import("../pages/Onboarding"),
+  "/platform-owner": () => import("../pages/PlatformOwnerConsole"),
 };
 
 const prefetched = new Set();
@@ -25,7 +26,8 @@ const dataPrefetchTimestamps = new Map();
 
 function normalizeRoutePath(path) {
   if (!path || typeof path !== "string") return "";
-  return path === "/" ? "/" : `/${path.split("/").filter(Boolean)[0] || ""}`;
+  const cleaned = path.replace(/^\/w\/[a-z0-9-]+(?=\/|$)/i, "") || "/";
+  return cleaned === "/" ? "/" : `/${cleaned.split("/").filter(Boolean)[0] || ""}`;
 }
 
 export function preloadRoute(path) {

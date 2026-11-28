@@ -11,6 +11,7 @@ import ThemeEditor from "./settings/ThemeEditor";
 import BackgroundEditor from "./settings/BackgroundEditor";
 import { UserProfileSettings } from "./settings/UserProfileSettings";
 import { Card, AdminOverview, PeopleAccess, WorkspaceBranding, DivisionsAdmin, ItemTypesAdmin, WeeklyReportCard, LabelsAdmin, StatusesAdmin, ProfileFieldsAdmin, StickersAdmin, AssistantBranding, MarketplaceSettingsCard } from "./settings/AdminPanels";
+import BillingPanel from "../components/BillingPanel";
 import { DEFAULT_COPYWRITING, COPYWRITING_GROUPS, getEffectiveCopywriting, cleanCopywritingMap, generateCopywritingCsv, parseCopywritingCsv } from "../lib/i18n";
 import { DEFAULT_MARKETPLACE_COPYWRITING, reconcileMarketplaceEnabledCache } from "./marketplace/marketplaceStore";
 import {
@@ -1065,6 +1066,7 @@ export default function Settings() {
   const isSuperAdmin = me?.role === "super_admin";
   const canEditTaskStatuses = isSuperAdmin || Boolean(String(me?.department || "").trim());
   const tabs = [
+    ...(isSuperAdmin ? [["billing", t("settings_tab_billing", "Langganan & Kuota")]] : []),
     ["profile", t("settings_tab_profile", "Profil & Keamanan")],
     ["notifications", t("settings_tab_notifications", "Notifikasi & PWA")],
     ["appearance", t("settings_tab_appearance", "Tema & Tampilan")],
@@ -1075,7 +1077,12 @@ export default function Settings() {
     ["background", t("settings_tab_background", "Latar Dashboard")],
     ...(isAdmin ? [["fields", t("settings_tab_fields", "Kolom Profil")], ["stickers", t("settings_tab_stickers", "Stiker Tim")]] : [])
   ];
-  const [tab, setTab] = useState("profile");
+  const [tab, setTab] = useState(() => (me?.role === "super_admin" ? "billing" : "profile"));
+  useEffect(() => {
+    if (!isSuperAdmin && tab === "billing") {
+      setTab("profile");
+    }
+  }, [isSuperAdmin, tab]);
   useEffect(() => {
     if (isAdmin) {
       prefetchBackupSummary();
@@ -1083,7 +1090,7 @@ export default function Settings() {
   }, [isAdmin]);
   return (
     <div className="mx-auto w-full min-w-0 max-w-5xl overflow-x-clip px-3.5 py-4 sm:px-6 sm:py-5 lg:px-10 lg:py-10 animate-crossfade" data-testid="settings-page">
-      <PageHeader icon={Cog} title={t("settings_title", "Pengaturan")} subtitle={t("settings_subtitle", "Sesuaikan tampilan CIRCLE dan kelola workspace Anda.")} />
+      <PageHeader icon={Cog} title={t("settings_title", "Pengaturan")} subtitle={t("settings_subtitle", "Sesuaikan tampilan ASLIWORKSPACE dan kelola workspace Anda.")} />
       <div className="flex w-full min-w-0 flex-col gap-4 sm:gap-6 lg:flex-row">
         <nav className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1 lg:w-56 lg:shrink-0 lg:flex-col lg:pb-0">
           {tabs.map(([k, l]) => (
@@ -1102,6 +1109,7 @@ export default function Settings() {
           ))}
         </nav>
         <div className="min-w-0 flex-1">
+          {tab === "billing" && isSuperAdmin && <BillingPanel />}
           {tab === "profile" && <UserProfileSettings />}
           {tab === "appearance" && <Appearance />}
           {tab === "copywriting" && isAdmin && <CopywritingSettings />}

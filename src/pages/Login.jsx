@@ -1,43 +1,105 @@
 import { useEffect, useState } from "react";
-import { Navigate, useSearchParams } from "react-router-dom";
-import { ShieldCheck, Sparkles, MessageCircle, CheckSquare, Users, Eye, EyeOff, Mail, Lock, User, Building2, Briefcase, CheckCircle2, ArrowRight, ShieldAlert, Check, Upload, KeyRound, RefreshCw, Clock, XCircle, Phone, MapPin } from "lucide-react";
+import { Link, Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import {
+  ArrowLeft,
+  ArrowRight,
+  LogOut,
+  Mail,
+  MessageCircle,
+  CheckSquare,
+  Users,
+  Plus,
+  ShieldAlert,
+  ShieldCheck,
+  Sparkles,
+  Ticket,
+} from "lucide-react";
 import { toast } from "sonner";
 import { useApp } from "../context/AppContext";
-import { api, errMsg, uploadFile, fileUrl, setAuthToken, setAuthUserId } from "../lib/api";
+import { api, errMsg, fileUrl, setAuthToken, setAuthUserId } from "../lib/api";
+import { getActiveRoomSlug, isValidRoomSlug, roomStorageKey, getRecentGoogleAccounts, recordRecentGoogleAccount } from "../lib/roomContext";
 import { Avatar } from "../components/common";
 import { googleBasicSignIn, setManualGoogleAuth } from "../lib/auth";
 import { getTranslation } from "../lib/i18n";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "../components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { AppSelect } from "../components/ui/select";
-import { PasswordStrengthMeter } from "../components/PasswordStrengthMeter";
-import { attemptAutoHydrateServer, syncWorkspaceMirror, upsertAccountInVault, getKnownAccountsFromVault, removeAccountFromVault } from "../lib/persistentMirror";
+import CreateRoomModal from "../components/CreateRoomModal";
+import { attemptAutoHydrateServer } from "../lib/persistentMirror";
+import { firebaseAuth, subscribeFirebaseAuth } from "../lib/firestoreBackup";
 
-const STATUS_MSG = {
-  pending: "Akun Anda sedang dalam proses peninjauan & approval oleh Super Admin. Anda akan bisa masuk setelah akun di-approve.",
-  inactive: "Akun Anda telah dinonaktifkan. Silakan hubungi Workspace Administrator.",
-  not_allowed: "Akun ini tidak memiliki izin untuk bergabung dengan workspace.",
-  error: "Proses masuk gagal. Silakan coba beberapa saat lagi.",
-};
-
+const DEFAULT_LOGO = "/assets/aistudio/657343220_18309991366279811_6828424809008890253_n_c00cf220.png";
 const DEFAULT_LOGIN_IMG = "/assets/aistudio/SIGN_DEPAN_2_86dd649d.jpg";
 
-import { PRESET_AVATARS } from "../lib/avatars";
+function formatRelativeIndo(isoStr) {
+  if (!isoStr) return "baru saja";
+  const ts = new Date(isoStr).getTime();
+  if (!Number.isFinite(ts)) return "baru saja";
+  const diffSec = Math.max(1, Math.floor((Date.now() - ts) / 1000));
+  if (diffSec < 60) return "baru saja";
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin} menit lalu`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr} jam lalu`;
+  const diffDay = Math.floor(diffHr / 24);
+  return `${diffDay} hari lalu`;
+}
 
-const DEFAULT_DIVISIONS = ["Management", "Marketing", "Sales", "IT", "Finance", "Legal", "HRGA"];
+function resolveRoomLogo(logoId) {
+  if (!logoId || logoId === "default_workspace_logo") return DEFAULT_LOGO;
+  return fileUrl(logoId);
+}
+
+function GoogleLogoIcon({ size = 20 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" className="shrink-0">
+      <path
+        fill="#4285F4"
+        d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17Z"
+      />
+      <path
+        fill="#34A853"
+        d="M12 24c3.3 0 6.08-1.09 8.105-2.96l-3.88-3.05c-1.09.73-2.49 1.16-4.225 1.16-3.25 0-6.005-2.19-6.985-5.14H1.01v3.14C3.035 21.17 7.19 24 12 24Z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M5.015 14.01a7.17 7.17 0 0 1 0-4.02V6.85H1.01a11.99 11.99 0 0 0 0 10.3l4.005-3.14Z"
+      />
+      <path
+        fill="#EA4335"
+        d="M12 4.85c1.8 0 3.415.62 4.685 1.835l3.515-3.515C18.075 1.19 15.295 0 12 0 7.19 0 3.035 2.83 1.01 6.85l4.005 3.14C5.995 7.04 8.75 4.85 12 4.85Z"
+      />
+    </svg>
+  );
+}
 
 function Floating({ image, t }) {
-  const src = image ? `/api/public/login-image/${image}` : DEFAULT_LOGIN_IMG;
+  const src =
+    image && image !== "default_login_bg" ? `/api/public/login-image/${image}` : DEFAULT_LOGIN_IMG;
   const heroCards = [
     [MessageCircle, t("auth_hero_card_1", "Pesan & Panggilan")],
     [CheckSquare, t("auth_hero_card_2", "Tugas & Proyek")],
     [Users, t("auth_hero_card_3", "Tim & Organisasi")],
   ];
   return (
-    <div className="relative hidden lg:flex lg:h-full flex-1 overflow-hidden rounded-[32px] bg-[#20283B] p-10 text-white shrink-0" data-testid="login-hero">
-      <img src={src} alt="Login background" onError={(e) => { e.currentTarget.src = DEFAULT_LOGIN_IMG; }} className="absolute inset-0 h-full w-full object-cover" data-testid="login-hero-image" />
-      <div className="absolute inset-0 bg-gradient-to-t from-[#20283B]/90 via-[#20283B]/30 to-transparent" />
+    <div
+      className="relative hidden lg:flex lg:h-full flex-1 overflow-hidden rounded-[32px] bg-[#20283B] p-10 text-white shrink-0"
+      data-testid="login-hero"
+    >
+      <img
+        src={src}
+        alt="ASLIWORKSPACE Showcase"
+        onError={(e) => {
+          e.currentTarget.src = DEFAULT_LOGIN_IMG;
+        }}
+        className="absolute inset-0 h-full w-full object-cover"
+        data-testid="login-hero-image"
+      />
+      <div className="absolute inset-0 bg-gradient-to-t from-[#20283B]/90 via-[#20283B]/35 to-transparent" />
       <div className="relative z-10 flex w-full flex-col justify-between">
-        <span className="inline-flex w-fit items-center gap-2 rounded-full bg-white/20 px-4 py-1.5 text-sm font-medium backdrop-blur" data-testid="login-hero-badge">
+        <span
+          className="inline-flex w-fit items-center gap-2 rounded-full bg-white/20 px-4 py-1.5 text-sm font-medium backdrop-blur"
+          data-testid="login-hero-badge"
+        >
           <Sparkles size={14} />
           {t("auth_hero_badge", "Satu Workspace. Satu Lingkaran Kolaborasi.")}
         </span>
@@ -46,12 +108,20 @@ function Floating({ image, t }) {
             {t("auth_hero_title", "Satukan Tim, Percepat Eksekusi.")}
           </h2>
           <p className="mt-4 max-w-md text-white/85" data-testid="login-hero-subtitle">
-            {t("auth_hero_subtitle", "Satu ruang kerja terpadu untuk komunikasi tim, manajemen tugas, dan kontrol operasional perusahaan.")}
+            {t(
+              "auth_hero_subtitle",
+              "Satu ruang kerja terpadu untuk komunikasi tim, manajemen tugas, dan kontrol operasional perusahaan."
+            )}
           </p>
           <div className="mt-10 grid max-w-lg grid-cols-3 gap-3">
             {heroCards.map(([I, label], i) => (
-              <div key={i} className="animate-float rounded-3xl bg-white/90 p-4 text-[#20283B] shadow-xl" style={{ animationDelay: `${i * 0.8}s` }}>
-                <I size={20} className="text-[#FF5364]" /><p className="mt-6 text-sm font-semibold">{label}</p>
+              <div
+                key={i}
+                className="animate-float rounded-3xl bg-white/95 p-4 text-[#20283B] shadow-xl"
+                style={{ animationDelay: `${i * 0.8}s` }}
+              >
+                <I size={20} className="text-[#FF5364]" />
+                <p className="mt-6 text-sm font-semibold">{label}</p>
               </div>
             ))}
           </div>
@@ -61,1953 +131,1028 @@ function Floating({ image, t }) {
   );
 }
 
-export default function Login() {
-  const { session, setSession, ws } = useApp();
-  const [params] = useSearchParams();
+export default function Login({ roomSlugOverride = null }) {
+  const { session, ws, enterRoomSession, currentRoomSlug } = useApp();
+  const { slug: paramSlug } = useParams();
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+
+  const targetRoomSlug = isValidRoomSlug(roomSlugOverride || paramSlug)
+    ? roomSlugOverride || paramSlug
+    : null;
+  const switchMode = searchParams.get("switch") === "1";
+
   const [brand, setBrand] = useState({});
-  const status = params.get("status");
   const effectiveCopy = {
     ...(ws?.custom_copywriting || {}),
     ...(brand?.custom_copywriting || {}),
   };
   const t = (key, fallback) => getTranslation(key, effectiveCopy, fallback);
 
-  // Mode: 'login' | 'signup'
-  const [mode, setMode] = useState("login");
-
-  // Login form state
-  const [loginEmail, setLoginEmail] = useState("");
-  const [loginPassword, setLoginPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
-  const [busyLogin, setBusyLogin] = useState(false);
+  // 'signin' | 'rooms' | 'onboarding'
+  const [step, setStep] = useState("signin");
+  const [googleAccount, setGoogleAccount] = useState(null); // { email, name, picture, idToken, rooms, is_platform_owner }
+  const [recentGoogleAccounts, setRecentGoogleAccounts] = useState(() => getRecentGoogleAccounts());
+  const [busyGoogle, setBusyGoogle] = useState(false);
+  const [busyRecentEmail, setBusyRecentEmail] = useState("");
+  const [enteringSlug, setEnteringSlug] = useState("");
   const [loginAlert, setLoginAlert] = useState(null);
 
-  // Sign Up form state
-  const [signupForm, setSignupForm] = useState({
-    name: "",
-    email: "",
-    password: "",
-    confirmPassword: "",
-    department: "Marketing",
-    job_title: "",
-    note: "",
-    avatar: PRESET_AVATARS[0]
-  });
-  const [showSignupPassword, setShowSignupPassword] = useState(false);
-  const [busySignup, setBusySignup] = useState(false);
-  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  // Onboarding Profile State (mandatory for first-time room entry / join-by-code)
+  const [onboardingCtx, setOnboardingCtx] = useState(null); // { flow, slug, roomName, inviteCode, divisions, autoApproveEligible }
+  const [obName, setObName] = useState("");
+  const [obDept, setObDept] = useState("");
+  const [obTitle, setObTitle] = useState("");
+  const [obPhone, setObPhone] = useState("");
+  const [obWorkMode, setObWorkMode] = useState("On-site");
+  const [obNote, setObNote] = useState("");
+  const [busyOnboarding, setBusyOnboarding] = useState(false);
 
-  // Success dialog state for signup/access request
-  const [successDialog, setSuccessDialog] = useState(false);
-  const [registeredData, setRegisteredData] = useState(null);
+  // Modals
+  const [createRoomOpen, setCreateRoomOpen] = useState(false);
+  const [fallbackEmailModalOpen, setFallbackEmailModalOpen] = useState(false);
+  const [fallbackEmail, setFallbackEmail] = useState("");
+  const [fallbackName, setFallbackName] = useState("");
+  const [fallbackError, setFallbackError] = useState("");
+  const [busyFallback, setBusyFallback] = useState(false);
 
-  // Forgot Password modal state
-  const [forgotModalOpen, setForgotModalOpen] = useState(false);
-  const [forgotTab, setForgotTab] = useState("email"); // "email" | "approval" | "recovery"
-  const [forgotForm, setForgotForm] = useState({
-    email: "",
-    newPassword: "",
-    confirmPassword: "",
-    note: "",
-    recoveryKey: "",
-    otpCode: ""
-  });
-  const [showForgotPw, setShowForgotPw] = useState(false);
-  const [busyForgot, setBusyForgot] = useState(false);
-  const [forgotTicket, setForgotTicket] = useState(null); // { request_id, email, status, approved_by, rejected_by }
-  const [checkingForgot, setCheckingForgot] = useState(false);
-  const [verifiedEmailToken, setVerifiedEmailToken] = useState("");
-  const [verifiedGoogleEmail, setVerifiedGoogleEmail] = useState("");
-  const [verifyingGoogleEmail, setVerifyingGoogleEmail] = useState(false);
-  const [otpSent, setOtpSent] = useState(false);
-  const [sendingOtp, setSendingOtp] = useState(false);
-  const [otpNotice, setOtpNotice] = useState("");
+  const initialInviteCode = String(searchParams.get("invite") || "").trim().toUpperCase();
+  const [inviteCode, setInviteCode] = useState(initialInviteCode);
+  const [busyJoinCode, setBusyJoinCode] = useState(false);
 
-  // Google Sign-In / Onboarding modal state
-  const [googleModalOpen, setGoogleModalOpen] = useState(false);
-  const [googleModalStep, setGoogleModalStep] = useState("lookup"); // "lookup" | "complete_data"
-  const [googleFallbackReason, setGoogleFallbackReason] = useState("");
-  const [googleVerifiedByOAuth, setGoogleVerifiedByOAuth] = useState(false);
-  const [googleAutoApprove, setGoogleAutoApprove] = useState(false);
-  const [googleForm, setGoogleForm] = useState({
-    name: "",
-    email: "",
-    department: "",
-    job_title: "",
-    phone: "",
-    work_mode: "On-site",
-    note: "",
-    password: "",
-    confirmPassword: "",
-    avatar: PRESET_AVATARS[0],
-    idToken: ""
-  });
-  const [uploadingGooglePhoto, setUploadingGooglePhoto] = useState(false);
-  const [busyGoogle, setBusyGoogle] = useState(false);
-
-  const availableDivisions = Array.isArray(brand?.divisions) && brand.divisions.length > 0
-    ? brand.divisions
-    : DEFAULT_DIVISIONS;
-
-  const effectiveAllowedDomains = (() => {
-    const raw = ws?.allowed_domains ?? brand?.allowed_domains;
-    if (Array.isArray(raw) && raw.length > 0) {
-      return Array.from(
-        new Set(
-          raw
-            .flatMap((d) => String(d || "").split(","))
-            .map((d) => d.trim().toLowerCase().replace(/^@+/, ""))
-            .filter(Boolean)
-        )
-      );
-    }
-    if (typeof raw === "string" && raw.trim()) {
-      return Array.from(
-        new Set(
-          raw
-            .split(",")
-            .map((d) => d.trim().toLowerCase().replace(/^@+/, ""))
-            .filter(Boolean)
-        )
-      );
-    }
-    return ["asliri.id"];
-  })();
-  const autoJoinDomainEnabled = (ws?.auto_join_domain ?? brand?.auto_join_domain) !== false;
-  const requireApprovalEnabled = (ws?.require_approval ?? brand?.require_approval) !== false;
-
-  const getEmailDomain = (emailStr) => {
-    const clean = String(emailStr || "").trim().toLowerCase();
-    const atIdx = clean.lastIndexOf("@");
-    return atIdx >= 0 ? clean.slice(atIdx + 1) : "";
-  };
-
-  const isDomainAutoApproved = (emailStr) => {
-    if (!requireApprovalEnabled) return true;
-    if (!autoJoinDomainEnabled) return false;
-    const dom = getEmailDomain(emailStr);
-    return Boolean(dom && effectiveAllowedDomains.includes(dom));
-  };
-
-  const signupDomain = getEmailDomain(signupForm.email);
-  const signupAutoApproved = isDomainAutoApproved(signupForm.email);
-  const googleDomain = getEmailDomain(googleForm.email);
-  const effectiveGoogleAutoApprove = Boolean(googleAutoApprove || isDomainAutoApproved(googleForm.email));
-
+  // Detect any active Firebase Google user on mount/change and merge with recent accounts
   useEffect(() => {
-    if (!session?.user?.user_id) {
+    const syncFirebaseUser = (fbUser) => {
+      if (fbUser?.email) {
+        recordRecentGoogleAccount({
+          email: fbUser.email,
+          name: fbUser.displayName || fbUser.email.split("@")[0],
+          picture: fbUser.photoURL || "",
+          last_room_slug: targetRoomSlug || getActiveRoomSlug(),
+        });
+      }
+      setRecentGoogleAccounts(getRecentGoogleAccounts());
+    };
+    if (firebaseAuth?.currentUser) {
+      syncFirebaseUser(firebaseAuth.currentUser);
+    }
+    const unsub = subscribeFirebaseAuth((fbUser) => {
+      syncFirebaseUser(fbUser);
+    });
+    return () => unsub?.();
+  }, [targetRoomSlug]);
+
+  // Fetch target room public branding (or default room branding)
+  useEffect(() => {
+    let active = true;
+    const url = targetRoomSlug
+      ? `/saas/rooms/${encodeURIComponent(targetRoomSlug)}/public-branding`
+      : "/public/branding";
+    api
+      .get(url)
+      .then((r) => {
+        if (active && r?.data) setBrand(r.data);
+      })
+      .catch(() => {
+        if (targetRoomSlug && active) {
+          api.get("/public/branding").then((r) => active && setBrand(r.data)).catch(() => {});
+        }
+      });
+
+    attemptAutoHydrateServer(api)
+      .then((restored) => {
+        if (restored && active) {
+          api
+            .get(url)
+            .then((r) => active && r?.data && setBrand(r.data))
+            .catch(() => {});
+        }
+      })
+      .catch(() => false);
+    return () => {
+      active = false;
+    };
+  }, [targetRoomSlug]);
+
+  // Clear orphaned credentials when logged out cleanly
+  useEffect(() => {
+    if (!session?.user?.user_id && !switchMode) {
       try {
+        const rid = targetRoomSlug || getActiveRoomSlug();
         const hasStoredSession = Boolean(
-          sessionStorage.getItem("circle_tab_session_cache") ||
-            localStorage.getItem("circle_session_cache")
+          sessionStorage.getItem(roomStorageKey("circle_tab_session_cache", rid)) ||
+            localStorage.getItem(roomStorageKey("circle_session_cache", rid))
         );
         if (!hasStoredSession) {
-          setAuthToken(null);
-          setAuthUserId(null);
+          setAuthToken(null, rid);
+          setAuthUserId(null, rid);
         }
       } catch {
         setAuthToken(null);
         setAuthUserId(null);
       }
     }
-  }, [session?.user?.user_id]);
+  }, [session?.user?.user_id, targetRoomSlug, switchMode]);
 
-  useEffect(() => {
-    let active = true;
-    api.get("/public/branding").then((r) => {
-      if (!active) return;
-      setBrand(r.data);
-      if (Array.isArray(r.data?.divisions) && r.data.divisions.length > 0) {
-        const firstDept = r.data.divisions.find((d) => d.toLowerCase() !== "management") || r.data.divisions[0];
-        setSignupForm((prev) => ({
-          ...prev,
-          department: r.data.divisions.includes(prev.department) ? prev.department : firstDept
-        }));
-      }
-    }).catch(() => {});
-    attemptAutoHydrateServer(api).then((restored) => {
-      if (restored && active) {
-        api.get("/public/branding").then((r) => active && setBrand(r.data)).catch(() => {});
-      }
-    }).catch(() => false);
-    return () => { active = false; };
-  }, []);
-
-  // Poll Forgot Password approval status while dialog is open in pending state
-  useEffect(() => {
-    if (!forgotModalOpen || !forgotTicket?.request_id || forgotTicket?.status !== "pending") return undefined;
-    const timer = setInterval(async () => {
-      try {
-        const { data } = await api.get("/auth/forgot-password/status", {
-          params: { request_id: forgotTicket.request_id }
-        });
-        if (data?.status && data.status !== forgotTicket.status) {
-          setForgotTicket((prev) => (prev ? { ...prev, ...data } : prev));
-          if (data.status === "approved") {
-            toast.success("Reset password Anda sudah di-approve! Silakan login.");
-          } else if (data.status === "rejected") {
-            toast.error("Permintaan reset password Anda ditolak oleh Admin.");
-          }
-        }
-      } catch {}
-    }, 4000);
-    return () => clearInterval(timer);
-  }, [forgotModalOpen, forgotTicket?.request_id, forgotTicket?.status]);
-
-  if (session?.user?.user_id) return <Navigate to="/" replace />;
-
-  const handleSignupPhotoUpload = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      return toast.error("Pilih file gambar untuk foto profil");
+  // Redirect if already authenticated and NOT switching rooms
+  if (session?.user?.user_id && !switchMode) {
+    if (!targetRoomSlug || targetRoomSlug === currentRoomSlug) {
+      return <Navigate to={`/w/${currentRoomSlug}`} replace />;
     }
-    setUploadingPhoto(true);
-    try {
-      const up = await uploadFile(file);
-      if (up?.id) {
-        const url = fileUrl(up.id);
-        setSignupForm((prev) => ({ ...prev, avatar: url }));
-        toast.success("Foto profil berhasil diunggah!");
+  }
+
+  const runGoogleLookup = async ({ email, name, picture, idToken = "" }) => {
+    const cleanEmail = String(email || "").toLowerCase().trim();
+    if (!cleanEmail || !cleanEmail.includes("@")) {
+      toast.error("Masukkan alamat Email Google yang valid.");
+      return;
+    }
+    setLoginAlert(null);
+    await attemptAutoHydrateServer(api).catch(() => false);
+    const { data } = await api.post("/saas/auth/google-lookup", {
+      email: cleanEmail,
+      name: String(name || "").trim(),
+      picture: String(picture || "").trim(),
+      idToken,
+    });
+
+    const resolvedAcc = {
+      email: data.email || cleanEmail,
+      name: data.name || name || cleanEmail.split("@")[0],
+      picture: data.picture || picture || "",
+      idToken: idToken || "",
+      verified_oauth: Boolean(data.verified_oauth),
+      rooms: Array.isArray(data.rooms) ? data.rooms : [],
+      is_platform_owner: Boolean(data.is_platform_owner),
+    };
+
+    recordRecentGoogleAccount({
+      email: resolvedAcc.email,
+      name: resolvedAcc.name,
+      picture: resolvedAcc.picture,
+      last_room_slug: resolvedAcc.rooms?.[0]?.slug || targetRoomSlug || getActiveRoomSlug(),
+    });
+    setRecentGoogleAccounts(getRecentGoogleAccounts());
+
+    // Enforce 1 akun Google = 1 workspace:
+    // Kalo akun Google sudah punya room -> langsung masuk ke room tersebut.
+    if (resolvedAcc.rooms.length > 0) {
+      const boundRoom = resolvedAcc.rooms[0];
+      if (targetRoomSlug && targetRoomSlug !== boundRoom.slug) {
+        setLoginAlert({
+          type: "error",
+          message: `Akun ${resolvedAcc.email} sudah terdaftar di workspace "${boundRoom.name}". 1 akun Google hanya dapat masuk ke 1 workspace.`,
+        });
+        setGoogleAccount(resolvedAcc);
+        setStep("rooms");
+        return;
       }
-    } catch {
-      const reader = new FileReader();
-      reader.onload = () => {
-        if (typeof reader.result === "string") {
-          setSignupForm((prev) => ({ ...prev, avatar: reader.result }));
-          toast.success("Foto profil berhasil dipilih!");
-        }
-      };
-      reader.readAsDataURL(file);
+      await handleEnterRoom(boundRoom.slug, resolvedAcc);
+      return;
+    }
+
+    // Jika belum punya room sama sekali -> tampilkan opsi Masukan Undangan atau Buat Room Baru
+    setGoogleAccount(resolvedAcc);
+    setStep("rooms");
+  };
+
+  const handleRecentAccountClick = async (acc) => {
+    if (!acc?.email) return;
+    setBusyRecentEmail(acc.email);
+    setLoginAlert(null);
+    try {
+      let liveToken = "";
+      if (
+        firebaseAuth?.currentUser?.email &&
+        firebaseAuth.currentUser.email.toLowerCase().trim() === acc.email.toLowerCase().trim()
+      ) {
+        liveToken = (await firebaseAuth.currentUser.getIdToken().catch(() => "")) || "";
+      }
+      await runGoogleLookup({
+        email: acc.email,
+        name: acc.name,
+        picture: acc.picture,
+        idToken: liveToken,
+      });
+    } catch (err) {
+      const message = errMsg(err, "Gagal memeriksa room akun Google.");
+      setLoginAlert({ type: "error", message });
+      toast.error(message);
     } finally {
-      setUploadingPhoto(false);
-      e.target.value = "";
+      setBusyRecentEmail("");
     }
   };
 
-  // Submit Login
-  const handleLoginSubmit = async (e) => {
-    e.preventDefault();
-    if (!loginEmail.trim() || !loginPassword) {
-      return toast.error("Email dan password wajib diisi.");
-    }
-    setBusyLogin(true);
+  const handleGooglePopupSignIn = async () => {
+    setBusyGoogle(true);
     setLoginAlert(null);
     try {
-      const payload = {
-        email: loginEmail,
-        password: loginPassword,
-        known_accounts: getKnownAccountsFromVault(),
-      };
-      let res;
-      try {
-        res = await api.post("/auth/login", payload);
-      } catch (firstErr) {
-        const st = firstErr?.response?.status;
-        if (firstErr?.response?.data?.was_removed) {
-          removeAccountFromVault(loginEmail);
-          throw firstErr;
-        }
-        if (st === 401 || st === 404) {
-          const restored = await attemptAutoHydrateServer(api).catch(() => false);
-          if (restored) {
-            res = await api.post("/auth/login", payload);
-          } else {
-            throw firstErr;
-          }
-        } else {
-          throw firstErr;
-        }
+      const authRes = await googleBasicSignIn();
+      const fbUser = authRes?.user || authRes;
+      const email = String(authRes?.email || fbUser?.email || "").trim().toLowerCase();
+      const name = String(authRes?.name || fbUser?.displayName || (email ? email.split("@")[0] : "")).trim();
+      const picture = String(authRes?.picture || fbUser?.photoURL || "").trim();
+      const idToken = authRes?.idToken || (await fbUser?.getIdToken?.().catch(() => "")) || "";
+      if (!email) {
+        throw new Error("Akun Google tidak mengembalikan alamat email.");
       }
-      const { data } = res;
-      if (data?.account_vault_entry || data?.user) {
-        upsertAccountInVault(data.account_vault_entry || data.user);
-      }
-      if (data?.user?.user_id) {
-        setAuthUserId(data.user.user_id);
-      }
-      if (data?.token) {
-        setAuthToken(data.token);
-      }
-      setSession(data);
-      syncWorkspaceMirror(api, false).catch(() => {});
-      toast.success("Berhasil masuk ke workspace!");
+      await runGoogleLookup({
+        email,
+        name,
+        picture,
+        idToken,
+      });
     } catch (err) {
-      const respData = err?.response?.data;
-      if (respData?.status === "pending") {
-        setLoginAlert(respData.detail || "Akun Anda sedang dalam proses peninjauan & approval oleh Super Admin.");
-        toast.warning("Akun Anda sedang menunggu approval Super Admin.");
+      const code = err?.code || "";
+      const msg = String(err?.message || "").toLowerCase();
+      if (
+        code === "auth/popup-blocked" ||
+        code === "auth/popup-closed-by-user" ||
+        code === "auth/cancelled-popup-request" ||
+        code === "auth/unauthorized-domain" ||
+        msg.includes("403") ||
+        msg.includes("popup") ||
+        msg.includes("blocked")
+      ) {
+        toast.info("Popup Google dibatasi browser. Silakan lanjutkan dengan Email Google Anda.");
+        setFallbackError("");
+        setFallbackEmailModalOpen(true);
       } else {
-        const message = respData?.detail || errMsg(err, "Gagal masuk");
-        setLoginAlert(message);
+        const message = errMsg(err, "Autentikasi Google gagal. Gunakan opsi masuk Email Google.");
+        setLoginAlert({ type: "error", message });
         toast.error(message);
       }
     } finally {
-      setBusyLogin(false);
+      setBusyGoogle(false);
     }
   };
 
-  const openForgotModal = () => {
-    setForgotForm({
-      email: loginEmail || "",
-      newPassword: "",
-      confirmPassword: "",
-      note: "",
-      recoveryKey: "",
-      otpCode: ""
+  const handleFallbackEmailSubmit = async (e) => {
+    e.preventDefault();
+    const clean = fallbackEmail.trim().toLowerCase();
+    if (!clean || !clean.includes("@")) {
+      setFallbackError("Masukkan alamat Email Google yang valid.");
+      toast.error("Masukkan alamat Email Google yang valid.");
+      return;
+    }
+    setBusyFallback(true);
+    setFallbackError("");
+    try {
+      setManualGoogleAuth({ email: clean, name: fallbackName.trim() || clean.split("@")[0], picture: "" });
+      await runGoogleLookup({
+        email: clean,
+        name: fallbackName.trim() || clean.split("@")[0],
+        picture: "",
+        idToken: "",
+      });
+      setFallbackEmailModalOpen(false);
+    } catch (err) {
+      const msg = errMsg(err, "Gagal memverifikasi Email Google.");
+      setFallbackError(msg);
+      toast.error(msg);
+    } finally {
+      setBusyFallback(false);
+    }
+  };
+
+  const beginRoomOnboarding = (data, acc, flowFallback, codeFallback = "") => {
+    const divisions =
+      Array.isArray(data?.room?.divisions) && data.room.divisions.length > 0
+        ? data.room.divisions
+        : ["Executive / Management", "Product & Tech", "Marketing", "Design", "Finance", "Operations", "General"];
+    const gp = data?.google_profile || {};
+    setGoogleAccount(acc);
+    setOnboardingCtx({
+      flow: data?.flow || flowFallback,
+      slug: data?.room?.slug || "",
+      roomName: data?.room?.brand_name || data?.room?.name || data?.room?.slug || "Workspace",
+      inviteCode: data?.invite_code || codeFallback || "",
+      divisions,
+      autoApproveEligible: Boolean(data?.auto_approve_eligible),
+      wasRemoved: Boolean(data?.was_removed),
     });
-    setShowForgotPw(false);
-    setForgotTicket(null);
-    setVerifiedEmailToken("");
-    setVerifiedGoogleEmail("");
-    setOtpSent(false);
-    setOtpNotice("");
-    setForgotTab("email");
-    setForgotModalOpen(true);
-  };
-
-  const handleVerifyEmailViaGoogle = async () => {
-    setVerifyingGoogleEmail(true);
-    try {
-      const result = await googleBasicSignIn();
-      const userObj = result?.user;
-      const gEmail = String(userObj?.email || "").toLowerCase().trim();
-      if (!userObj || !gEmail) {
-        return toast.error("Gagal mendapatkan email dari verifikasi Google.");
-      }
-      const idToken = typeof userObj.getIdToken === "function" ? await userObj.getIdToken(true) : "";
-      if (!idToken) {
-        return toast.error("Token verifikasi email tidak ditemukan.");
-      }
-      setVerifiedEmailToken(idToken);
-      setVerifiedGoogleEmail(gEmail);
-      setForgotForm((prev) => ({ ...prev, email: gEmail }));
-      toast.success(`Email ${gEmail} berhasil diverifikasi! Silakan isi password baru Anda.`);
-    } catch (err) {
-      const code = err?.code || "";
-      if (code === "auth/popup-closed-by-user") {
-        toast.info("Popup verifikasi email ditutup.");
-      } else {
-        toast.error(errMsg(err, "Gagal memverifikasi kepemilikan email Google"));
-      }
-    } finally {
-      setVerifyingGoogleEmail(false);
-    }
-  };
-
-  const handleSendResetOtp = async () => {
-    const cleanEmail = forgotForm.email.trim();
-    if (!cleanEmail) {
-      return toast.error("Masukkan alamat email akun Anda terlebih dahulu.");
-    }
-    setSendingOtp(true);
-    setOtpNotice("");
-    try {
-      const { data } = await api.post("/auth/forgot-password/send-otp", {
-        email: cleanEmail,
-        known_accounts: getKnownAccountsFromVault(),
-      });
-      setOtpSent(true);
-      setOtpNotice(data?.detail || `Kode OTP 6 digit telah dikirim ke ${cleanEmail}.`);
-      if (data?.smtp_configured === false) {
-        toast.info(data.detail);
-      } else {
-        toast.success(data?.detail || "Kode OTP verifikasi dikirim ke email Anda!");
-      }
-    } catch (err) {
-      toast.error(errMsg(err, "Gagal mengirim kode OTP ke email"));
-    } finally {
-      setSendingOtp(false);
-    }
-  };
-
-  const handleEmailVerifiedResetSubmit = async (e) => {
-    e.preventDefault();
-    if (!forgotForm.email.trim() || !forgotForm.newPassword) {
-      return toast.error("Email dan password baru wajib diisi.");
-    }
-    if (forgotForm.newPassword.length < 6) {
-      return toast.error("Password baru minimal 6 karakter.");
-    }
-    if (forgotForm.newPassword !== forgotForm.confirmPassword) {
-      return toast.error("Konfirmasi password tidak cocok.");
-    }
-
-    setBusyForgot(true);
-    try {
-      let data;
-      if (verifiedEmailToken && verifiedGoogleEmail === forgotForm.email.trim().toLowerCase()) {
-        const res = await api.post("/auth/forgot-password/verify-google", {
-          email: forgotForm.email.trim(),
-          id_token: verifiedEmailToken,
-          new_password: forgotForm.newPassword,
-          known_accounts: getKnownAccountsFromVault(),
-        });
-        data = res.data;
-      } else if (forgotForm.otpCode.trim()) {
-        const res = await api.post("/auth/forgot-password/verify-otp", {
-          email: forgotForm.email.trim(),
-          otp_code: forgotForm.otpCode.trim(),
-          new_password: forgotForm.newPassword,
-          known_accounts: getKnownAccountsFromVault(),
-        });
-        data = res.data;
-      } else {
-        setBusyForgot(false);
-        return toast.error("Silakan klik Verifikasi Kepemilikan Email atau masukkan Kode OTP 6 digit terlebih dahulu.");
-      }
-
-      if (data?.account_vault_entry || data?.user) {
-        upsertAccountInVault(data.account_vault_entry || data.user);
-      }
-      toast.success(data?.detail || "Password berhasil direset!");
-      setLoginEmail(forgotForm.email.trim());
-      setLoginPassword("");
-      setLoginAlert(null);
-      setForgotModalOpen(false);
-    } catch (err) {
-      toast.error(errMsg(err, "Gagal mereset password melalui verifikasi email"));
-    } finally {
-      setBusyForgot(false);
-    }
-  };
-
-  const handleForgotApprovalSubmit = async (e) => {
-    e.preventDefault();
-    if (!forgotForm.email.trim() || !forgotForm.newPassword) {
-      return toast.error("Email dan password baru wajib diisi.");
-    }
-    if (forgotForm.newPassword.length < 6) {
-      return toast.error("Password baru minimal 6 karakter.");
-    }
-    if (forgotForm.newPassword !== forgotForm.confirmPassword) {
-      return toast.error("Konfirmasi password tidak cocok.");
-    }
-    setBusyForgot(true);
-    try {
-      const { data } = await api.post("/auth/forgot-password", {
-        email: forgotForm.email.trim(),
-        new_password: forgotForm.newPassword,
-        note: forgotForm.note.trim()
-      });
-      setForgotTicket({
-        request_id: data.request_id,
-        email: forgotForm.email.trim(),
-        status: data.status || "pending"
-      });
-      toast.success(data.detail || "Permintaan reset password berhasil diajukan!");
-    } catch (err) {
-      toast.error(errMsg(err, "Gagal mengajukan reset password"));
-    } finally {
-      setBusyForgot(false);
-    }
-  };
-
-  const handleCheckForgotStatus = async () => {
-    if (!forgotTicket?.request_id && !forgotForm.email.trim()) return;
-    setCheckingForgot(true);
-    try {
-      const { data } = await api.get("/auth/forgot-password/status", {
-        params: forgotTicket?.request_id
-          ? { request_id: forgotTicket.request_id }
-          : { email: forgotForm.email.trim() }
-      });
-      setForgotTicket((prev) => ({ ...(prev || {}), email: prev?.email || forgotForm.email.trim(), ...data }));
-      if (data.status === "approved") {
-        toast.success("Reset password sudah di-approve! Silakan login.");
-      } else if (data.status === "rejected") {
-        toast.error("Permintaan reset password ditolak.");
-      } else {
-        toast.info("Masih menunggu approval Super Admin / Manajer.");
-      }
-    } catch (err) {
-      toast.error(errMsg(err, "Status belum ditemukan"));
-    } finally {
-      setCheckingForgot(false);
-    }
-  };
-
-  const handleRecoveryKeySubmit = async (e) => {
-    e.preventDefault();
-    if (!forgotForm.email.trim() || !forgotForm.recoveryKey.trim() || !forgotForm.newPassword) {
-      return toast.error("Email, Kode Pemulihan, dan password baru wajib diisi.");
-    }
-    if (forgotForm.newPassword.length < 6) {
-      return toast.error("Password baru minimal 6 karakter.");
-    }
-    if (forgotForm.newPassword !== forgotForm.confirmPassword) {
-      return toast.error("Konfirmasi password tidak cocok.");
-    }
-    setBusyForgot(true);
-    try {
-      const { data } = await api.post("/auth/reset-with-recovery-key", {
-        email: forgotForm.email.trim(),
-        recovery_key: forgotForm.recoveryKey.trim(),
-        new_password: forgotForm.newPassword,
-        known_accounts: getKnownAccountsFromVault(),
-      });
-      if (data?.account_vault_entry || data?.user) {
-        upsertAccountInVault(data.account_vault_entry || data.user);
-      }
-      toast.success(data.detail || "Password berhasil direset!");
-      setLoginEmail(forgotForm.email.trim());
-      setLoginPassword("");
-      setLoginAlert(null);
-      setForgotModalOpen(false);
-    } catch (err) {
-      toast.error(errMsg(err, "Gagal mereset password dengan kode pemulihan"));
-    } finally {
-      setBusyForgot(false);
-    }
-  };
-
-  // Submit Signup
-  const handleSignupSubmit = async (e) => {
-    e.preventDefault();
-    if (!signupForm.name.trim() || !signupForm.email.trim() || !signupForm.password) {
-      return toast.error("Nama lengkap, email, dan password wajib diisi.");
-    }
-
-    if (signupForm.password.length < 6) {
-      return toast.error("Password minimal 6 karakter.");
-    }
-
-    if (signupForm.password !== signupForm.confirmPassword) {
-      return toast.error("Konfirmasi password tidak cocok dengan password yang dimasukkan.");
-    }
-
-    setBusySignup(true);
-    try {
-      const res = await api.post("/auth/register", signupForm);
-      if (res.data?.account_vault_entry || res.data?.user) {
-        upsertAccountInVault(res.data.account_vault_entry || res.data.user);
-      }
-      if (res.data?.status === "active" && res.data?.token) {
-        if (res.data?.user?.user_id) {
-          setAuthUserId(res.data.user.user_id);
-        }
-        setAuthToken(res.data.token);
-        setSession(res.data);
-        syncWorkspaceMirror(api, false).catch(() => {});
-        toast.success(res.data?.detail || "Akun domain perusahaan otomatis aktif! Selamat datang.");
-        return;
-      }
-      setRegisteredData({ ...signupForm });
-      setSuccessDialog(true);
-      toast.success(res.data?.detail || "Pendaftaran akun berhasil diajukan!");
-      const defaultDept = availableDivisions.find((d) => d.toLowerCase() !== "management") || availableDivisions[0] || "Marketing";
-      setSignupForm({
-        name: "",
-        email: "",
-        password: "",
-        confirmPassword: "",
-        department: defaultDept,
-        job_title: "",
-        note: "",
-        avatar: PRESET_AVATARS[0]
-      });
-    } catch (err) {
-      toast.error(err?.response?.data?.detail || errMsg(err, "Pendaftaran gagal"));
-    } finally {
-      setBusySignup(false);
-    }
-  };
-
-  const handleGooglePhotoUpload = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      return toast.error("Pilih file gambar untuk foto profil");
-    }
-    setUploadingGooglePhoto(true);
-    try {
-      const up = await uploadFile(file);
-      if (up?.id) {
-        const url = fileUrl(up.id);
-        setGoogleForm((prev) => ({ ...prev, avatar: url }));
-        toast.success("Foto profil berhasil diunggah!");
-      }
-    } catch {
-      const reader = new FileReader();
-      reader.onload = () => {
-        if (typeof reader.result === "string") {
-          setGoogleForm((prev) => ({ ...prev, avatar: reader.result }));
-          toast.success("Foto profil berhasil dipilih!");
-        }
-      };
-      reader.readAsDataURL(file);
-    } finally {
-      setUploadingGooglePhoto(false);
-      e.target.value = "";
-    }
-  };
-
-  const openGoogleOnboardingModal = ({
-    profile = {},
-    idToken = "",
-    verified = false,
-    autoApproveEligible = false,
-    fallbackReason = ""
-  }) => {
-    const deptFromProfile =
-      profile.department && availableDivisions.includes(profile.department)
-        ? profile.department
-        : "";
-    setGoogleFallbackReason(fallbackReason || "");
-    setGoogleVerifiedByOAuth(Boolean(verified));
-    setGoogleAutoApprove(Boolean(autoApproveEligible));
-    setGoogleForm({
-      name: profile.name || "",
-      email: profile.email || "",
-      department: deptFromProfile,
-      job_title: profile.job_title || "",
-      phone: profile.phone || "",
-      work_mode: profile.work_mode || "On-site",
-      note: profile.bio || "",
-      password: "",
-      confirmPassword: "",
-      avatar: profile.picture || signupForm.avatar || PRESET_AVATARS[0],
-      idToken: idToken || ""
-    });
-    setGoogleModalStep("complete_data");
-    setGoogleModalOpen(true);
-  };
-
-  const submitGoogleAccount = async (payload, allowHydrateRetry = true) => {
-    setBusyGoogle(true);
-    const fallbackDept = availableDivisions.find((d) => d.toLowerCase() !== "management") || availableDivisions[0] || "Marketing";
-    try {
-      const { data } = await api.post("/auth/google", {
-        email: payload.email,
-        name: payload.name,
-        picture: payload.picture || payload.avatar || signupForm.avatar,
-        avatar: payload.avatar || payload.picture || signupForm.avatar,
-        department: payload.department,
-        job_title: payload.job_title,
-        phone: payload.phone,
-        work_mode: payload.work_mode || "On-site",
-        note: payload.note || "",
-        password: payload.password || undefined,
-        mode: payload.mode || mode,
-        idToken: payload.idToken || undefined,
-        check_only: Boolean(payload.check_only),
-        profile_submitted: Boolean(payload.profile_submitted),
-        known_accounts: getKnownAccountsFromVault()
-      });
-
-      if (data?.status === "needs_onboarding") {
-        if (data?.was_removed) {
-          removeAccountFromVault(payload.email);
-          toast.info("Akun Anda sebelumnya telah dihapus oleh Super Admin. Silakan lengkapi data profil Anda kembali.");
-        } else if (allowHydrateRetry && !payload.profile_submitted && !data?.existing_user) {
-          const restored = await attemptAutoHydrateServer(api).catch(() => false);
-          if (restored) {
-            await submitGoogleAccount(payload, false);
-            return;
+    setObName(gp.name || acc?.name || "");
+    setObDept(gp.department && divisions.includes(gp.department) ? gp.department : "");
+    setObTitle(gp.job_title || "");
+    setObPhone(gp.phone || "");
+    setObWorkMode(gp.work_mode || "On-site");
+    setObNote(gp.bio || "");
+    setLoginAlert(
+      data?.was_removed
+        ? {
+            type: "quota",
+            message:
+              "Akun Anda sebelumnya telah dihapus dari workspace ini. Silakan lengkapi kembali data profil Anda untuk melanjutkan.",
           }
-        }
-        openGoogleOnboardingModal({
-          profile: {
-            email: data.google_profile?.email || payload.email,
-            name: data.google_profile?.name || payload.name || "",
-            picture: data.google_profile?.picture || payload.picture || "",
-            department: data.was_removed ? "" : (data.google_profile?.department || ""),
-            job_title: data.was_removed ? "" : (data.google_profile?.job_title || ""),
-            phone: data.was_removed ? "" : (data.google_profile?.phone || ""),
-            work_mode: data.was_removed ? "On-site" : (data.google_profile?.work_mode || "On-site"),
-            bio: data.was_removed ? "" : (data.google_profile?.bio || "")
-          },
-          idToken: payload.idToken || "",
-          verified: Boolean(payload.verifiedByOAuth),
-          autoApproveEligible: Boolean(data.auto_approve_eligible),
-          fallbackReason: payload.verifiedByOAuth ? "" : googleFallbackReason
-        });
-        return;
-      }
+        : null
+    );
+    setStep("onboarding");
+  };
 
-      if (data?.status === "ready_to_login") {
-        await submitGoogleAccount({
-          email: data.email || payload.email,
-          mode: payload.mode || mode,
-          idToken: payload.idToken || undefined,
-          check_only: false,
-          profile_submitted: false
-        }, false);
+  const handleEnterRoom = async (roomSlug, accOverride = null) => {
+    const acc = accOverride || googleAccount;
+    if (!acc?.email) {
+      toast.error("Pilih akun Google terlebih dahulu.");
+      return;
+    }
+    setEnteringSlug(roomSlug);
+    setLoginAlert(null);
+    try {
+      const { data } = await api.post(`/saas/rooms/${encodeURIComponent(roomSlug)}/enter`, {
+        email: acc.email,
+        name: acc.name,
+        picture: acc.picture,
+        idToken: acc.idToken || "",
+      });
+      if (data?.status === "needs_onboarding") {
+        beginRoomOnboarding(data, acc, "enter");
         return;
-      }
-
-      setGoogleModalOpen(false);
-      if (data?.account_vault_entry || data?.user) {
-        upsertAccountInVault(data.account_vault_entry || data.user);
       }
       if (data?.status === "registered_pending") {
-        setRegisteredData({
-          name: data.user?.name || payload.name,
-          email: data.user?.email || payload.email,
-          department: data.user?.department || payload.department || fallbackDept,
-          avatar: data.user?.avatar || payload.avatar || payload.picture || signupForm.avatar
-        });
-        setSuccessDialog(true);
-        toast.success(data.detail || "Pendaftaran akun Google berhasil diajukan!");
-      } else if (data?.user && data?.token) {
-        setManualGoogleAuth(data.user);
-        setAuthUserId(data.user.user_id);
-        setAuthToken(data.token);
-        setSession(data);
-        syncWorkspaceMirror(api, false).catch(() => {});
-        toast.success("Berhasil masuk menggunakan Google!");
-      }
-    } catch (errPost) {
-      const statusResp = errPost?.response?.data?.status;
-      if (statusResp === "pending") {
-        setGoogleModalOpen(false);
-        const msg = errPost?.response?.data?.detail || "Akun Google Anda sedang menunggu approval Super Admin.";
-        setLoginAlert(msg);
-        toast.warning(msg);
-      } else if (statusResp === "inactive") {
-        setGoogleModalOpen(false);
-        const msg = errPost?.response?.data?.detail || "Akun Anda dinonaktifkan atau ditolak.";
-        setLoginAlert(msg);
-        toast.error(msg);
-      } else {
-        toast.error(errPost?.response?.data?.detail || errMsg(errPost, "Gagal memproses akun Google"));
-      }
-    } finally {
-      setBusyGoogle(false);
-    }
-  };
-
-  const openGoogleEmailModal = (fallbackReasonCode = "") => {
-    setGoogleFallbackReason(fallbackReasonCode ? String(fallbackReasonCode) : "");
-    setGoogleVerifiedByOAuth(false);
-    setGoogleAutoApprove(false);
-    setGoogleModalStep("lookup");
-    setGoogleForm({
-      name: signupForm.name || "",
-      email: (mode === "login" ? loginEmail : signupForm.email) || loginEmail || "",
-      department: "",
-      job_title: signupForm.job_title || "",
-      phone: "",
-      work_mode: "On-site",
-      note: signupForm.note || "",
-      password: "",
-      confirmPassword: "",
-      avatar: signupForm.avatar || PRESET_AVATARS[0],
-      idToken: ""
-    });
-    setGoogleModalOpen(true);
-  };
-
-  // Google Sign-In / Sign-Up
-  const google = async () => {
-    let errReason = "";
-    try {
-      setBusyGoogle(true);
-      const res = await googleBasicSignIn();
-      if (res?.user?.email) {
-        let idToken = "";
-        try {
-          if (typeof res.user.getIdToken === "function") {
-            idToken = await res.user.getIdToken();
-          }
-        } catch {}
-        await submitGoogleAccount({
-          email: res.user.email,
-          name: res.user.displayName || "",
-          picture: res.user.photoURL || "",
-          mode,
-          idToken,
-          check_only: true,
-          verifiedByOAuth: true
-        });
+        setGoogleAccount(acc);
+        setLoginAlert({ type: "quota", message: data.detail });
+        setStep("rooms");
         return;
       }
+      enterRoomSession(data.slug, data);
+      toast.success(`Selamat datang di ${data.workspace?.name || roomSlug}!`);
+      navigate(`/w/${data.slug}`, { replace: true });
     } catch (err) {
-      errReason = String(err?.code || err?.message || "generic");
+      const status = err?.response?.status;
+      const errStatus = err?.response?.data?.status;
+      const detail = errMsg(err, "Gagal masuk ke workspace room.");
+      setLoginAlert({
+        type: status === 402 || errStatus === "pending" ? "quota" : "error",
+        message: detail,
+      });
+      toast.error(detail);
+      setGoogleAccount(acc);
+      setStep("rooms");
     } finally {
-      setBusyGoogle(false);
+      setEnteringSlug("");
     }
+  };
 
-    openGoogleEmailModal(errReason);
+  const handleJoinByCodeSubmit = async (e) => {
+    e.preventDefault();
+    const cleanCode = inviteCode.trim().toUpperCase();
+    const cleanEmail = (googleAccount?.email || "").trim().toLowerCase();
+    if (!cleanCode) return toast.error("Masukkan kode undangan room.");
+    if (!cleanEmail || !cleanEmail.includes("@")) {
+      return toast.error("Masuk dengan akun Google terlebih dahulu.");
+    }
+    setBusyJoinCode(true);
+    setLoginAlert(null);
+    try {
+      const { data } = await api.post("/saas/rooms/join-by-code", {
+        invite_code: cleanCode,
+        email: cleanEmail,
+        name: googleAccount?.name || cleanEmail.split("@")[0],
+        picture: googleAccount?.picture || "",
+        idToken: googleAccount?.idToken || "",
+      });
+      if (data?.status === "needs_onboarding") {
+        beginRoomOnboarding(data, googleAccount, "join_by_code", cleanCode);
+        return;
+      }
+      if (data?.status === "registered_pending") {
+        setLoginAlert({ type: "quota", message: data.detail });
+        toast.info(data.detail);
+        return;
+      }
+      enterRoomSession(data.slug, data);
+      toast.success(`Berhasil bergabung ke room ${data.workspace?.name || data.slug}!`);
+      navigate(`/w/${data.slug}`, { replace: true });
+    } catch (err) {
+      const errStatus = err?.response?.data?.status;
+      const detail = errMsg(err, "Gagal bergabung dengan kode undangan.");
+      setLoginAlert({ type: errStatus === "pending" ? "quota" : "error", message: detail });
+      toast.error(detail);
+    } finally {
+      setBusyJoinCode(false);
+    }
+  };
+
+  const handleOnboardingSubmit = async (e) => {
+    e.preventDefault();
+    if (!googleAccount?.email || !onboardingCtx) return;
+    if (!obName.trim() || !obDept.trim() || !obTitle.trim() || !obPhone.trim()) {
+      const msg = "Nama lengkap, divisi, jabatan/posisi, dan nomor WhatsApp wajib diisi.";
+      setLoginAlert({ type: "error", message: msg });
+      toast.error(msg);
+      return;
+    }
+    setBusyOnboarding(true);
+    setLoginAlert(null);
+    try {
+      const endpoint =
+        onboardingCtx.flow === "join_by_code"
+          ? "/saas/rooms/join-by-code"
+          : `/saas/rooms/${encodeURIComponent(onboardingCtx.slug)}/enter`;
+      const payload = {
+        ...(onboardingCtx.flow === "join_by_code" ? { invite_code: onboardingCtx.inviteCode } : {}),
+        email: googleAccount.email,
+        name: obName.trim(),
+        picture: googleAccount.picture || "",
+        idToken: googleAccount.idToken || "",
+        department: obDept.trim(),
+        job_title: obTitle.trim(),
+        phone: obPhone.trim(),
+        work_mode: obWorkMode || "On-site",
+        note: obNote.trim(),
+        profile_submitted: true,
+      };
+      const { data } = await api.post(endpoint, payload);
+      if (data?.status === "registered_pending") {
+        setOnboardingCtx(null);
+        setLoginAlert({ type: "quota", message: data.detail });
+        setStep("rooms");
+        toast.success("Data diri terkirim! Menunggu persetujuan Super Admin room.");
+        return;
+      }
+      enterRoomSession(data.slug, data);
+      toast.success(`Selamat datang di ${data.workspace?.name || onboardingCtx.roomName}!`);
+      navigate(`/w/${data.slug}`, { replace: true });
+    } catch (err) {
+      const detail = errMsg(err, "Gagal menyimpan data profil anggota.");
+      setLoginAlert({ type: err?.response?.status === 402 ? "quota" : "error", message: detail });
+      toast.error(detail);
+    } finally {
+      setBusyOnboarding(false);
+    }
+  };
+
+  const handleSwitchGoogleAccount = () => {
+    setGoogleAccount(null);
+    setOnboardingCtx(null);
+    setStep("signin");
+    setLoginAlert(null);
   };
 
   return (
-    <div className="flex min-h-dvh lg:h-dvh lg:overflow-hidden bg-background p-2.5 sm:p-5">
-      <Floating image={brand.login_image_file_id} t={t} />
-      <div className="flex flex-1 flex-col items-center justify-start lg:h-full lg:overflow-y-auto scroll-thin px-2.5 py-4 sm:px-4 sm:py-6 lg:max-w-[620px]">
-        <div className="my-auto w-full max-w-md py-2 sm:py-4 animate-rise">
-          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-ink mb-6">
-            {mode === "login" ? t("auth_welcome_login", "Selamat Datang Kembali") : t("auth_welcome_signup", "Daftar Akun Baru")}
-          </h1>
+    <div
+      className="flex min-h-screen w-full items-stretch bg-background p-3 sm:p-5 lg:h-screen lg:overflow-hidden font-sans"
+      data-testid="login-page"
+    >
+      {/* Left Showcase Panel */}
+      <Floating image={brand?.login_image_file_id} t={t} />
 
-          {/* Tab Switcher: Masuk vs Daftar Akun */}
-          <div className="flex rounded-2xl bg-surface2 p-1.5 border mb-6 shadow-xs" data-testid="auth-tab-group">
-            <button
-              type="button"
-              onClick={() => { setMode("login"); setLoginAlert(null); }}
-              className={`flex-1 rounded-xl py-2.5 text-xs font-bold transition-all cursor-pointer ${
-                mode === "login"
-                  ? "bg-surface text-ink shadow-sm"
-                  : "text-sub hover:text-ink"
-              }`}
-              data-testid="tab-login"
-            >
-              {t("auth_login_tab", "Masuk")}
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode("signup")}
-              className={`flex-1 rounded-xl py-2.5 text-xs font-bold transition-all cursor-pointer ${
-                mode === "signup"
-                  ? "bg-surface text-ink shadow-sm"
-                  : "text-sub hover:text-ink"
-              }`}
-              data-testid="tab-signup"
-            >
-              {t("auth_signup_tab", "Daftar Akun")}
-            </button>
+      {/* Right Auth / Room Picker Panel */}
+      <div className="flex w-full flex-col items-center justify-center px-3 py-6 sm:px-8 lg:w-[540px] lg:shrink-0 lg:overflow-y-auto scroll-thin">
+        <div className="w-full max-w-[440px] space-y-6">
+          {/* Top Brand Bar (Clean Wordmark — Buat Room hanya muncul setelah Google Sign-In bagi akun yang belum punya room) */}
+          <div className="flex items-center justify-center gap-3">
+            <img
+              src={resolveRoomLogo(brand?.logo_file_id)}
+              alt="ASLIWORKSPACE"
+              onError={(e) => {
+                e.currentTarget.src = DEFAULT_LOGO;
+              }}
+              className="h-10 w-10 rounded-full object-cover border border-slate-200 dark:border-slate-700 shrink-0"
+            />
+            <p className="truncate text-base font-extrabold tracking-tight text-ink">
+              {brand?.name || "ASLIWORKSPACE"}
+            </p>
           </div>
 
-          {/* URL Status Message if present */}
-          {status && (
-            <div className="mb-5 rounded-2xl border bg-soft-yellow p-3.5 text-xs text-amber-900 dark:text-amber-100 flex items-start gap-2.5 leading-relaxed" data-testid="login-status-message">
-              <ShieldAlert size={17} className="shrink-0 mt-0.5 text-amber-600" />
-              <span>
-                {status === "pending"
-                  ? t("auth_status_pending", STATUS_MSG.pending)
-                  : status === "inactive"
-                  ? t("auth_status_inactive", STATUS_MSG.inactive)
-                  : status === "not_allowed"
-                  ? t("auth_status_not_allowed", STATUS_MSG.not_allowed)
-                  : t("auth_status_error", STATUS_MSG.error)}
-              </span>
-            </div>
-          )}
-
-          {/* Alert Message for Login */}
-          {loginAlert && (
-            <div className="mb-5 rounded-2xl border border-amber-300 bg-amber-50 dark:bg-amber-950/40 p-3.5 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-2.5 leading-relaxed animate-fadeIn">
-              <ShieldAlert size={17} className="shrink-0 mt-0.5 text-amber-600" />
-              <span>{loginAlert}</span>
-            </div>
-          )}
-
-          {/* FORM 1: LOGIN */}
-          {mode === "login" && (
-            <form onSubmit={handleLoginSubmit} className="space-y-4 animate-fadeIn" data-testid="login-form">
-              <div>
-                <label className="mb-1.5 block text-xs font-semibold text-sub">{t("auth_email_label", "Alamat Email *")}</label>
-                <div className="relative flex items-center">
-                  <Mail size={16} className="absolute left-3.5 text-sub" />
-                  <input
-                    type="email"
-                    required
-                    value={loginEmail}
-                    onChange={(e) => setLoginEmail(e.target.value)}
-                    placeholder={t("auth_email_placeholder", "nama@asliri.id atau email perusahaan")}
-                    className="h-11 w-full rounded-2xl border bg-surface pl-10 pr-4 text-xs text-ink outline-none transition-colors focus:border-brand"
-                    data-testid="login-email-input"
-                  />
-                </div>
+          {/* Step 1: Google-Only Sign In */}
+          {step === "signin" && (
+            <div className="space-y-5 pt-2" data-testid="login-signin-step">
+              <div className="text-center">
+                <h1 className="text-3xl sm:text-[34px] font-extrabold tracking-tight text-ink leading-tight">
+                  Selamat Datang Kembali
+                </h1>
               </div>
 
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-xs font-semibold text-sub">{t("auth_password_label", "Password *")}</label>
-                  <button
-                    type="button"
-                    onClick={openForgotModal}
-                    className="text-[11px] font-semibold text-brand hover:underline cursor-pointer"
-                    data-testid="login-forgot-password-link"
-                  >
-                    {t("auth_forgot_password", "Lupa password?")}
-                  </button>
-                </div>
-                <div className="relative flex items-center">
-                  <Lock size={16} className="absolute left-3.5 text-sub" />
-                  <input
-                    type={showPassword ? "text" : "password"}
-                    required
-                    value={loginPassword}
-                    onChange={(e) => setLoginPassword(e.target.value)}
-                    placeholder={t("auth_password_placeholder", "Masukkan password")}
-                    className="h-11 w-full rounded-2xl border bg-surface pl-10 pr-10 text-xs text-ink outline-none transition-colors focus:border-brand"
-                    data-testid="login-password-input"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3.5 text-sub hover:text-ink cursor-pointer"
-                  >
-                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={busyLogin}
-                className="btn-accent h-11 w-full rounded-2xl text-xs font-bold shadow-md transition-all hover:shadow-lg disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer mt-2"
-                data-testid="login-submit-btn"
-              >
-                {busyLogin ? t("auth_submitting_login", "Memproses...") : t("auth_submit_login", "Masuk ke Workspace")}
-                <ArrowRight size={15} />
-              </button>
-            </form>
-          )}
-
-          {/* FORM 2: SIGN UP */}
-          {mode === "signup" && (
-            <form onSubmit={handleSignupSubmit} className="space-y-4 animate-fadeIn" data-testid="signup-form">
-              {/* Avatar selection (6 options + Direct Photo Upload) */}
-              <div className="rounded-2xl border bg-surface2 p-3.5">
-                <div className="flex items-center justify-between mb-2.5">
-                  <span className="text-xs font-semibold text-sub">{t("auth_signup_photo_label", "Foto Profil")}</span>
-                  <label className="inline-flex items-center gap-1.5 rounded-xl border bg-surface px-2.5 py-1 text-[11px] font-semibold text-ink hover:border-brand hover:text-brand transition-colors cursor-pointer shadow-2xs" data-testid="signup-upload-photo-btn">
-                    <Upload size={12} />
-                    <span>{uploadingPhoto ? t("auth_uploading_photo", "Mengunggah...") : t("auth_signup_upload_btn", "Unggah Foto")}</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={handleSignupPhotoUpload}
-                      className="hidden"
-                      data-testid="signup-upload-photo-input"
-                    />
-                  </label>
-                </div>
-                <div className="flex items-center gap-3.5">
-                  <div className="relative shrink-0">
-                    <img
-                      src={signupForm.avatar}
-                      alt="Selected Avatar"
-                      className="h-14 w-14 rounded-full object-cover border-2 border-brand shadow-sm"
-                    />
-                    <div className="absolute -bottom-0.5 -right-0.5 bg-brand text-white rounded-full p-0.5 shadow-xs">
-                      <Check size={10} strokeWidth={3} />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-6 gap-1.5 sm:gap-2 flex-1">
-                    {PRESET_AVATARS.slice(0, 6).map((avUrl, idx) => (
-                      <button
-                        key={idx}
-                        type="button"
-                        onClick={() => setSignupForm({ ...signupForm, avatar: avUrl })}
-                        className={`h-8 w-8 sm:h-9 sm:w-9 rounded-full overflow-hidden border-2 transition-transform hover:scale-110 cursor-pointer ${
-                          signupForm.avatar === avUrl ? "border-brand scale-105" : "border-transparent opacity-80 hover:opacity-100"
-                        }`}
-                        data-testid={`signup-avatar-option-${idx}`}
-                      >
-                        <img src={avUrl} alt={`Avatar ${idx + 1}`} className="h-full w-full object-cover" />
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <label className="mb-1.5 block text-xs font-semibold text-sub">{t("auth_name_label", "Nama Lengkap *")}</label>
-                <div className="relative flex items-center">
-                  <User size={16} className="absolute left-3.5 text-sub" />
-                  <input
-                    type="text"
-                    required
-                    value={signupForm.name}
-                    onChange={(e) => setSignupForm({ ...signupForm, name: e.target.value })}
-                    placeholder={t("auth_name_placeholder", "Contoh: Saeful Hidayat")}
-                    className="h-10 w-full rounded-2xl border bg-surface pl-10 pr-4 text-xs text-ink outline-none transition-colors focus:border-brand"
-                    data-testid="signup-name-input"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="mb-1.5 block text-xs font-semibold text-sub">{t("auth_email_label", "Alamat Email *")}</label>
-                <div className="relative flex items-center">
-                  <Mail size={16} className="absolute left-3.5 text-sub" />
-                  <input
-                    type="email"
-                    required
-                    value={signupForm.email}
-                    onChange={(e) => setSignupForm({ ...signupForm, email: e.target.value })}
-                    placeholder={t("auth_signup_email_placeholder", "email.anda@asliri.id atau domain kantor")}
-                    className="h-10 w-full rounded-2xl border bg-surface pl-10 pr-4 text-xs text-ink outline-none transition-colors focus:border-brand"
-                    data-testid="signup-email-input"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1.5 block text-xs font-semibold text-sub">{t("auth_password_label", "Password *")}</label>
-                  <div className="relative flex items-center">
-                    <Lock size={15} className="absolute left-3 text-sub" />
-                    <input
-                      type={showSignupPassword ? "text" : "password"}
-                      required
-                      value={signupForm.password}
-                      onChange={(e) => setSignupForm({ ...signupForm, password: e.target.value })}
-                      placeholder={t("auth_signup_password_placeholder", "Min. 6 karakter")}
-                      className="h-10 w-full rounded-2xl border bg-surface pl-9 pr-8 text-xs text-ink outline-none transition-colors focus:border-brand"
-                      data-testid="signup-password-input"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowSignupPassword(!showSignupPassword)}
-                      className="absolute right-2.5 text-sub hover:text-ink cursor-pointer"
-                    >
-                      {showSignupPassword ? <EyeOff size={14} /> : <Eye size={14} />}
-                    </button>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="mb-1.5 block text-xs font-semibold text-sub">{t("auth_confirm_password_label", "Konfirmasi Password *")}</label>
-                  <div className="relative flex items-center">
-                    <Lock size={15} className="absolute left-3 text-sub" />
-                    <input
-                      type={showSignupPassword ? "text" : "password"}
-                      required
-                      value={signupForm.confirmPassword}
-                      onChange={(e) => setSignupForm({ ...signupForm, confirmPassword: e.target.value })}
-                      placeholder={t("auth_signup_confirm_placeholder", "Ulangi")}
-                      className="h-10 w-full rounded-2xl border bg-surface pl-9 pr-3 text-xs text-ink outline-none transition-colors focus:border-brand"
-                      data-testid="signup-confirmpassword-input"
-                    />
-                  </div>
-                </div>
-              </div>
-              <PasswordStrengthMeter password={signupForm.password} />
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1.5 block text-xs font-semibold text-sub">{t("auth_division_label", "Divisi")}</label>
-                  <div className="relative flex items-center">
-                    <Building2 size={15} className="absolute left-3.5 text-sub pointer-events-none z-10" />
-                    <AppSelect
-                      value={signupForm.department}
-                      onChange={(e) => setSignupForm({ ...signupForm, department: e.target.value })}
-                      style={{ paddingLeft: "2.35rem" }}
-                      className="h-10 w-full rounded-xl border border-border bg-surface2/75 pr-3 text-xs sm:text-sm font-semibold text-ink"
-                      data-testid="signup-dept-select"
-                    >
-                      {availableDivisions.map((d) => (
-                        <option key={d} value={d}>{d}</option>
-                      ))}
-                    </AppSelect>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="mb-1.5 block text-xs font-semibold text-sub">{t("auth_job_label", "Jabatan / Posisi")}</label>
-                  <div className="relative flex items-center">
-                    <Briefcase size={15} className="absolute left-3 text-sub pointer-events-none" />
-                    <input
-                      type="text"
-                      value={signupForm.job_title}
-                      onChange={(e) => setSignupForm({ ...signupForm, job_title: e.target.value })}
-                      placeholder={t("auth_job_placeholder", "Mis. Senior Specialist")}
-                      className="h-10 w-full rounded-2xl border bg-surface pl-9 pr-3 text-xs text-ink outline-none transition-colors focus:border-brand"
-                      data-testid="signup-title-input"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <label className="mb-1.5 block text-xs font-semibold text-sub">{t("auth_note_label", "Catatan")}</label>
-                <textarea
-                  rows={2}
-                  value={signupForm.note}
-                  onChange={(e) => setSignupForm({ ...signupForm, note: e.target.value })}
-                  placeholder={t("auth_note_placeholder", "Keterangan singkat keperluan bergabung...")}
-                  className="w-full rounded-2xl border bg-surface p-2.5 text-xs text-ink outline-none focus:border-brand resize-none"
-                  data-testid="signup-note-input"
-                />
-              </div>
-
-              {signupAutoApproved ? (
-                <div className="rounded-xl border border-emerald-200 dark:border-emerald-800/50 bg-emerald-50/75 dark:bg-emerald-950/30 p-2.5 text-[11px] text-emerald-900 dark:text-emerald-200 leading-relaxed flex items-start gap-2" data-testid="signup-auto-approve-notice">
-                  <CheckCircle2 size={14} className="shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" />
-                  <span>
-                    {requireApprovalEnabled && signupDomain
-                      ? <>Domain <b>@{signupDomain}</b> terdaftar sebagai domain perusahaan — akun Anda akan langsung aktif tanpa perlu approval Admin.</>
-                      : "Akun Anda akan langsung aktif dan masuk ke workspace setelah pendaftaran."}
-                  </span>
-                </div>
-              ) : (
-                <div className="rounded-xl border border-amber-200 dark:border-amber-800/50 bg-amber-50/70 dark:bg-amber-950/30 p-2.5 text-[11px] text-amber-900 dark:text-amber-200 leading-relaxed" data-testid="signup-approval-notice">
-                  {t("auth_approval_notice", "⚠️ Catatan Approval: Akun di luar domain perusahaan akan berstatus pending dan memerlukan approval Super Admin.")}
-                  {autoJoinDomainEnabled && effectiveAllowedDomains.length > 0 && (
-                    <span className="block mt-1 text-[10px] opacity-90">
-                      Domain otomatis aktif tanpa approval: <b>{effectiveAllowedDomains.map((d) => `@${d}`).join(", ")}</b>
-                    </span>
-                  )}
-                </div>
-              )}
-
-              <button
-                type="submit"
-                disabled={busySignup}
-                className="btn-accent h-11 w-full rounded-2xl text-xs font-bold shadow-md transition-all hover:shadow-lg disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer mt-2"
-                data-testid="signup-submit-btn"
-              >
-                {busySignup
-                  ? t("auth_submitting_signup", "Mengirim Pendaftaran...")
-                  : signupAutoApproved
-                  ? "Daftar & Langsung Aktif"
-                  : t("auth_submit_signup", "Daftar & Minta Approval Super Admin")}
-              </button>
-            </form>
-          )}
-
-          {/* SECONDARY METHODS DIVIDER */}
-          <div className="my-5 flex items-center gap-3">
-            <div className="h-[1px] flex-1 bg-border" />
-            <span className="text-[11px] font-medium text-sub">{t("auth_google_divider", "atau gunakan akun Google")}</span>
-            <div className="h-[1px] flex-1 bg-border" />
-          </div>
-
-          {/* SECONDARY METHOD: Google Sign-In / Sign-Up */}
-          <button
-            type="button"
-            disabled={busyGoogle}
-            onClick={google}
-            className="flex h-11 w-full items-center justify-center gap-3 rounded-2xl border bg-surface text-xs font-semibold shadow-xs transition-transform hover:-translate-y-0.5 active:translate-y-0 cursor-pointer disabled:opacity-60"
-            data-testid="login-google-button"
-          >
-            <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>
-            {busyGoogle
-              ? t("auth_google_modal_busy", "Memproses Akun Google...")
-              : mode === "signup"
-              ? t("auth_google_signup", "Daftar dengan Akun Google")
-              : t("auth_google_login", "Masuk dengan Akun Google")}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => openGoogleEmailModal("")}
-            className="mt-2 w-full text-center text-[11px] font-semibold text-brand hover:underline cursor-pointer"
-            data-testid="login-google-direct-btn"
-          >
-            {t("auth_google_fallback_link", "Muncul Error 403 / akses diblokir? Lanjutkan dengan Email Kantor / Google")}
-          </button>
-
-          <p className="mt-3.5 flex items-center justify-center gap-1.5 text-[11px] text-sub text-center">
-            <ShieldCheck size={13} className="shrink-0 text-emerald-600 dark:text-emerald-400" />
-            <span>
-              {autoJoinDomainEnabled && effectiveAllowedDomains.length > 0
-                ? `Email domain ${effectiveAllowedDomains.map((d) => `@${d}`).join(", ")} otomatis aktif tanpa approval; domain lain ditinjau Super Admin.`
-                : t("auth_footer_security_note", "Semua permohonan akun ditinjau langsung oleh Super Admin workspace.")}
-            </span>
-          </p>
-        </div>
-      </div>
-
-      {/* Google Account Sign-In & Required Data Completion Modal */}
-      <Dialog open={googleModalOpen} onOpenChange={setGoogleModalOpen}>
-        <DialogContent className="max-w-lg max-h-[92dvh] overflow-y-auto scroll-thin rounded-3xl bg-surface p-6 shadow-xl" data-testid="google-auth-dialog">
-          <DialogHeader>
-            <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-2xl border bg-surface2 shadow-xs">
-              <svg width="24" height="24" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>
-            </div>
-            <DialogTitle className="text-center text-lg font-bold text-ink">
-              {googleModalStep === "complete_data"
-                ? "Lengkapi Data Akun Google"
-                : mode === "signup"
-                ? t("auth_google_signup", "Daftar dengan Akun Google")
-                : t("auth_google_login", "Masuk dengan Akun Google")}
-            </DialogTitle>
-            <DialogDescription className="text-center text-xs text-sub leading-relaxed">
-              {googleModalStep === "complete_data"
-                ? effectiveGoogleAutoApprove
-                  ? "Akun Google Anda terhubung. Silakan isi data diri berikut terlebih dahulu sebelum masuk ke workspace."
-                  : "Silakan lengkapi data diri Anda terlebih dahulu sebelum mengirim permohonan akses ke Super Admin."
-                : t("auth_google_modal_login_desc", "Masukkan email Google Anda dan lengkapi data diri sebelum masuk ke workspace ASLI.")}
-            </DialogDescription>
-          </DialogHeader>
-
-          {googleModalStep === "lookup" ? (
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (!googleForm.email.trim()) return toast.error("Masukkan alamat email Google Anda");
-                submitGoogleAccount({
-                  email: googleForm.email.trim(),
-                  mode,
-                  check_only: true,
-                  verifiedByOAuth: false
-                });
-              }}
-              className="space-y-3.5 pt-2"
-            >
-              {googleFallbackReason && (
-                <div className="rounded-xl border border-amber-200 dark:border-amber-800/50 bg-amber-50/80 dark:bg-amber-950/30 p-2.5 text-[11px] text-amber-900 dark:text-amber-200 leading-relaxed">
-                  {googleFallbackReason.includes("unauthorized-domain") ? (
-                    <>
-                      Domain <b>{window.location.hostname}</b> belum terdaftar di <b>Authorized Domains</b> Firebase Auth. Masukkan email Anda di bawah untuk melanjutkan.
-                    </>
-                  ) : googleFallbackReason.includes("popup-blocked") ? (
-                    <>
-                      Popup Google diblokir oleh browser Anda. Izinkan pop-up atau masukkan email Anda di bawah untuk melanjutkan.
-                    </>
-                  ) : googleFallbackReason.includes("popup-closed-by-user") ? (
-                    <>
-                      Popup login Google ditutup sebelum selesai. Anda tetap bisa memasukkan email Anda di bawah untuk melanjutkan.
-                    </>
-                  ) : (
-                    <>
-                      Popup Google OAuth sedang dibatasi atau gagal (<b>Error 403 / Testing Mode</b>). Masukkan email Anda di bawah untuk melanjutkan.
-                    </>
-                  )}
-                </div>
-              )}
-
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_google_email_label", "Email Google *")}</label>
-                <div className="relative flex items-center">
-                  <Mail size={15} className="absolute left-3 text-sub" />
-                  <input
-                    type="email"
-                    required
-                    autoFocus
-                    value={googleForm.email}
-                    onChange={(e) => setGoogleForm({ ...googleForm, email: e.target.value })}
-                    placeholder={t("auth_google_email_ph", "nama@gmail.com atau email Google Workspace")}
-                    className="h-10 w-full rounded-xl border bg-surface2 pl-9 pr-3 text-xs text-ink outline-none focus:border-brand"
-                    data-testid="google-modal-email"
-                  />
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={busyGoogle}
-                className="btn-accent h-11 w-full rounded-2xl text-xs font-bold shadow-md cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
-                data-testid="google-modal-continue"
-              >
-                {busyGoogle ? t("auth_google_modal_busy", "Memproses Akun Google...") : "Lanjutkan & Cek Data Akun"}
-                <ArrowRight size={14} />
-              </button>
-            </form>
-          ) : (
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (!googleForm.email.trim()) return toast.error("Email Google wajib diisi.");
-                if (!googleForm.name.trim()) return toast.error("Nama lengkap wajib diisi.");
-                if (!googleForm.department.trim()) return toast.error("Silakan pilih divisi Anda terlebih dahulu.");
-                if (!googleForm.job_title.trim()) return toast.error("Jabatan / posisi wajib diisi.");
-                if (!googleForm.phone.trim()) return toast.error("Nomor telepon / WhatsApp wajib diisi.");
-                if (googleForm.password && googleForm.password.length < 6) {
-                  return toast.error("Password cadangan minimal 6 karakter.");
-                }
-                if (googleForm.password && googleForm.password !== googleForm.confirmPassword) {
-                  return toast.error("Konfirmasi password tidak cocok.");
-                }
-                submitGoogleAccount({
-                  email: googleForm.email.trim(),
-                  name: googleForm.name.trim(),
-                  avatar: googleForm.avatar,
-                  picture: googleForm.avatar,
-                  department: googleForm.department.trim(),
-                  job_title: googleForm.job_title.trim(),
-                  phone: googleForm.phone.trim(),
-                  work_mode: googleForm.work_mode || "On-site",
-                  note: googleForm.note.trim(),
-                  password: googleForm.password || undefined,
-                  idToken: googleForm.idToken || undefined,
-                  mode,
-                  check_only: false,
-                  profile_submitted: true
-                });
-              }}
-              className="space-y-3.5 pt-2"
-              data-testid="google-onboarding-form"
-            >
-              {/* Google Verified Banner + Photo */}
-              <div className="rounded-2xl border bg-surface2 p-3">
-                <div className="flex items-center justify-between gap-2 mb-2.5">
-                  <div className="min-w-0">
-                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300">
-                      <Check size={11} />
-                      {googleVerifiedByOAuth ? "Akun Google Terverifikasi" : "Email Google"}
-                    </span>
-                    <p className="mt-1 truncate text-xs font-semibold text-ink">{googleForm.email}</p>
-                  </div>
-                  <label className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border bg-surface px-2.5 py-1.5 text-[11px] font-semibold text-ink hover:border-brand hover:text-brand transition-colors cursor-pointer">
-                    <Upload size={12} />
-                    <span>{uploadingGooglePhoto ? "Mengunggah..." : "Ganti Foto"}</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={handleGooglePhotoUpload}
-                      className="hidden"
-                    />
-                  </label>
-                </div>
-                <div className="flex items-center gap-3">
-                  <img
-                    src={googleForm.avatar}
-                    alt="Avatar"
-                    className="h-12 w-12 shrink-0 rounded-full object-cover border-2 border-brand shadow-xs"
-                  />
-                  <div className="grid grid-cols-6 gap-1.5 flex-1">
-                    {PRESET_AVATARS.slice(0, 6).map((avUrl, idx) => (
-                      <button
-                        key={idx}
-                        type="button"
-                        onClick={() => setGoogleForm({ ...googleForm, avatar: avUrl })}
-                        className={`h-8 w-8 rounded-full overflow-hidden border-2 transition-transform hover:scale-110 cursor-pointer ${
-                          googleForm.avatar === avUrl ? "border-brand scale-105" : "border-transparent opacity-80 hover:opacity-100"
-                        }`}
-                      >
-                        <img src={avUrl} alt={`Avatar ${idx + 1}`} className="h-full w-full object-cover" />
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {!googleVerifiedByOAuth && (
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_google_email_label", "Email Google *")}</label>
-                  <input
-                    type="email"
-                    required
-                    value={googleForm.email}
-                    onChange={(e) => setGoogleForm({ ...googleForm, email: e.target.value })}
-                    placeholder={t("auth_google_email_ph", "nama@gmail.com atau email Google Workspace")}
-                    className="h-10 w-full rounded-xl border bg-surface2 px-3 text-xs text-ink outline-none focus:border-brand"
-                    data-testid="google-modal-email"
-                  />
-                </div>
-              )}
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_name_label", "Nama Lengkap *")}</label>
-                  <div className="relative flex items-center">
-                    <User size={15} className="absolute left-3 text-sub" />
-                    <input
-                      type="text"
-                      required
-                      autoFocus
-                      value={googleForm.name}
-                      onChange={(e) => setGoogleForm({ ...googleForm, name: e.target.value })}
-                      placeholder={t("auth_google_name_ph", "Nama sesuai akun Google Anda")}
-                      className="h-10 w-full rounded-xl border bg-surface2 pl-9 pr-3 text-xs text-ink outline-none focus:border-brand"
-                      data-testid="google-modal-name"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-sub">No. Telepon / WhatsApp *</label>
-                  <div className="relative flex items-center">
-                    <Phone size={15} className="absolute left-3 text-sub" />
-                    <input
-                      type="tel"
-                      required
-                      value={googleForm.phone}
-                      onChange={(e) => setGoogleForm({ ...googleForm, phone: e.target.value })}
-                      placeholder="Contoh: 08123456789"
-                      className="h-10 w-full rounded-xl border bg-surface2 pl-9 pr-3 text-xs text-ink outline-none focus:border-brand"
-                      data-testid="google-modal-phone"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_division_label", "Divisi")} *</label>
-                  <AppSelect
-                    value={googleForm.department}
-                    onChange={(e) => setGoogleForm({ ...googleForm, department: e.target.value })}
-                    className="h-10 w-full rounded-xl border border-border bg-surface2/75 px-3.5 text-xs sm:text-sm font-semibold text-ink"
-                    data-testid="google-modal-dept"
-                  >
-                    <option value="">-- Pilih Divisi --</option>
-                    {availableDivisions.map((d) => (
-                      <option key={d} value={d}>{d}</option>
-                    ))}
-                  </AppSelect>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_job_label", "Jabatan / Posisi")} *</label>
-                  <div className="relative flex items-center">
-                    <Briefcase size={15} className="absolute left-3 text-sub pointer-events-none" />
-                    <input
-                      type="text"
-                      required
-                      value={googleForm.job_title}
-                      onChange={(e) => setGoogleForm({ ...googleForm, job_title: e.target.value })}
-                      placeholder={t("auth_job_placeholder", "Mis. UI/UX Designer")}
-                      className="h-10 w-full rounded-xl border bg-surface2 pl-9 pr-3 text-xs text-ink outline-none focus:border-brand"
-                      data-testid="google-modal-title"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-sub">Mode Kerja</label>
-                  <div className="relative flex items-center">
-                    <MapPin size={15} className="absolute left-3.5 text-sub pointer-events-none z-10" />
-                    <AppSelect
-                      value={googleForm.work_mode}
-                      onChange={(e) => setGoogleForm({ ...googleForm, work_mode: e.target.value })}
-                      style={{ paddingLeft: "2.35rem" }}
-                      className="h-10 w-full rounded-xl border border-border bg-surface2/75 pr-3 text-xs sm:text-sm font-semibold text-ink"
-                    >
-                      <option value="On-site">On-site</option>
-                      <option value="Hybrid">Hybrid</option>
-                      <option value="Remote">Remote</option>
-                    </AppSelect>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-sub">Password Cadangan (Opsional)</label>
-                  <input
-                    type="password"
-                    value={googleForm.password}
-                    onChange={(e) => setGoogleForm({ ...googleForm, password: e.target.value })}
-                    placeholder="Min. 6 karakter (jika perlu)"
-                    className="h-10 w-full rounded-xl border bg-surface2 px-3 text-xs text-ink outline-none focus:border-brand"
-                  />
-                </div>
-              </div>
-
-              {googleForm.password && (
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-sub">Konfirmasi Password Cadangan *</label>
-                  <input
-                    type="password"
-                    required
-                    value={googleForm.confirmPassword}
-                    onChange={(e) => setGoogleForm({ ...googleForm, confirmPassword: e.target.value })}
-                    placeholder="Ulangi password cadangan"
-                    className="h-10 w-full rounded-xl border bg-surface2 px-3 text-xs text-ink outline-none focus:border-brand"
-                  />
-                </div>
-              )}
-
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-sub">Biodata / Catatan Singkat</label>
-                <textarea
-                  rows={2}
-                  value={googleForm.note}
-                  onChange={(e) => setGoogleForm({ ...googleForm, note: e.target.value })}
-                  placeholder="Ceritakan singkat peran/keahlian Anda..."
-                  className="w-full rounded-xl border bg-surface2 p-2.5 text-xs text-ink outline-none focus:border-brand resize-none"
-                />
-              </div>
-
-              {effectiveGoogleAutoApprove ? (
-                <div className="rounded-xl border border-emerald-200 dark:border-emerald-800/50 bg-emerald-50/75 dark:bg-emerald-950/30 p-2.5 text-[11px] text-emerald-900 dark:text-emerald-200 leading-relaxed flex items-start gap-2">
-                  <CheckCircle2 size={14} className="shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" />
-                  <span>
-                    {googleDomain && effectiveAllowedDomains.includes(googleDomain)
-                      ? <>Domain <b>@{googleDomain}</b> aktif otomatis tanpa perlu approval Super Admin — setelah mengisi data, Anda langsung masuk ke workspace.</>
-                      : "Akun ini aktif otomatis tanpa perlu approval — setelah mengisi data, Anda langsung masuk ke workspace."}
-                  </span>
-                </div>
-              ) : (
-                <div className="rounded-xl border border-amber-200 dark:border-amber-800/50 bg-amber-50/70 dark:bg-amber-950/30 p-2.5 text-[11px] text-amber-900 dark:text-amber-200 leading-relaxed">
-                  Setelah mengisi data, permohonan akun akan dikirim ke Super Admin untuk approval sebelum Anda bisa masuk.
-                </div>
-              )}
-
-              <div className="flex gap-2 pt-1">
-                {!googleVerifiedByOAuth && (
-                  <button
-                    type="button"
-                    onClick={() => setGoogleModalStep("lookup")}
-                    className="h-11 rounded-2xl border bg-surface2 px-4 text-xs font-semibold text-ink hover:bg-surface cursor-pointer"
-                  >
-                    Kembali
-                  </button>
-                )}
-                <button
-                  type="submit"
-                  disabled={busyGoogle}
-                  className="btn-accent h-11 flex-1 rounded-2xl text-xs font-bold shadow-md cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
-                  data-testid="google-modal-submit"
+              {loginAlert && (
+                <div
+                  className={`flex items-start gap-2.5 rounded-2xl border p-3.5 text-xs font-medium ${
+                    loginAlert.type === "quota"
+                      ? "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200"
+                      : "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-200"
+                  }`}
+                  data-testid="login-alert-banner"
                 >
-                  {busyGoogle
-                    ? t("auth_google_modal_busy", "Memproses Akun Google...")
-                    : effectiveGoogleAutoApprove
-                    ? "Simpan Data & Masuk Workspace"
-                    : "Kirim Data & Minta Approval Admin"}
-                  <ArrowRight size={14} />
+                  <ShieldAlert size={16} className="shrink-0 mt-0.5" />
+                  <p className="leading-relaxed">{loginAlert.message}</p>
+                </div>
+              )}
+
+              <button
+                type="button"
+                disabled={busyGoogle || Boolean(busyRecentEmail)}
+                onClick={handleGooglePopupSignIn}
+                data-testid="google-signin-btn"
+                className="flex h-[54px] min-h-[54px] w-full items-center justify-center gap-3 rounded-full border border-slate-200/90 dark:border-slate-700 bg-white dark:bg-surface px-6 py-3.5 text-[15px] font-bold text-ink shadow-[0_2px_10px_rgba(15,23,42,0.06)] transition-all hover:bg-slate-50/90 dark:hover:bg-surface2 hover:shadow-[0_4px_16px_rgba(15,23,42,0.1)] disabled:opacity-60 cursor-pointer"
+              >
+                <GoogleLogoIcon size={20} />
+                <span>{busyGoogle ? "Memverifikasi Akun Google..." : "Masuk dengan Akun Google"}</span>
+              </button>
+
+              {recentGoogleAccounts.length > 0 && (
+                <div className="space-y-2 pt-1" data-testid="recent-google-accounts">
+                  <p className="text-[11px] font-extrabold uppercase tracking-wider text-sub">
+                    Akun Google Pernah Masuk
+                  </p>
+                  <div className="space-y-2">
+                    {recentGoogleAccounts.slice(0, 3).map((acc) => {
+                      const isBusyAcc = busyRecentEmail === acc.email;
+                      return (
+                        <button
+                          key={acc.email}
+                          type="button"
+                          disabled={busyGoogle || Boolean(busyRecentEmail)}
+                          onClick={() => handleRecentAccountClick(acc)}
+                          data-testid={`recent-google-account-${acc.email}`}
+                          className="group flex w-full items-center justify-between gap-3 rounded-2xl border border-slate-200/90 dark:border-slate-800 bg-surface px-3.5 py-2.5 text-left shadow-2xs transition-all hover:border-brand/50 hover:bg-surface2/50 disabled:opacity-60 cursor-pointer"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <Avatar
+                              user={{ name: acc.name, avatar: acc.picture }}
+                              size={34}
+                              showStatus={false}
+                            />
+                            <div className="min-w-0">
+                              <p className="truncate text-xs font-bold text-ink">{acc.name}</p>
+                              <p className="truncate text-[11px] text-sub">{acc.email}</p>
+                            </div>
+                          </div>
+                          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-surface2 px-2.5 py-1 text-[11px] font-bold text-ink group-hover:bg-brand group-hover:text-white transition-colors">
+                            <span>{isBusyAcc ? "Memuat..." : "Masuk"}</span>
+                            <ArrowRight size={12} />
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <div className="text-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFallbackError("");
+                    setFallbackEmailModalOpen(true);
+                  }}
+                  data-testid="google-email-fallback-btn"
+                  className="text-xs font-semibold text-brand hover:underline cursor-pointer"
+                >
+                  Muncul Error 403 / popup diblokir? Masuk menggunakan Email Google
                 </button>
               </div>
-            </form>
-          )}
-        </DialogContent>
-      </Dialog>
 
-      {/* Success Registration Dialog */}
-      <Dialog open={successDialog} onOpenChange={setSuccessDialog}>
-        <DialogContent className="max-w-md rounded-3xl bg-surface p-6 shadow-xl" data-testid="signup-success-dialog">
-          <DialogHeader>
-            <div className="mx-auto mb-2 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400">
-              <CheckCircle2 size={32} />
-            </div>
-            <DialogTitle className="text-center text-lg font-bold text-ink">
-              {t("auth_signup_success_title", "Pendaftaran Akun Berhasil!")}
-            </DialogTitle>
-          </DialogHeader>
-
-          <div className="py-2 text-center space-y-3">
-            <p className="text-xs text-sub leading-relaxed max-w-xs mx-auto">
-              {t("auth_signup_success_desc", "Permohonan pendaftaran akun Anda telah diterima. Asisten Asli telah meneruskan Approval Card ke Super Admin.")}
-            </p>
-
-            {registeredData && (
-              <div className="rounded-2xl border bg-surface2 p-3 text-left text-xs space-y-1.5 flex items-center gap-3">
-                <Avatar user={{ name: registeredData.name, avatar: registeredData.avatar }} size={42} showStatus={false} />
-                <div className="min-w-0 flex-1">
-                  <p><span className="text-sub font-medium">Nama:</span> <b className="text-ink">{registeredData.name}</b></p>
-                  <p><span className="text-sub font-medium">Email:</span> <b className="text-ink">{registeredData.email}</b></p>
-                  <p><span className="text-sub font-medium">Divisi:</span> <b className="text-ink">{registeredData.department}</b></p>
-                </div>
+              <div className="flex items-center justify-center gap-2 pt-1 text-xs text-sub">
+                <ShieldCheck size={15} className="text-emerald-600 shrink-0" />
+                <span>Autentikasi Google terisolasi aman per workspace room.</span>
               </div>
-            )}
 
-            <button
-              onClick={() => {
-                setSuccessDialog(false);
-                setMode("login");
-                if (registeredData?.email) {
-                  setLoginEmail(registeredData.email);
-                }
-              }}
-              className="btn-accent h-10 w-full rounded-full text-xs font-semibold cursor-pointer"
-              data-testid="signup-done-btn"
-            >
-              {t("auth_back_to_login", "Kembali ke Halaman Masuk")}
-            </button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Forgot Password Dialog */}
-      <Dialog open={forgotModalOpen} onOpenChange={setForgotModalOpen}>
-        <DialogContent className="max-w-md rounded-3xl bg-surface p-6 shadow-xl" data-testid="forgot-password-dialog">
-          <DialogHeader>
-            <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-2xl bg-brand/10 text-brand">
-              <KeyRound size={22} />
-            </div>
-            <DialogTitle className="text-center text-lg font-bold text-ink">
-              {t("auth_forgot_title", "Reset & Pemulihan Password")}
-            </DialogTitle>
-            <DialogDescription className="text-center text-xs text-sub">
-              {t("auth_forgot_subtitle", "Verifikasi kepemilikan email Anda untuk reset langsung, atau ajukan ke Admin.")}
-            </DialogDescription>
-          </DialogHeader>
-
-          {/* Method Switcher */}
-          {!forgotTicket && (
-            <div className="grid grid-cols-3 rounded-2xl bg-surface2 p-1 border my-1 gap-1">
-              <button
-                type="button"
-                onClick={() => setForgotTab("email")}
-                className={`rounded-xl py-2 px-2 text-[11px] font-bold transition-all cursor-pointer ${
-                  forgotTab === "email" ? "bg-surface text-ink shadow-xs" : "text-sub hover:text-ink"
-                }`}
-                data-testid="forgot-tab-email"
-              >
-                {t("auth_forgot_tab_email", "Verifikasi Email")}
-              </button>
-              <button
-                type="button"
-                onClick={() => setForgotTab("approval")}
-                className={`rounded-xl py-2 px-2 text-[11px] font-bold transition-all cursor-pointer ${
-                  forgotTab === "approval" ? "bg-surface text-ink shadow-xs" : "text-sub hover:text-ink"
-                }`}
-                data-testid="forgot-tab-approval"
-              >
-                {t("auth_forgot_tab_approval", "Approval Admin")}
-              </button>
-              <button
-                type="button"
-                onClick={() => setForgotTab("recovery")}
-                className={`rounded-xl py-2 px-2 text-[11px] font-bold transition-all cursor-pointer ${
-                  forgotTab === "recovery" ? "bg-surface text-ink shadow-xs" : "text-sub hover:text-ink"
-                }`}
-                data-testid="forgot-tab-recovery"
-              >
-                {t("auth_forgot_tab_recovery", "Kode Pemulihan")}
-              </button>
+              <div className="text-center pt-1">
+                <Link
+                  to="/platform-owner"
+                  data-testid="platform-owner-link"
+                  className="text-xs font-semibold text-sub hover:text-ink transition-colors"
+                >
+                  Platform Owner Console
+                </Link>
+              </div>
             </div>
           )}
 
-          {/* Ticket Status Screen */}
-          {forgotTicket ? (
-            <div className="space-y-4 pt-2" data-testid="forgot-ticket-status">
-              <div className={`rounded-2xl border p-4 text-center space-y-2 ${
-                forgotTicket.status === "approved"
-                  ? "border-emerald-200 bg-emerald-50/70 dark:border-emerald-800/60 dark:bg-emerald-950/30"
-                  : forgotTicket.status === "rejected"
-                  ? "border-rose-200 bg-rose-50/70 dark:border-rose-800/60 dark:bg-rose-950/30"
-                  : "border-amber-200 bg-amber-50/70 dark:border-amber-800/60 dark:bg-amber-950/30"
-              }`}>
-                <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-surface shadow-xs">
-                  {forgotTicket.status === "approved" ? (
-                    <CheckCircle2 size={24} className="text-emerald-600" />
-                  ) : forgotTicket.status === "rejected" ? (
-                    <XCircle size={24} className="text-rose-600" />
-                  ) : (
-                    <Clock size={24} className="text-amber-600" />
-                  )}
-                </div>
-                <h4 className="text-sm font-bold text-ink">
-                  {forgotTicket.status === "approved"
-                    ? "Password Berhasil Direset!"
-                    : forgotTicket.status === "rejected"
-                    ? "Permintaan Reset Ditolak"
-                    : "Menunggu Approval Admin"}
-                </h4>
-                <p className="text-xs text-sub leading-relaxed">
-                  {forgotTicket.status === "approved"
-                    ? `Approved oleh ${forgotTicket.approved_by || "Super Admin"}. Anda sekarang bisa masuk dengan password baru Anda.`
-                    : forgotTicket.status === "rejected"
-                    ? `Ditolak oleh ${forgotTicket.rejected_by || "Super Admin"}. Silakan hubungi Admin workspace atau ajukan ulang.`
-                    : `Asisten Asli telah mengirim Approval Card untuk ${forgotTicket.email} ke Super Admin / Manajer Divisi.`}
-                </p>
-              </div>
-
-              <div className="flex flex-col gap-2">
-                {forgotTicket.status === "pending" && (
-                  <button
-                    type="button"
-                    onClick={handleCheckForgotStatus}
-                    disabled={checkingForgot}
-                    className="h-10 w-full rounded-2xl border bg-surface2 hover:bg-surface text-xs font-bold text-ink flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-                    data-testid="forgot-check-status-btn"
-                  >
-                    <RefreshCw size={14} className={checkingForgot ? "animate-spin" : ""} />
-                    {checkingForgot ? "Memeriksa..." : t("auth_forgot_check_status_btn", "Cek Status Approval Sekarang")}
-                  </button>
-                )}
-
-                {forgotTicket.status === "approved" ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setLoginEmail(forgotTicket.email || forgotForm.email);
-                      setLoginPassword("");
-                      setLoginAlert(null);
-                      setForgotModalOpen(false);
-                    }}
-                    className="btn-accent h-11 w-full rounded-2xl text-xs font-bold cursor-pointer"
-                    data-testid="forgot-go-login-btn"
-                  >
-                    {t("auth_forgot_go_login_btn", "Masuk dengan Password Baru")}
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setForgotTicket(null)}
-                    className="h-10 w-full rounded-2xl text-xs font-semibold text-sub hover:text-ink cursor-pointer"
-                  >
-                    {forgotTicket.status === "rejected" ? "Ajukan Ulang Reset Password" : "Ubah Metode Reset"}
-                  </button>
-                )}
-              </div>
-            </div>
-          ) : forgotTab === "email" ? (
-            <form onSubmit={handleEmailVerifiedResetSubmit} className="space-y-3 pt-1" data-testid="forgot-email-verify-form">
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_forgot_email_label", "Email Akun Anda *")}</label>
-                <div className="flex gap-2">
-                  <input
-                    type="email"
-                    required
-                    value={forgotForm.email}
-                    onChange={(e) => {
-                      setForgotForm({ ...forgotForm, email: e.target.value });
-                      if (verifiedGoogleEmail && e.target.value.trim().toLowerCase() !== verifiedGoogleEmail) {
-                        setVerifiedEmailToken("");
-                        setVerifiedGoogleEmail("");
-                      }
-                    }}
-                    placeholder="nama@asliri.id"
-                    className="h-10 flex-1 rounded-xl border bg-surface2 px-3 text-xs text-ink outline-none focus:border-brand"
-                    data-testid="forgot-verify-email-input"
+          {/* Step 2: Post-Google Onboarding (Unbound: Invite Code or Create Room | Bound fallback on error) */}
+          {step === "rooms" && googleAccount && (
+            <div className="space-y-5" data-testid="login-rooms-step">
+              {/* Signed-in Google Profile Card */}
+              <div className="flex items-center justify-between gap-3 rounded-[24px] border border-slate-200/90 dark:border-slate-800 bg-surface px-4 py-3 shadow-xs">
+                <div className="flex items-center gap-3 min-w-0">
+                  <Avatar
+                    user={{ name: googleAccount.name, avatar: googleAccount.picture }}
+                    size={40}
+                    showStatus={false}
                   />
-                  <button
-                    type="button"
-                    onClick={handleSendResetOtp}
-                    disabled={sendingOtp || !forgotForm.email.trim()}
-                    className="h-10 shrink-0 rounded-xl border border-slate-300 dark:border-slate-700 bg-surface hover:bg-surface2 px-3 text-[11px] font-bold text-ink disabled:opacity-50 cursor-pointer"
-                    data-testid="forgot-send-otp-btn"
-                  >
-                    {sendingOtp ? t("auth_forgot_sending_otp", "Mengirim...") : otpSent ? t("auth_forgot_resend_otp", "Kirim Ulang OTP") : t("auth_forgot_send_otp", "Kirim OTP Email")}
-                  </button>
-                </div>
-              </div>
-
-              {/* Instant Google Email Verification Card */}
-              <div className="rounded-2xl border border-slate-200/80 dark:border-slate-800 bg-surface2/60 p-3 space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[11px] font-bold text-ink">
-                    {t("auth_forgot_verify_step1", "1. Verifikasi Instan Kepemilikan Email")}
-                  </span>
-                  {verifiedEmailToken && verifiedGoogleEmail === forgotForm.email.trim().toLowerCase() && (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 dark:bg-emerald-950/60 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">
-                      <Check size={11} /> {t("auth_forgot_verified_badge", "Terverifikasi")}
-                    </span>
-                  )}
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-bold text-ink">{googleAccount.name}</p>
+                    <p className="truncate text-xs text-sub">{googleAccount.email}</p>
+                  </div>
                 </div>
                 <button
                   type="button"
-                  onClick={handleVerifyEmailViaGoogle}
-                  disabled={verifyingGoogleEmail}
-                  className={`flex h-10 w-full items-center justify-center gap-2 rounded-xl border px-3 text-xs font-bold transition-all cursor-pointer ${
-                    verifiedEmailToken && verifiedGoogleEmail === forgotForm.email.trim().toLowerCase()
-                      ? "border-emerald-300 bg-emerald-50/80 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200"
-                      : "border-slate-200 dark:border-slate-700 bg-surface hover:bg-surface2 text-ink shadow-2xs"
-                  }`}
-                  data-testid="forgot-verify-google-btn"
+                  onClick={handleSwitchGoogleAccount}
+                  data-testid="switch-google-account-btn"
+                  className="inline-flex shrink-0 items-center gap-1.5 text-xs font-bold text-brand hover:underline cursor-pointer"
                 >
-                  <Mail size={14} className="text-brand" />
-                  <span>
-                    {verifyingGoogleEmail
-                      ? "Memverifikasi Email..."
-                      : verifiedEmailToken && verifiedGoogleEmail === forgotForm.email.trim().toLowerCase()
-                      ? `Terverifikasi: ${verifiedGoogleEmail}`
-                      : t("auth_forgot_verify_google_btn", "Verifikasi Kepemilikan Email (Google)")}
-                  </span>
+                  <LogOut size={13} />
+                  <span>Ganti akun</span>
                 </button>
               </div>
 
-              {/* Optional 6-digit OTP Input */}
-              {(otpSent || !verifiedEmailToken) && (
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-sub">
-                    {t("auth_forgot_otp_label", "2. Atau Masukkan Kode OTP 6 Digit dari Email")}
-                  </label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={6}
-                    value={forgotForm.otpCode}
-                    onChange={(e) => setForgotForm({ ...forgotForm, otpCode: e.target.value.replace(/\D/g, "").slice(0, 6) })}
-                    placeholder="Contoh: 482910"
-                    className="h-10 w-full rounded-xl border bg-surface2 px-3 font-mono text-xs tracking-widest text-ink outline-none focus:border-brand"
-                    data-testid="forgot-otp-input"
-                  />
-                  {otpNotice && (
-                    <p className="mt-1 text-[11px] text-sub leading-relaxed">{otpNotice}</p>
-                  )}
+              {loginAlert && (
+                <div
+                  className={`flex items-start gap-2.5 rounded-2xl border p-3.5 text-xs font-medium ${
+                    loginAlert.type === "quota"
+                      ? "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200"
+                      : "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-200"
+                  }`}
+                  data-testid="rooms-alert-banner"
+                >
+                  <ShieldAlert size={16} className="shrink-0 mt-0.5" />
+                  <p className="leading-relaxed">{loginAlert.message}</p>
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-2.5">
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_forgot_new_pw_label", "Password Baru *")}</label>
-                  <div className="relative flex items-center">
-                    <input
-                      type={showForgotPw ? "text" : "password"}
-                      required
-                      value={forgotForm.newPassword}
-                      onChange={(e) => setForgotForm({ ...forgotForm, newPassword: e.target.value })}
-                      placeholder={t("auth_signup_password_placeholder", "Min. 6 karakter")}
-                      className="h-10 w-full rounded-xl border bg-surface2 pl-3 pr-8 text-xs text-ink outline-none focus:border-brand"
-                      data-testid="forgot-email-newpw-input"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowForgotPw(!showForgotPw)}
-                      className="absolute right-2.5 text-sub hover:text-ink cursor-pointer"
-                    >
-                      {showForgotPw ? <EyeOff size={14} /> : <Eye size={14} />}
-                    </button>
+              {googleAccount.rooms.length > 0 ? (
+                /* Fallback only shown if bound room blocked (quota/suspended/wrong URL) */
+                <div className="space-y-4">
+                  <div>
+                    <h1 className="text-2xl sm:text-[28px] font-extrabold tracking-tight text-ink">
+                      Workspace Anda
+                    </h1>
+                    <p className="mt-1 text-sm text-sub">
+                      Akun Google ini hanya terhubung ke 1 workspace berikut.
+                    </p>
                   </div>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_forgot_confirm_pw_label", "Konfirmasi *")}</label>
-                  <input
-                    type={showForgotPw ? "text" : "password"}
-                    required
-                    value={forgotForm.confirmPassword}
-                    onChange={(e) => setForgotForm({ ...forgotForm, confirmPassword: e.target.value })}
-                    placeholder={t("auth_forgot_confirm_pw_ph", "Ulangi password")}
-                    className="h-10 w-full rounded-xl border bg-surface2 px-3 text-xs text-ink outline-none focus:border-brand"
-                    data-testid="forgot-email-confirmpw-input"
-                  />
-                </div>
-              </div>
-              <PasswordStrengthMeter password={forgotForm.newPassword} />
 
-              <button
-                type="submit"
-                disabled={busyForgot}
-                className="btn-accent h-11 w-full rounded-2xl text-xs font-bold shadow-md disabled:opacity-50 cursor-pointer"
-                data-testid="forgot-email-reset-submit-btn"
-              >
-                {busyForgot ? "Memverifikasi & Mereset..." : t("auth_forgot_submit_email", "Verifikasi & Reset Password Sekarang")}
-              </button>
-            </form>
-          ) : forgotTab === "approval" ? (
-            <form onSubmit={handleForgotApprovalSubmit} className="space-y-3 pt-1" data-testid="forgot-approval-form">
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_forgot_email_label", "Email Akun Anda *")}</label>
-                <input
-                  type="email"
-                  required
-                  value={forgotForm.email}
-                  onChange={(e) => setForgotForm({ ...forgotForm, email: e.target.value })}
-                  placeholder="nama@asliri.id"
-                  className="h-10 w-full rounded-xl border bg-surface2 px-3 text-xs text-ink outline-none focus:border-brand"
-                  data-testid="forgot-email-input"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2.5">
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_forgot_new_pw_label", "Password Baru *")}</label>
-                  <div className="relative flex items-center">
-                    <input
-                      type={showForgotPw ? "text" : "password"}
-                      required
-                      value={forgotForm.newPassword}
-                      onChange={(e) => setForgotForm({ ...forgotForm, newPassword: e.target.value })}
-                      placeholder={t("auth_signup_password_placeholder", "Min. 6 karakter")}
-                      className="h-10 w-full rounded-xl border bg-surface2 pl-3 pr-8 text-xs text-ink outline-none focus:border-brand"
-                      data-testid="forgot-newpw-input"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowForgotPw(!showForgotPw)}
-                      className="absolute right-2.5 text-sub hover:text-ink cursor-pointer"
-                    >
-                      {showForgotPw ? <EyeOff size={14} /> : <Eye size={14} />}
-                    </button>
+                  {googleAccount.rooms.slice(0, 1).map((room) => {
+                    const isBusy = enteringSlug === room.slug;
+                    const avatars = Array.isArray(room.member_avatars) ? room.member_avatars.slice(0, 3) : [];
+                    return (
+                      <button
+                        key={room.slug}
+                        type="button"
+                        disabled={Boolean(enteringSlug) || room.status === "suspended"}
+                        onClick={() => handleEnterRoom(room.slug)}
+                        data-testid={`room-picker-card-${room.slug}`}
+                        className="group flex w-full items-center justify-between gap-3 rounded-[24px] border border-slate-200/90 dark:border-slate-800 bg-surface px-4 py-3.5 text-left shadow-xs transition-colors hover:border-brand/50 disabled:opacity-60 cursor-pointer"
+                      >
+                        <div className="flex items-center gap-3.5 min-w-0">
+                          <img
+                            src={resolveRoomLogo(room.logo_file_id)}
+                            alt={room.brand_name || room.name}
+                            onError={(e) => {
+                              e.currentTarget.src = DEFAULT_LOGO;
+                            }}
+                            className="h-12 w-12 rounded-2xl object-cover border border-slate-200 dark:border-slate-700 shrink-0"
+                          />
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="truncate text-sm font-extrabold tracking-tight text-ink">
+                                {room.name || room.brand_name}
+                              </p>
+                              <span className="text-xs text-sub font-mono">/w/{room.slug}</span>
+                              {room.status === "suspended" && (
+                                <span className="text-xs font-bold text-rose-600">· Suspended</span>
+                              )}
+                            </div>
+                            <div className="mt-1 flex items-center gap-2 text-xs text-sub font-sans tabular-nums">
+                              {avatars.length > 0 && (
+                                <span className="flex -space-x-2 overflow-hidden">
+                                  {avatars.map((m, idx) => (
+                                    <Avatar
+                                      key={`${room.slug}-av-${idx}`}
+                                      user={{ name: m.name, avatar: m.avatar }}
+                                      size={20}
+                                      showStatus={false}
+                                    />
+                                  ))}
+                                </span>
+                              )}
+                              <span className="truncate">
+                                {room.member_count} anggota · {formatRelativeIndo(room.last_active_at)}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <ArrowRight
+                          size={18}
+                          className={`shrink-0 text-sub group-hover:text-brand ${isBusy ? "text-brand" : ""}`}
+                        />
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                /* Akun Google belum memiliki room -> hanya opsi Masukan Undangan atau Buat Room Baru */
+                <div className="space-y-4">
+                  <div>
+                    <h1 className="text-2xl sm:text-[28px] font-extrabold tracking-tight text-ink">
+                      Selamat datang!
+                    </h1>
+                    <p className="mt-1 text-sm text-sub leading-relaxed">
+                      Akun Google ini belum terdaftar di workspace mana pun. Masukkan kode undangan room atau buat workspace baru.
+                    </p>
                   </div>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_forgot_confirm_pw_label", "Konfirmasi *")}</label>
-                  <input
-                    type={showForgotPw ? "text" : "password"}
-                    required
-                    value={forgotForm.confirmPassword}
-                    onChange={(e) => setForgotForm({ ...forgotForm, confirmPassword: e.target.value })}
-                    placeholder={t("auth_forgot_confirm_pw_ph", "Ulangi password")}
-                    className="h-10 w-full rounded-xl border bg-surface2 px-3 text-xs text-ink outline-none focus:border-brand"
-                    data-testid="forgot-confirmpw-input"
-                  />
-                </div>
-              </div>
-              <PasswordStrengthMeter password={forgotForm.newPassword} />
 
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_forgot_admin_note_label", "Catatan untuk Admin")}</label>
-                <input
-                  type="text"
-                  value={forgotForm.note}
-                  onChange={(e) => setForgotForm({ ...forgotForm, note: e.target.value })}
-                  placeholder={t("auth_forgot_admin_note_ph", "Mis. Lupa password setelah ganti perangkat")}
-                  className="h-10 w-full rounded-xl border bg-surface2 px-3 text-xs text-ink outline-none focus:border-brand"
-                />
-              </div>
+                  {/* Opsi 1: Masukan Kode Undangan / Invitation */}
+                  <form
+                    onSubmit={handleJoinByCodeSubmit}
+                    className="rounded-[24px] border border-slate-200/90 dark:border-slate-800 bg-surface p-4 sm:p-5 space-y-3 shadow-xs"
+                    data-testid="onboarding-join-invite-card"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-brand/10 text-brand shrink-0">
+                        <Ticket size={18} />
+                      </div>
+                      <div className="min-w-0">
+                        <h2 className="text-sm font-extrabold text-ink">Masukan Undangan / Invitation</h2>
+                        <p className="text-xs text-sub mt-0.5">
+                          Masukkan kode undangan unik room yang diberikan Admin perusahaan Anda.
+                        </p>
+                      </div>
+                    </div>
 
-              <div className="rounded-xl border border-amber-200 dark:border-amber-800/50 bg-amber-50/70 dark:bg-amber-950/30 p-2.5 text-[11px] text-amber-900 dark:text-amber-200 leading-relaxed">
-                Asisten <b>Asli</b> akan mengirim kartu approval ke Super Admin / Manajer Divisi Anda. Setelah di-approve, password baru langsung aktif.
-              </div>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <input
+                        type="text"
+                        required
+                        value={inviteCode}
+                        onChange={(e) => setInviteCode(e.target.value.replace(/\s+/g, "").toUpperCase())}
+                        placeholder="Kode Undangan (cth: ASLI-9F2A#1)"
+                        className="h-11 flex-1 rounded-full border border-border bg-surface2/60 px-4 text-sm font-mono font-bold uppercase tracking-wider text-ink outline-none focus:border-brand tabular-nums"
+                        data-testid="join-invite-code-input"
+                      />
+                      <button
+                        type="submit"
+                        disabled={busyJoinCode || !inviteCode.trim()}
+                        data-testid="join-code-submit-btn"
+                        className="inline-flex h-11 shrink-0 items-center justify-center gap-1.5 rounded-full bg-brand px-5 text-xs font-bold text-white shadow-sm hover:opacity-95 disabled:opacity-50 cursor-pointer whitespace-nowrap"
+                      >
+                        <span>{busyJoinCode ? "Memproses..." : "Gabung Room"}</span>
+                        <ArrowRight size={14} />
+                      </button>
+                    </div>
+                  </form>
 
-              <button
-                type="submit"
-                disabled={busyForgot}
-                className="btn-accent h-11 w-full rounded-2xl text-xs font-bold shadow-md disabled:opacity-50 cursor-pointer"
-                data-testid="forgot-submit-btn"
-              >
-                {busyForgot ? "Mengirim Permintaan..." : t("auth_forgot_submit_approval", "Ajukan Reset Password")}
-              </button>
-            </form>
-          ) : (
-            <form onSubmit={handleRecoveryKeySubmit} className="space-y-3 pt-1" data-testid="forgot-recovery-form">
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_forgot_email_label", "Email Akun Anda *")}</label>
-                <input
-                  type="email"
-                  required
-                  value={forgotForm.email}
-                  onChange={(e) => setForgotForm({ ...forgotForm, email: e.target.value })}
-                  placeholder="nama@asliri.id"
-                  className="h-10 w-full rounded-xl border bg-surface2 px-3 text-xs text-ink outline-none focus:border-brand"
-                  data-testid="recovery-email-input"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_forgot_recovery_key_label", "Kode Pemulihan Workspace *")}</label>
-                <input
-                  type="text"
-                  required
-                  value={forgotForm.recoveryKey}
-                  onChange={(e) => setForgotForm({ ...forgotForm, recoveryKey: e.target.value.toUpperCase() })}
-                  placeholder="CRCL-XXXX-XXXX"
-                  className="h-10 w-full rounded-xl border bg-surface2 px-3 font-mono text-xs uppercase tracking-wider text-ink outline-none focus:border-brand"
-                  data-testid="recovery-key-input"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2.5">
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_forgot_new_pw_label", "Password Baru *")}</label>
-                  <div className="relative flex items-center">
-                    <input
-                      type={showForgotPw ? "text" : "password"}
-                      required
-                      value={forgotForm.newPassword}
-                      onChange={(e) => setForgotForm({ ...forgotForm, newPassword: e.target.value })}
-                      placeholder={t("auth_signup_password_placeholder", "Min. 6 karakter")}
-                      className="h-10 w-full rounded-xl border bg-surface2 pl-3 pr-8 text-xs text-ink outline-none focus:border-brand"
-                      data-testid="recovery-newpw-input"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowForgotPw(!showForgotPw)}
-                      className="absolute right-2.5 text-sub hover:text-ink cursor-pointer"
-                    >
-                      {showForgotPw ? <EyeOff size={14} /> : <Eye size={14} />}
-                    </button>
+                  <div className="flex items-center gap-3 py-0.5">
+                    <div className="h-px flex-1 bg-slate-200 dark:bg-slate-800" />
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-sub">atau</span>
+                    <div className="h-px flex-1 bg-slate-200 dark:bg-slate-800" />
                   </div>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-sub">{t("auth_forgot_confirm_pw_label", "Konfirmasi *")}</label>
-                  <input
-                    type={showForgotPw ? "text" : "password"}
-                    required
-                    value={forgotForm.confirmPassword}
-                    onChange={(e) => setForgotForm({ ...forgotForm, confirmPassword: e.target.value })}
-                    placeholder={t("auth_forgot_confirm_pw_ph", "Ulangi password")}
-                    className="h-10 w-full rounded-xl border bg-surface2 px-3 text-xs text-ink outline-none focus:border-brand"
-                    data-testid="recovery-confirmpw-input"
-                  />
-                </div>
-              </div>
-              <PasswordStrengthMeter password={forgotForm.newPassword} />
 
-              <div className="rounded-xl border border-indigo-200 dark:border-indigo-800/50 bg-indigo-50/70 dark:bg-indigo-950/30 p-2.5 text-[11px] text-indigo-900 dark:text-indigo-200 leading-relaxed">
-                {t("auth_forgot_recovery_notice", "Kode Pemulihan Workspace tersedia di Pengaturan → Tim, Divisi & Akses milik Super Admin. Cocok untuk reset darurat tanpa menunggu approval.")}
+                  {/* Opsi 2: Buat Workspace / Room Baru */}
+                  <button
+                    type="button"
+                    onClick={() => setCreateRoomOpen(true)}
+                    data-testid="picker-create-room-btn"
+                    className="flex h-12 w-full items-center justify-center gap-2 rounded-full border border-amber-300 bg-amber-50/90 dark:bg-amber-950/30 dark:border-amber-700/60 px-4 text-sm font-bold text-ink hover:bg-amber-100/80 transition-colors cursor-pointer"
+                  >
+                    <Plus size={16} />
+                    <span>Buat workspace / room baru</span>
+                  </button>
+                </div>
+              )}
+
+              <div className="flex items-center justify-center gap-2 pt-1 text-xs text-sub">
+                <ShieldCheck size={15} className="text-emerald-600 shrink-0" />
+                <span>1 akun Google hanya dapat masuk ke 1 workspace room.</span>
               </div>
 
-              <button
-                type="submit"
-                disabled={busyForgot}
-                className="btn-accent h-11 w-full rounded-2xl text-xs font-bold shadow-md disabled:opacity-50 cursor-pointer"
-                data-testid="recovery-submit-btn"
-              >
-                {busyForgot ? "Mereset Password..." : t("auth_forgot_submit_recovery", "Reset Password Sekarang")}
-              </button>
-            </form>
+              <div className="text-center">
+                <Link
+                  to="/platform-owner"
+                  className="text-xs font-semibold text-sub hover:text-ink transition-colors"
+                >
+                  Platform Owner Console
+                </Link>
+              </div>
+            </div>
           )}
+
+          {/* Step 3: Wajib Lengkapi Data Diri Sebelum Masuk Room */}
+          {step === "onboarding" && googleAccount && onboardingCtx && (
+            <div className="space-y-4" data-testid="login-onboarding-step">
+              <div className="flex items-center justify-between gap-3 rounded-[24px] border border-slate-200/90 dark:border-slate-800 bg-surface px-4 py-3 shadow-xs">
+                <div className="flex items-center gap-3 min-w-0">
+                  <Avatar
+                    user={{ name: googleAccount.name, avatar: googleAccount.picture }}
+                    size={38}
+                    showStatus={false}
+                  />
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-bold text-ink">{googleAccount.name}</p>
+                    <p className="truncate text-xs text-sub">{googleAccount.email}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOnboardingCtx(null);
+                    setStep("rooms");
+                    setLoginAlert(null);
+                  }}
+                  className="inline-flex shrink-0 items-center gap-1 text-xs font-bold text-sub hover:text-ink cursor-pointer"
+                >
+                  <ArrowLeft size={13} />
+                  <span>Kembali</span>
+                </button>
+              </div>
+
+              <div>
+                <h1 className="text-2xl font-extrabold tracking-tight text-ink">Lengkapi Data Profil</h1>
+                <p className="mt-1 text-xs text-sub leading-relaxed">
+                  {onboardingCtx.autoApproveEligible ? (
+                    <>Isi data diri Anda untuk langsung masuk ke <span className="font-bold text-ink">{onboardingCtx.roomName}</span>.</>
+                  ) : (
+                    <>Akun di luar <span className="font-semibold text-ink">@asliri.id</span> wajib mengisi data diri dan menunggu approval Super Admin sebelum masuk ke <span className="font-bold text-ink">{onboardingCtx.roomName}</span>.</>
+                  )}
+                </p>
+              </div>
+
+              {loginAlert && (
+                <div
+                  className={`flex items-start gap-2.5 rounded-2xl border p-3 text-xs font-medium ${
+                    loginAlert.type === "quota"
+                      ? "border-amber-200 bg-amber-50 text-amber-800"
+                      : "border-rose-200 bg-rose-50 text-rose-700"
+                  }`}
+                >
+                  <ShieldAlert size={15} className="shrink-0 mt-0.5" />
+                  <p className="leading-relaxed">{loginAlert.message}</p>
+                </div>
+              )}
+
+              <form onSubmit={handleOnboardingSubmit} className="space-y-3 rounded-[24px] border border-slate-200/90 dark:border-slate-800 bg-surface p-4 sm:p-5 shadow-xs">
+                <label className="block text-xs font-semibold text-sub">
+                  Nama Lengkap *
+                  <input
+                    type="text"
+                    required
+                    value={obName}
+                    onChange={(e) => setObName(e.target.value)}
+                    placeholder="Nama lengkap sesuai identitas tim"
+                    className="mt-1.5 h-10 w-full rounded-full border border-border bg-surface2/70 px-4 text-sm text-ink outline-none focus:border-brand"
+                    data-testid="onboarding-name-input"
+                  />
+                </label>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="text-xs font-semibold text-sub">
+                    <span>Divisi *</span>
+                    <div className="mt-1.5">
+                      <AppSelect
+                        value={obDept}
+                        onValueChange={setObDept}
+                        options={(onboardingCtx.divisions || []).map((d) => ({ value: d, label: d }))}
+                        placeholder="Pilih divisi"
+                        data-testid="onboarding-dept-select"
+                      />
+                    </div>
+                  </div>
+                  <div className="text-xs font-semibold text-sub">
+                    <span>Mode Kerja *</span>
+                    <div className="mt-1.5">
+                      <AppSelect
+                        value={obWorkMode}
+                        onValueChange={setObWorkMode}
+                        options={[
+                          { value: "On-site", label: "On-site" },
+                          { value: "Hybrid", label: "Hybrid" },
+                          { value: "Remote", label: "Remote" },
+                        ]}
+                        placeholder="Pilih mode kerja"
+                        data-testid="onboarding-workmode-select"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <label className="block text-xs font-semibold text-sub">
+                  Jabatan / Posisi *
+                  <input
+                    type="text"
+                    required
+                    value={obTitle}
+                    onChange={(e) => setObTitle(e.target.value)}
+                    placeholder="Contoh: Product Manager, Backend Engineer"
+                    className="mt-1.5 h-10 w-full rounded-full border border-border bg-surface2/70 px-4 text-sm text-ink outline-none focus:border-brand"
+                    data-testid="onboarding-title-input"
+                  />
+                </label>
+
+                <label className="block text-xs font-semibold text-sub">
+                  Nomor WhatsApp / Telepon *
+                  <input
+                    type="tel"
+                    required
+                    value={obPhone}
+                    onChange={(e) => setObPhone(e.target.value)}
+                    placeholder="Contoh: 081234567890"
+                    className="mt-1.5 h-10 w-full rounded-full border border-border bg-surface2/70 px-4 text-sm text-ink outline-none focus:border-brand tabular-nums"
+                    data-testid="onboarding-phone-input"
+                  />
+                </label>
+
+                <label className="block text-xs font-semibold text-sub">
+                  Catatan Singkat (Opsional)
+                  <input
+                    type="text"
+                    value={obNote}
+                    onChange={(e) => setObNote(e.target.value)}
+                    placeholder="Peran atau tim yang dituju"
+                    className="mt-1.5 h-10 w-full rounded-full border border-border bg-surface2/70 px-4 text-sm text-ink outline-none focus:border-brand"
+                    data-testid="onboarding-note-input"
+                  />
+                </label>
+
+                <button
+                  type="submit"
+                  disabled={busyOnboarding}
+                  data-testid="onboarding-submit-btn"
+                  className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-full bg-brand px-5 text-sm font-bold text-white shadow-sm hover:opacity-95 disabled:opacity-60 cursor-pointer"
+                >
+                  <span>
+                    {busyOnboarding
+                      ? "Menyimpan Profil..."
+                      : onboardingCtx.autoApproveEligible
+                      ? "Simpan Data & Masuk Workspace"
+                      : "Kirim Data & Ajukan Persetujuan"}
+                  </span>
+                  <ArrowRight size={15} />
+                </button>
+              </form>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Create New Company Room Modal */}
+      <CreateRoomModal
+        open={createRoomOpen}
+        onOpenChange={setCreateRoomOpen}
+        prefillGoogle={googleAccount}
+        lockGoogleEmail={Boolean(googleAccount?.email)}
+      />
+
+      {/* Fallback Email Google Modal */}
+      <Dialog open={fallbackEmailModalOpen} onOpenChange={setFallbackEmailModalOpen}>
+        <DialogContent className="max-w-md rounded-3xl border bg-surface p-6 shadow-2xl" data-testid="google-email-fallback-modal">
+          <DialogHeader className="pb-3 border-b">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-brand/10 text-brand shrink-0">
+                <Mail size={19} />
+              </div>
+              <div className="text-left">
+                <DialogTitle className="text-base font-extrabold text-ink">
+                  Masuk Menggunakan Email Google
+                </DialogTitle>
+                <DialogDescription className="text-xs text-sub">
+                  Alternatif aman apabila popup Google OAuth diblokir atau muncul Error 403 di iframe preview.
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <form onSubmit={handleFallbackEmailSubmit} className="space-y-4 pt-3">
+            {fallbackError && (
+              <div className="flex items-start gap-2 rounded-2xl border border-rose-200 bg-rose-50 p-3 text-xs font-medium text-rose-700">
+                <ShieldAlert size={15} className="shrink-0 mt-0.5" />
+                <span>{fallbackError}</span>
+              </div>
+            )}
+            <label className="block text-xs font-semibold text-sub">
+              Alamat Email Google *
+              <input
+                type="email"
+                required
+                autoFocus
+                value={fallbackEmail}
+                onChange={(e) => setFallbackEmail(e.target.value)}
+                placeholder="nama@perusahaan.com atau nama@gmail.com"
+                className="mt-1.5 h-10 w-full rounded-full border border-border bg-surface2/70 px-4 text-sm text-ink outline-none focus:border-brand"
+                data-testid="fallback-google-email-input"
+              />
+            </label>
+
+            <label className="block text-xs font-semibold text-sub">
+              Nama Lengkap (Opsional)
+              <input
+                type="text"
+                value={fallbackName}
+                onChange={(e) => setFallbackName(e.target.value)}
+                placeholder="Nama tampilan di workspace"
+                className="mt-1.5 h-10 w-full rounded-full border border-border bg-surface2/70 px-4 text-sm text-ink outline-none focus:border-brand"
+                data-testid="fallback-google-name-input"
+              />
+            </label>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t">
+              <button
+                type="button"
+                onClick={() => setFallbackEmailModalOpen(false)}
+                className="h-10 rounded-full border bg-surface px-4 text-xs font-semibold text-sub hover:text-ink cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="submit"
+                disabled={busyFallback}
+                data-testid="fallback-google-submit-btn"
+                className="inline-flex h-10 items-center gap-1.5 rounded-full bg-brand px-5 text-xs font-bold text-white shadow-sm hover:opacity-95 disabled:opacity-60 cursor-pointer"
+              >
+                <span>{busyFallback ? "Memeriksa Room..." : "Deteksi Room Saya"}</span>
+                <ArrowRight size={14} />
+              </button>
+            </div>
+          </form>
         </DialogContent>
       </Dialog>
     </div>

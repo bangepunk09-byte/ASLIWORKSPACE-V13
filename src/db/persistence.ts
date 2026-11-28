@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { eq, notInArray, desc, sql } from 'drizzle-orm';
+import { eq, like, notInArray, desc, sql } from 'drizzle-orm';
 import { db as pgDb } from './index.ts';
 import {
   users,
@@ -701,3 +701,160 @@ export async function getWorkspaceSnapshotFromPostgres(snapshotId: string) {
     return null;
   }
 }
+
+export const SAAS_PLATFORM_STATE_KEY = 'saas_platform_state';
+export const SAAS_ROOM_KEY_PREFIX = 'saas_room:';
+
+export interface LoadedSaasPlatformState {
+  hasPersistedData: boolean;
+  revision: number;
+  platformState: Record<string, any> | null;
+  rooms: Record<string, Record<string, any>>;
+}
+
+function sanitizeRoomPayloadForPostgres(roomDb: Record<string, any>): Record<string, any> {
+  const sanitized: Record<string, any> = {};
+  for (const [key, val] of Object.entries(roomDb || {})) {
+    if (val === undefined) continue;
+    if (key === 'files' && val && typeof val === 'object') {
+      const cleanFiles: Record<string, any> = {};
+      for (const [fid, fmeta] of Object.entries(val)) {
+        if (!fmeta || typeof fmeta !== 'object') continue;
+        const { buffer: _buf, ...restMeta } = fmeta as any;
+        cleanFiles[fid] = restMeta;
+      }
+      sanitized.files = cleanFiles;
+    } else {
+      sanitized[key] = val;
+    }
+  }
+  return sanitized;
+}
+
+export async function loadSaasPlatformFromPostgres(): Promise<LoadedSaasPlatformState | null> {
+  if (!isPostgresSocketReachable()) {
+    return null;
+  }
+  try {
+    const [platformRows, roomRows] = await Promise.all([
+      pgDb
+        .select()
+        .from(workspaceState)
+        .where(eq(workspaceState.key, SAAS_PLATFORM_STATE_KEY))
+        .limit(1),
+      pgDb
+        .select()
+        .from(workspaceState)
+        .where(like(workspaceState.key, `${SAAS_ROOM_KEY_PREFIX}%`)),
+    ]);
+
+    const platformRow = platformRows[0] || null;
+    if (!platformRow && roomRows.length === 0) {
+      return null;
+    }
+
+    const rooms: Record<string, Record<string, any>> = {};
+    for (const row of roomRows) {
+      if (!row?.key?.startsWith(SAAS_ROOM_KEY_PREFIX)) continue;
+      const slug = row.key.slice(SAAS_ROOM_KEY_PREFIX.length).trim();
+      if (!slug || slug === 'asli-workspace') continue;
+      if (row.data && typeof row.data === 'object') {
+        rooms[slug] = row.data;
+      }
+    }
+
+    return {
+      hasPersistedData: true,
+      revision: Number(platformRow?.revision || 0),
+      platformState:
+        platformRow?.data && typeof platformRow.data === 'object' ? platformRow.data : null,
+      rooms,
+    };
+  } catch {
+    markPostgresUnavailable();
+    return null;
+  }
+}
+
+export async function saveSaasPlatformToPostgres(
+  platformState: Record<string, any>,
+  revision = 1
+): Promise<void> {
+  if (!isPostgresSocketReachable()) {
+    return;
+  }
+  try {
+    await pgDb
+      .insert(workspaceState)
+      .values({
+        key: SAAS_PLATFORM_STATE_KEY,
+        revision: Number(revision || 0),
+        data: platformState,
+        updatedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: workspaceState.key,
+        set: {
+          revision: Number(revision || 0),
+          data: platformState,
+          updatedAt: new Date(),
+        },
+      });
+  } catch {
+    markPostgresUnavailable();
+  }
+}
+
+export async function saveSaasRoomToPostgres(
+  slug: string,
+  roomDb: Record<string, any>
+): Promise<void> {
+  const cleanSlug = String(slug || '').trim().toLowerCase();
+  if (!cleanSlug || cleanSlug === 'asli-workspace' || !roomDb || typeof roomDb !== 'object') {
+    return;
+  }
+  if (!isPostgresSocketReachable()) {
+    return;
+  }
+  try {
+    const sanitized = sanitizeRoomPayloadForPostgres(roomDb);
+    const revision = Number(roomDb.revision || 0);
+    const key = `${SAAS_ROOM_KEY_PREFIX}${cleanSlug}`;
+    await pgDb
+      .insert(workspaceState)
+      .values({
+        key,
+        revision,
+        data: sanitized,
+        updatedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: workspaceState.key,
+        set: {
+          revision,
+          data: sanitized,
+          updatedAt: new Date(),
+        },
+      });
+  } catch {
+    markPostgresUnavailable();
+  }
+}
+
+export async function deleteSaasRoomFromPostgres(slug: string): Promise<void> {
+  const cleanSlug = String(slug || '').trim().toLowerCase();
+  if (!cleanSlug || cleanSlug === 'asli-workspace') {
+    return;
+  }
+  if (!isPostgresSocketReachable()) {
+    return;
+  }
+  try {
+    await pgDb
+      .delete(workspaceState)
+      .where(eq(workspaceState.key, `${SAAS_ROOM_KEY_PREFIX}${cleanSlug}`));
+  } catch {
+    markPostgresUnavailable();
+  }
+}
+

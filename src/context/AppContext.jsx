@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { api, wsUrl, fileUrl, setAuthUserId, setAuthToken, getAuthToken, getAuthGeneration, invalidateApiGetCache } from "../lib/api";
+import { api, wsUrl, fileUrl, setAuthUserId, setAuthToken, getAuthToken, getAuthGeneration, invalidateApiGetCache, switchActiveRoom } from "../lib/api";
+import { getActiveRoomSlug, setActiveRoomSlug, extractRoomSlugFromPath, roomStorageKey, recordRecentGoogleAccount } from "../lib/roomContext";
 import { applyTheme, buildTheme } from "../lib/theme";
 import { getTranslation, getEffectiveCopywriting } from "../lib/i18n";
 import { playSound, setWorkspaceSoundConfig } from "../lib/sound";
@@ -37,6 +38,7 @@ import {
   hydrateAdminPanelsCache,
   hydrateTeamStatsCache,
   reconcileMarketplaceEnabledCacheLite as reconcileMarketplaceEnabledCache,
+  resetAllBootstrapCaches,
 } from "../lib/bootstrapCaches";
 import { setTopQuickActionNotifActive } from "../lib/sonnerCompat";
 import { hasTopNotifQuickAction } from "../components/TopNotificationPopup";
@@ -51,21 +53,27 @@ const AppCtx = createContext(null);
 export const useApp = () => useContext(AppCtx);
 
 const DEFAULT_USERS = [
-  { user_id: "user_admin1", name: "Admin ASLI RI", email: "admin@asliri.local", role: "super_admin", job_title: "Super Admin", department: "Management", org_unit_id: "unit_mgmt", manager_id: "user_superadmin_saeful", status: "active", online: true, avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80" },
-  { user_id: "user_superadmin_saeful", name: "Saeful", email: "saeful@asliri.id", role: "super_admin", job_title: "Super Administrator", department: "Management", org_unit_id: "unit_mgmt", manager_id: null, status: "active", online: true, avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80" }
+  { user_id: "user_admin1", name: "Admin ASLI", email: "admin@asliri.local", role: "super_admin", job_title: "Super Admin", department: "Management", org_unit_id: "unit_mgmt", manager_id: "user_superadmin_saeful", status: "active", online: true, avatar: "/assets/aistudio/657343220_18309991366279811_6828424809008890253_n_c00cf220.png" },
+  { user_id: "user_superadmin_saeful", name: "Saeful", email: "saeful@asliri.id", role: "super_admin", job_title: "Super Administrator", department: "Management", org_unit_id: "unit_mgmt", manager_id: null, status: "active", online: true, avatar: "/assets/aistudio/657343220_18309991366279811_6828424809008890253_n_c00cf220.png" }
 ];
 
 try {
-  if (typeof window !== "undefined" && localStorage.getItem("circle_prod_clean_v5") !== "1") {
-    localStorage.setItem("circle_prod_clean_v5", "1");
+  if (typeof window !== "undefined") {
+    const pathSlug = extractRoomSlugFromPath(window.location.pathname);
+    if (pathSlug) setActiveRoomSlug(pathSlug);
+    if (localStorage.getItem("circle_prod_clean_v5") !== "1") {
+      localStorage.setItem("circle_prod_clean_v5", "1");
+    }
   }
 } catch {}
 
 export function AppProvider({ children }) {
+  const [currentRoomSlug, setCurrentRoomSlug] = useState(() => getActiveRoomSlug());
   const [session, setSessionState] = useState(() => {
     try {
-      const tabCached = sessionStorage.getItem("circle_tab_session_cache");
-      const cached = tabCached || localStorage.getItem("circle_session_cache");
+      const rid = getActiveRoomSlug();
+      const tabCached = sessionStorage.getItem(roomStorageKey("circle_tab_session_cache", rid));
+      const cached = tabCached || localStorage.getItem(roomStorageKey("circle_session_cache", rid));
       if (cached) {
         const parsed = JSON.parse(cached);
         if (parsed && parsed.user?.user_id) {
@@ -83,6 +91,7 @@ export function AppProvider({ children }) {
   sessionRef.current = session;
 
   const setSession = useCallback((updater) => {
+    const rid = getActiveRoomSlug();
     const prev = sessionRef.current;
     const rawNext = typeof updater === "function" ? updater(prev) : updater;
     const prevUid = prev?.user?.user_id || null;
@@ -109,25 +118,33 @@ export function AppProvider({ children }) {
             "circle_admin_users",
             "circle_admin_invites",
             "circle_admin_access_reqs",
-          ].forEach((k) => localStorage.removeItem(k));
+          ].forEach((k) => localStorage.removeItem(roomStorageKey(k, rid)));
         } catch {}
       }
     }
 
     sessionRef.current = next;
-    cancelScheduledStorageWrite("circle_session_cache");
+    cancelScheduledStorageWrite(roomStorageKey("circle_session_cache", rid));
     setAuthUserId(nextUid);
     setAuthToken(next?.token || null);
 
     try {
+      const tabKey = roomStorageKey("circle_tab_session_cache", rid);
+      const locKey = roomStorageKey("circle_session_cache", rid);
       if (next && nextUid) {
         upsertAccountInVault(next.account_vault_entry || next.user);
+        recordRecentGoogleAccount({
+          email: next.user?.email,
+          name: next.user?.name,
+          picture: next.user?.avatar || next.user?.picture,
+          last_room_slug: rid,
+        });
         const serialized = JSON.stringify(next);
-        sessionStorage.setItem("circle_tab_session_cache", serialized);
-        localStorage.setItem("circle_session_cache", serialized);
+        sessionStorage.setItem(tabKey, serialized);
+        localStorage.setItem(locKey, serialized);
       } else {
-        sessionStorage.removeItem("circle_tab_session_cache");
-        localStorage.removeItem("circle_session_cache");
+        sessionStorage.removeItem(tabKey);
+        localStorage.removeItem(locKey);
       }
     } catch {}
 
@@ -136,7 +153,7 @@ export function AppProvider({ children }) {
 
   const [users, setUsers] = useState(() => {
     try {
-      const cached = localStorage.getItem("circle_users_cache");
+      const cached = localStorage.getItem(roomStorageKey("circle_users_cache"));
       if (cached) {
         const parsed = JSON.parse(cached);
         if (Array.isArray(parsed) && parsed.length > 0) return parsed;
@@ -146,7 +163,7 @@ export function AppProvider({ children }) {
   });
   const [labels, setLabels] = useState(() => {
     try {
-      const cached = localStorage.getItem("circle_labels_cache");
+      const cached = localStorage.getItem(roomStorageKey("circle_labels_cache"));
       if (cached) {
         const parsed = JSON.parse(cached);
         if (Array.isArray(parsed) && parsed.length > 0) return parsed;
@@ -166,7 +183,7 @@ export function AppProvider({ children }) {
   const [cloudSyncStatus, setCloudSyncStatus] = useState(() => getCloudSyncStatus());
   const [tasks, setTasks] = useState(() => {
     try {
-      const cached = localStorage.getItem("circle_tasks_cache") || localStorage.getItem("circle_cache_tasks");
+      const cached = localStorage.getItem(roomStorageKey("circle_tasks_cache")) || localStorage.getItem(roomStorageKey("circle_cache_tasks"));
       const parsed = cached ? JSON.parse(cached) : [];
       return Array.isArray(parsed) ? parsed.map((t) => enforceTaskApprovalInvariant(t)) : [];
     } catch {
@@ -175,7 +192,7 @@ export function AppProvider({ children }) {
   });
   const [boards, setBoards] = useState(() => {
     try {
-      const cached = localStorage.getItem("circle_boards_cache");
+      const cached = localStorage.getItem(roomStorageKey("circle_boards_cache"));
       if (cached) {
         const parsed = JSON.parse(cached);
         if (Array.isArray(parsed) && parsed.length > 0) {
@@ -188,7 +205,7 @@ export function AppProvider({ children }) {
   });
   const [orgUnits, setOrgUnits] = useState(() => {
     try {
-      const cached = localStorage.getItem("circle_org_units_cache");
+      const cached = localStorage.getItem(roomStorageKey("circle_org_units_cache"));
       if (cached) {
         const parsed = JSON.parse(cached);
         if (Array.isArray(parsed) && parsed.length > 0) return parsed;
@@ -221,6 +238,7 @@ export function AppProvider({ children }) {
 
   const applyServerTasksSafely = useCallback((incomingList, { silentSync = false } = {}) => {
     if (!Array.isArray(incomingList)) return false;
+    const rid = getActiveRoomSlug();
     if (incomingList.length === 0 && (!hasCompletedInitialHydrate() || (Array.isArray(tasksRef.current) && tasksRef.current.length > 0))) {
       rehydrateIfServerRestarted(api).then((restored) => {
         if (restored) {
@@ -229,16 +247,16 @@ export function AppProvider({ children }) {
               const normalized = r.data.map((t) => enforceTaskApprovalInvariant(t));
               setTasks(normalized);
               hydrateTasksWorkspaceCache({ tasks: normalized });
-              scheduleJsonStorageWrite("circle_tasks_cache", normalized);
-              scheduleJsonStorageWrite("circle_cache_tasks", normalized);
+              scheduleJsonStorageWrite(roomStorageKey("circle_tasks_cache", rid), normalized);
+              scheduleJsonStorageWrite(roomStorageKey("circle_cache_tasks", rid), normalized);
               subs.current.forEach((fn) => fn({ type: "tasks:changed", silentSync: true }));
             }
           }).catch(() => {});
         } else {
           setTasks([]);
           hydrateTasksWorkspaceCache({ tasks: [] });
-          scheduleJsonStorageWrite("circle_tasks_cache", []);
-          scheduleJsonStorageWrite("circle_cache_tasks", []);
+          scheduleJsonStorageWrite(roomStorageKey("circle_tasks_cache", rid), []);
+          scheduleJsonStorageWrite(roomStorageKey("circle_cache_tasks", rid), []);
           subs.current.forEach((fn) => fn({ type: "tasks:changed", silentSync: true }));
         }
       }).catch(() => {});
@@ -247,8 +265,8 @@ export function AppProvider({ children }) {
     const normalized = incomingList.map((t) => enforceTaskApprovalInvariant(t));
     setTasks(normalized);
     hydrateTasksWorkspaceCache({ tasks: normalized });
-    scheduleJsonStorageWrite("circle_tasks_cache", normalized);
-    scheduleJsonStorageWrite("circle_cache_tasks", normalized);
+    scheduleJsonStorageWrite(roomStorageKey("circle_tasks_cache", rid), normalized);
+    scheduleJsonStorageWrite(roomStorageKey("circle_cache_tasks", rid), normalized);
     if (silentSync) {
       subs.current.forEach((fn) => fn({ type: "tasks:changed", silentSync: true }));
     }
@@ -407,12 +425,13 @@ export function AppProvider({ children }) {
             bootData.workspace.marketplace_config
           );
         }
+        const rid = getActiveRoomSlug();
         if (Array.isArray(bootData.users) && bootData.users.length > 0) {
           const syncedUsers = bootData.users.map((x) => (x.user_id === currentUid ? { ...x, online: true } : x));
           setUsers(syncedUsers);
           upsertAccountsListInVault(syncedUsers);
           setOnline(new Set([...syncedUsers.filter((x) => x.online).map((x) => x.user_id), currentUid]));
-          scheduleJsonStorageWrite("circle_users_cache", syncedUsers);
+          scheduleJsonStorageWrite(roomStorageKey("circle_users_cache", rid), syncedUsers);
           const syncedMe = syncedUsers.find((x) => x.user_id === currentUid);
           if (syncedMe) {
             setSession((s) => {
@@ -426,11 +445,11 @@ export function AppProvider({ children }) {
         }
         if (Array.isArray(bootData.labels)) {
           setLabels(bootData.labels);
-          scheduleJsonStorageWrite("circle_labels_cache", bootData.labels);
+          scheduleJsonStorageWrite(roomStorageKey("circle_labels_cache", rid), bootData.labels);
         }
         if (bootData.notifications) {
           setUnread(bootData.notifications.unread || 0);
-          scheduleJsonStorageWrite(`circle_notifications_cache_${currentUid}`, bootData.notifications);
+          scheduleJsonStorageWrite(roomStorageKey(`circle_notifications_cache_${currentUid}`, rid), bootData.notifications);
         }
         if (Array.isArray(bootData.conversations)) {
           hydrateConversationsCache(bootData.conversations, currentUid);
@@ -442,7 +461,7 @@ export function AppProvider({ children }) {
           const cleanBoards = bootData.boards.filter((b) => b && b.id !== "brd_1").map((b) => ({ ...b, is_accessible: b.is_accessible ?? true }));
           if (cleanBoards.length > 0) {
             setBoards(cleanBoards);
-            scheduleJsonStorageWrite("circle_boards_cache", cleanBoards);
+            scheduleJsonStorageWrite(roomStorageKey("circle_boards_cache", rid), cleanBoards);
           }
         }
         hydrateTasksWorkspaceCache({
@@ -454,7 +473,7 @@ export function AppProvider({ children }) {
         if (Array.isArray(bootData.org_units) && bootData.org_units.length > 0) {
           setOrgUnits(bootData.org_units);
           hydrateOrgUnitsCache(bootData.org_units);
-          scheduleJsonStorageWrite("circle_org_units_cache", bootData.org_units);
+          scheduleJsonStorageWrite(roomStorageKey("circle_org_units_cache", rid), bootData.org_units);
         }
         hydrateAdminPanelsCache({
           adminStats: bootData.admin_stats,
@@ -479,15 +498,15 @@ export function AppProvider({ children }) {
           hydrateGroupsCache(bootData.groups, currentUid);
         }
         if (Array.isArray(bootData.meetings)) {
-          scheduleJsonStorageWrite(`circle_meetings_cache_${currentUid}`, bootData.meetings);
-          scheduleJsonStorageWrite("circle_meetings_cache", bootData.meetings);
+          scheduleJsonStorageWrite(roomStorageKey(`circle_meetings_cache_${currentUid}`, rid), bootData.meetings);
+          scheduleJsonStorageWrite(roomStorageKey("circle_meetings_cache", rid), bootData.meetings);
         }
         if (Array.isArray(bootData.notes)) {
-          scheduleJsonStorageWrite(`circle_sticky_notes_v1_${currentUid}`, bootData.notes);
-          scheduleJsonStorageWrite("circle_sticky_notes_v1", bootData.notes);
+          scheduleJsonStorageWrite(roomStorageKey(`circle_sticky_notes_v1_${currentUid}`, rid), bootData.notes);
+          scheduleJsonStorageWrite(roomStorageKey("circle_sticky_notes_v1", rid), bootData.notes);
         }
         if (Array.isArray(bootData.projects)) {
-          scheduleJsonStorageWrite("circle_projects_cache", bootData.projects);
+          scheduleJsonStorageWrite(roomStorageKey("circle_projects_cache", rid), bootData.projects);
         }
         if (bootData.stats_team && typeof bootData.stats_team === "object") {
           hydrateTeamStatsCache(currentUid, bootData.stats_team, "default", "7d");
@@ -516,9 +535,10 @@ export function AppProvider({ children }) {
   loadAllRef.current = loadAll;
 
   const checkAuth = useCallback(async () => {
+    const rid = getActiveRoomSlug();
     let cachedPrefs = {};
     try {
-      cachedPrefs = JSON.parse(localStorage.getItem("circle_user_prefs") || "{}");
+      cachedPrefs = JSON.parse(localStorage.getItem(roomStorageKey("circle_user_prefs", rid)) || "{}");
     } catch {}
     try {
       const { data } = await api.get("/auth/me");
@@ -547,27 +567,33 @@ export function AppProvider({ children }) {
         setUsers(data.users);
         upsertAccountsListInVault(data.users);
         setOnline(new Set(data.users.filter((x) => x.online).map((x) => x.user_id)));
-        scheduleJsonStorageWrite("circle_users_cache", data.users);
+        scheduleJsonStorageWrite(roomStorageKey("circle_users_cache", rid), data.users);
       }
       if (Array.isArray(data.labels) && data.labels.length > 0) {
         setLabels(data.labels);
-        scheduleJsonStorageWrite("circle_labels_cache", data.labels);
+        scheduleJsonStorageWrite(roomStorageKey("circle_labels_cache", rid), data.labels);
       }
       if (Array.isArray(data.org_units)) {
         setOrgUnits(data.org_units);
         hydrateOrgUnitsCache(data.org_units);
-        scheduleJsonStorageWrite("circle_org_units_cache", data.org_units);
+        scheduleJsonStorageWrite(roomStorageKey("circle_org_units_cache", rid), data.org_units);
       }
       if (Array.isArray(data.drive_shortcuts)) {
         setCachedDriveShortcuts(data.drive_shortcuts);
       }
-      scheduleJsonStorageWrite("circle_user_prefs", mergedPrefs);
+      scheduleJsonStorageWrite(roomStorageKey("circle_user_prefs", rid), mergedPrefs);
     } catch (err) {
       const status = err?.response?.status;
       if (status === 401 || status === 403) {
+        if (err?.response?.data?.was_removed || err?.response?.data?.revoked) {
+          const curMe = meRef.current;
+          if (curMe) removeAccountFromVault(curMe);
+          setSession(null);
+          return;
+        }
         await attemptAutoHydrateServer(api).catch(() => false);
         try {
-          const cachedRaw = sessionStorage.getItem("circle_tab_session_cache") || localStorage.getItem("circle_session_cache");
+          const cachedRaw = sessionStorage.getItem(roomStorageKey("circle_tab_session_cache", rid)) || localStorage.getItem(roomStorageKey("circle_session_cache", rid));
           const cachedSess = cachedRaw ? JSON.parse(cachedRaw) : null;
           if (cachedSess?.user?.user_id) {
             const { data: rec } = await api.post("/auth/session-recover", {
@@ -598,12 +624,12 @@ export function AppProvider({ children }) {
     }
   }, [setSession]);
 
-  // Verify legacy tokenless cached sessions via cookie or cleanly return to Login
+  // Verify any cached session on mount / user switch so removed users are immediately returned to onboarding
   useEffect(() => {
-    if (me?.user_id && !session?.token) {
+    if (me?.user_id) {
       checkAuth();
     }
-  }, [me?.user_id, session?.token, checkAuth]);
+  }, [me?.user_id, currentRoomSlug, checkAuth]);
 
   // Listen for 401 session revocation / expiration from API interceptor (attempt auto-hydrate & session-recover before kicking out)
   useEffect(() => {
@@ -623,13 +649,27 @@ export function AppProvider({ children }) {
       }
       handling = true;
       try {
+        if (evt?.detail?.wasRemoved) {
+          const curMe = meRef.current;
+          if (curMe) removeAccountFromVault(curMe);
+          invalidateApiGetCache();
+          clearChatCache();
+          setSession(null);
+          const now = Date.now();
+          if (now - lastNotified > 3000) {
+            lastNotified = now;
+            toast.error("Akun Anda telah dihapus oleh Super Admin. Silakan lengkapi data ulang jika ingin bergabung kembali.");
+          }
+          return;
+        }
         await attemptAutoHydrateServer(api).catch(() => false);
         // If user just signed in manually while auto-hydrate ran, do NOT wipe out their new session
         if (getAuthGeneration() !== currentGenBefore && sessionRef.current?.user?.user_id && sessionRef.current?.token) {
           return;
         }
         try {
-          const cachedRaw = sessionStorage.getItem("circle_tab_session_cache") || localStorage.getItem("circle_session_cache");
+          const rid = getActiveRoomSlug();
+          const cachedRaw = sessionStorage.getItem(roomStorageKey("circle_tab_session_cache", rid)) || localStorage.getItem(roomStorageKey("circle_session_cache", rid));
           const cachedSess = cachedRaw ? JSON.parse(cachedRaw) : null;
           if (cachedSess?.user?.user_id) {
             const { data: rec } = await api.post("/auth/session-recover", {
@@ -879,7 +919,7 @@ export function AppProvider({ children }) {
 
   useEffect(() => {
     if (!me?.user_id || me?.is_demo || me?.needs_onboarding || me?.is_verified) return;
-    const seenKey = `circle_verify_prompt_seen_${me.user_id}`;
+    const seenKey = roomStorageKey(`circle_verify_prompt_seen_${me.user_id}`);
     try {
       if (localStorage.getItem(seenKey)) return;
       localStorage.setItem(seenKey, "1");
@@ -957,7 +997,7 @@ export function AppProvider({ children }) {
                   }
                 : u
             );
-            scheduleJsonStorageWrite("circle_users_cache", next);
+            scheduleJsonStorageWrite(roomStorageKey("circle_users_cache"), next);
             return next;
           });
           if (incomingAvail && targetUid === myUid) {
@@ -1160,7 +1200,7 @@ export function AppProvider({ children }) {
           }
           if (Array.isArray(evt.templates)) {
             try {
-              localStorage.setItem("circle_checkpoint_templates", JSON.stringify(evt.templates));
+              localStorage.setItem(roomStorageKey("circle_checkpoint_templates"), JSON.stringify(evt.templates));
             } catch {}
             setSession((s) =>
               s
@@ -1197,7 +1237,7 @@ export function AppProvider({ children }) {
             }
             if (Array.isArray(evt.data.checkpoint_templates)) {
               try {
-                localStorage.setItem("circle_checkpoint_templates", JSON.stringify(evt.data.checkpoint_templates));
+                localStorage.setItem(roomStorageKey("circle_checkpoint_templates"), JSON.stringify(evt.data.checkpoint_templates));
               } catch {}
             }
             setSession((s) => (s ? { ...s, workspace: evt.data } : s));
@@ -1214,7 +1254,7 @@ export function AppProvider({ children }) {
                 }
                 if (Array.isArray(r.data.checkpoint_templates)) {
                   try {
-                    localStorage.setItem("circle_checkpoint_templates", JSON.stringify(r.data.checkpoint_templates));
+                    localStorage.setItem(roomStorageKey("circle_checkpoint_templates"), JSON.stringify(r.data.checkpoint_templates));
                   } catch {}
                 }
                 setSession((s) => (s ? { ...s, workspace: r.data } : s));
@@ -1242,6 +1282,8 @@ export function AppProvider({ children }) {
             ((remUid && curMe.user_id === remUid) ||
               (remEmail && String(curMe.email || "").toLowerCase().trim() === remEmail))
           ) {
+            invalidateApiGetCache();
+            clearChatCache();
             setSession(null);
             toast.error("Akun Anda telah dihapus oleh Super Admin. Silakan lengkapi data ulang jika ingin bergabung kembali.");
           }
@@ -1253,7 +1295,7 @@ export function AppProvider({ children }) {
               const synced = r.data.map((u) => (u.user_id === curUid ? { ...u, online: true } : u));
               setUsers(synced);
               setOnline(new Set([...synced.filter((x) => x.online).map((x) => x.user_id), ...(curUid ? [curUid] : [])]));
-              scheduleJsonStorageWrite("circle_users_cache", synced);
+              scheduleJsonStorageWrite(roomStorageKey("circle_users_cache"), synced);
               setSession((s) => {
                 if (!s?.user) return s;
                 const updatedMe = synced.find((u) => u.user_id === s.user.user_id);
@@ -1266,7 +1308,7 @@ export function AppProvider({ children }) {
         if (evt.type === "org:changed" && Array.isArray(evt.units)) {
           setOrgUnits(evt.units);
           hydrateOrgUnitsCache(evt.units);
-          scheduleJsonStorageWrite("circle_org_units_cache", evt.units);
+          scheduleJsonStorageWrite(roomStorageKey("circle_org_units_cache"), evt.units);
         }
         if (evt.type === "drive_shortcuts:changed" && Array.isArray(evt.data)) {
           if (evt.deleted_id) recordDeletedEntityIds([evt.deleted_id]);
@@ -1280,8 +1322,8 @@ export function AppProvider({ children }) {
             setTasks((prev) => {
               const list = Array.isArray(prev) ? prev : [];
               const next = list.filter((x) => !delSet.has(String(x.id)));
-              scheduleJsonStorageWrite("circle_tasks_cache", next);
-              scheduleJsonStorageWrite("circle_cache_tasks", next);
+              scheduleJsonStorageWrite(roomStorageKey("circle_tasks_cache"), next);
+              scheduleJsonStorageWrite(roomStorageKey("circle_cache_tasks"), next);
               return next;
             });
           } else if (evt.task) {
@@ -1313,8 +1355,8 @@ export function AppProvider({ children }) {
                 const next = existing
                   ? list.map((x) => (x.id === incoming.id ? mergedIncoming : x))
                   : [mergedIncoming, ...list];
-                scheduleJsonStorageWrite("circle_tasks_cache", next);
-                scheduleJsonStorageWrite("circle_cache_tasks", next);
+                scheduleJsonStorageWrite(roomStorageKey("circle_tasks_cache"), next);
+                scheduleJsonStorageWrite(roomStorageKey("circle_cache_tasks"), next);
                 return next;
               });
             } else {
@@ -1340,8 +1382,8 @@ export function AppProvider({ children }) {
           setTasks((prev) => {
             const list = Array.isArray(prev) ? prev : [];
             const next = list.filter((x) => !delSet.has(String(x.id)));
-            scheduleJsonStorageWrite("circle_tasks_cache", next);
-            scheduleJsonStorageWrite("circle_cache_tasks", next);
+            scheduleJsonStorageWrite(roomStorageKey("circle_tasks_cache"), next);
+            scheduleJsonStorageWrite(roomStorageKey("circle_cache_tasks"), next);
             return next;
           });
         }
@@ -1420,7 +1462,7 @@ export function AppProvider({ children }) {
       document.removeEventListener("visibilitychange", onFocusOrVisible);
       sock.current?.close();
     };
-  }, [me?.user_id]);
+  }, [me?.user_id, currentRoomSlug]);
 
   const userMap = useMemo(
     () => Object.fromEntries((Array.isArray(users) ? users : []).map((u) => [u.user_id, u])),
@@ -1473,7 +1515,7 @@ export function AppProvider({ children }) {
       const synced = r.data.map((u) => (u.user_id === curUid ? { ...u, online: true } : u));
       setUsers(synced);
       setOnline(new Set([...synced.filter((x) => x.online).map((x) => x.user_id), ...(curUid ? [curUid] : [])]));
-      scheduleJsonStorageWrite("circle_users_cache", synced);
+      scheduleJsonStorageWrite(roomStorageKey("circle_users_cache"), synced);
       setSession((s) => {
         if (!s?.user) return s;
         const updatedMe = synced.find((u) => u.user_id === s.user.user_id);
@@ -1486,7 +1528,7 @@ export function AppProvider({ children }) {
   const reloadLabels = useCallback(() => api.get("/labels").then((r) => {
     if (Array.isArray(r.data)) {
       setLabels(r.data);
-      scheduleJsonStorageWrite("circle_labels_cache", r.data);
+      scheduleJsonStorageWrite(roomStorageKey("circle_labels_cache"), r.data);
     }
   }), []);
 
@@ -1500,7 +1542,7 @@ export function AppProvider({ children }) {
     }
     setSession((s) => {
       if (Array.isArray(r.data?.divisions)) {
-        scheduleJsonStorageWrite("circle_admin_divisions", r.data.divisions);
+        scheduleJsonStorageWrite(roomStorageKey("circle_admin_divisions"), r.data.divisions);
       }
       return s ? { ...s, workspace: r.data } : s;
     });
@@ -1509,14 +1551,14 @@ export function AppProvider({ children }) {
   const savePrefs = useCallback(async (patch) => {
     setSession((s) => {
       const nextPrefs = { ...(s?.prefs || {}), ...patch };
-      scheduleJsonStorageWrite("circle_user_prefs", nextPrefs);
+      scheduleJsonStorageWrite(roomStorageKey("circle_user_prefs"), nextPrefs);
       return s ? { ...s, prefs: nextPrefs } : s;
     });
     try {
       const { data } = await api.put("/prefs", patch);
       setSession((s) => {
         const synced = { ...(s?.prefs || {}), ...data };
-        scheduleJsonStorageWrite("circle_user_prefs", synced);
+        scheduleJsonStorageWrite(roomStorageKey("circle_user_prefs"), synced);
         return s ? { ...s, prefs: synced } : s;
       });
     } catch (e) {
@@ -1546,7 +1588,7 @@ export function AppProvider({ children }) {
       const next = (Array.isArray(prev) ? prev : []).map((u) =>
         u.user_id === uid ? { ...u, availability_status: normalized, online: true } : u
       );
-      scheduleJsonStorageWrite("circle_users_cache", next);
+      scheduleJsonStorageWrite(roomStorageKey("circle_users_cache"), next);
       return next;
     });
     try {
@@ -1554,6 +1596,37 @@ export function AppProvider({ children }) {
     } catch (err) {
       console.warn("Failed to sync availability status:", err);
     }
+  }, [setSession]);
+
+  const enterRoomSession = useCallback((slug, sessionPayload) => {
+    const cleanSlug = switchActiveRoom(slug);
+    clearChatCache();
+    resetAllBootstrapCaches();
+    lastBootstrapEtagRef.current = null;
+    lastLoadAllAtRef.current = 0;
+    setCurrentRoomSlug(cleanSlug);
+    setUsers(DEFAULT_USERS);
+    setTasks([]);
+    setBoards(DEFAULT_BOARDS);
+    setOrgUnits(INITIAL_UNITS);
+    if (sessionPayload && sessionPayload.user?.user_id) {
+      const nextSess = {
+        token: sessionPayload.token,
+        user: sessionPayload.user,
+        account_vault_entry: sessionPayload.account_vault_entry || sessionPayload.user,
+        workspace: sessionPayload.workspace,
+        prefs: sessionPayload.prefs || {},
+      };
+      setSession(nextSess);
+      if (nextSess.user?.user_id) setAuthUserId(nextSess.user.user_id);
+      if (nextSess.token) setAuthToken(nextSess.token);
+      if (nextSess.account_vault_entry || nextSess.user) {
+        upsertAccountInVault(nextSess.account_vault_entry || nextSess.user);
+      }
+    } else {
+      setSession(null);
+    }
+    return cleanSlug;
   }, [setSession]);
 
   const logout = useCallback(async () => {
@@ -1598,7 +1671,8 @@ export function AppProvider({ children }) {
 
   const value = useMemo(() => {
     return {
-      session, setSession, me, ws, prefs, users, userMap, labels, labelMap, online, unread, setUnread,
+      session, setSession, currentRoomSlug, enterRoomSession,
+      me, ws, prefs, users, userMap, labels, labelMap, online, unread, setUnread,
       tasks, boards, orgUnits, userDeadlinesToday, userDeadlineReasons, hasDeadlineToday,
       reloadTasks,
       topNotif,
@@ -1630,7 +1704,7 @@ export function AppProvider({ children }) {
       syncCloudNow,
       connectCloudGoogle,
     };
-  }, [session, setSession, me, ws, prefs, users, userMap, labels, labelMap, statuses, allStatuses, getStatusesForDivision, effectiveCopywriting, t, online, unread, topNotif, themeDraft, tasks, boards, orgUnits, userDeadlinesToday, userDeadlineReasons, hasDeadlineToday, reloadTasks, handleSetTopNotif, closeTopNotif, canAccessArchives, reloadUsers, reloadLabels, reloadWs, savePrefs, subscribe, send, updateAvailabilityStatus, logout, checkAuth, loadAll, cloudSyncStatus, syncCloudNow, connectCloudGoogle]);
+  }, [session, setSession, currentRoomSlug, enterRoomSession, me, ws, prefs, users, userMap, labels, labelMap, statuses, allStatuses, getStatusesForDivision, effectiveCopywriting, t, online, unread, topNotif, themeDraft, tasks, boards, orgUnits, userDeadlinesToday, userDeadlineReasons, hasDeadlineToday, reloadTasks, handleSetTopNotif, closeTopNotif, canAccessArchives, reloadUsers, reloadLabels, reloadWs, savePrefs, subscribe, send, updateAvailabilityStatus, logout, checkAuth, loadAll, cloudSyncStatus, syncCloudNow, connectCloudGoogle]);
 
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
 }

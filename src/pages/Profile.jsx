@@ -186,8 +186,8 @@ function EditProfile({ open, onOpenChange, p, onSaved }) {
             <Field label={tr("profile_field_job", "Jabatan")}><input value={f.job_title || ""} onChange={set("job_title")} className={inp} data-testid="profile-title-input" /></Field>
             <Field label={tr("profile_field_level", "Level Hierarki")}>
               <AppSelect value={f.org_level || inferUserOrgLevel(f, orgLevels)} onChange={set("org_level")} placeholder="Pilih level" className={inp} data-testid="profile-org-level-select">
-                {orgLevels.map((lvl, idx) => (
-                  <option key={lvl} value={lvl}>{idx + 1}. {lvl}</option>
+                {orgLevels.map((lvl) => (
+                  <option key={lvl} value={lvl}>{lvl}</option>
                 ))}
               </AppSelect>
             </Field>

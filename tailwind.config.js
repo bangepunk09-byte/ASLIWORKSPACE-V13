@@ -7,7 +7,7 @@ export default {
   content: ["./index.html", "./src/**/*.{js,jsx,ts,tsx}"],
   theme: {
     extend: {
-      fontFamily: { sans: ['"Plus Jakarta Sans"', "Inter", "system-ui", "sans-serif"] },
+      fontFamily: { sans: ['"Plus Jakarta Sans"', "system-ui", "sans-serif"] },
       borderRadius: {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 4px)",

@@ -51,10 +51,13 @@ body, #root {
 }
 body {
   margin: 0; background: var(--c-bg); color: var(--c-text);
-  font-family: "Plus Jakarta Sans", Inter, system-ui, sans-serif;
+  font-family: "Plus Jakarta Sans", system-ui, sans-serif;
   -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
   -webkit-overflow-scrolling: touch;
   touch-action: pan-y;
+}
+button, input, select, textarea {
+  font-family: "Plus Jakarta Sans", system-ui, sans-serif;
 }
 @media (max-width: 767px) {
   html, body {

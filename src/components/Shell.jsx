@@ -28,7 +28,8 @@ import {
   Check,
   User as UserIcon,
   ShoppingBag,
-  Archive
+  Archive,
+  ArrowLeftRight
 } from "lucide-react";
 import { toast } from "sonner";
 import { useApp } from "../context/AppContext";
@@ -70,22 +71,23 @@ const MOBILE_TABS = [
   { to: "/tasks", icon: CheckSquare, label: "Tugas", id: "tasks" },
 ];
 
-const NavItem = memo(function NavItem({ item, compact, unread, onClick }) {
+const NavItem = memo(function NavItem({ item, toPath, compact, unread, onClick }) {
   const { t } = useApp();
   const Icon = item.icon;
   const label = t(`nav_${item.id}`, item.label);
+  const resolvedTo = toPath || item.to;
   return (
     <NavLink
-      to={item.to}
+      to={resolvedTo}
       end={item.to === "/"}
       onClick={(e) => {
         playSound("tab");
         onClick?.(e);
       }}
-      onMouseEnter={() => warmNavTarget(item.to)}
-      onPointerDown={() => warmNavTarget(item.to)}
-      onFocus={() => warmNavTarget(item.to)}
-      onTouchStart={() => warmNavTarget(item.to)}
+      onMouseEnter={() => warmNavTarget(resolvedTo)}
+      onPointerDown={() => warmNavTarget(resolvedTo)}
+      onFocus={() => warmNavTarget(resolvedTo)}
+      onTouchStart={() => warmNavTarget(resolvedTo)}
       data-testid={`sidebar-${item.id}-link`}
       title={label}
       className={({ isActive }) =>
@@ -117,13 +119,15 @@ const NavItem = memo(function NavItem({ item, compact, unread, onClick }) {
 
 
 const Sidebar = memo(function Sidebar({ compact, setCompact, openSearch }) {
-  const { me, ws, savePrefs, logout, unread, isDemo, t, updateAvailabilityStatus, canAccessArchives } = useApp();
+  const { me, ws, savePrefs, logout, unread, isDemo, t, updateAvailabilityStatus, canAccessArchives, currentRoomSlug } = useApp();
   const [soundOn, setSoundOn] = useState(() => isSoundEnabled());
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
   const { isInstalled } = usePWAInstall();
   const navigate = useNavigate();
   const dark = document.documentElement.classList.contains("dark");
   const currentStatusMeta = getAvailabilityStatusMeta(me?.availability_status);
+  const roomPrefix = `/w/${currentRoomSlug || "asli-workspace"}`;
+  const withRoom = (p) => (p === "/" ? roomPrefix : `${roomPrefix}${p}`);
 
   const handleSelectStatus = async (statusValue) => {
     setStatusMenuOpen(false);
@@ -199,7 +203,7 @@ const Sidebar = memo(function Sidebar({ compact, setCompact, openSearch }) {
       </div>
       <nav className="mt-3 flex-1 space-y-0.5 overflow-y-auto px-3 scroll-thin">
         {NAV.filter((n) => (!n.requiresMarketplace || ws?.marketplace_enabled !== false) && (!n.requiresArchiveAccess || canAccessArchives)).map((n) => (
-          <NavItem key={n.id} item={n} compact={compact} unread={unread} />
+          <NavItem key={n.id} item={n} toPath={withRoom(n.to)} compact={compact} unread={unread} />
         ))}
       </nav>
       <div className="border-t border-slate-200/70 dark:border-slate-800/70 px-2.5 py-2.5 space-y-1.5 relative">
@@ -247,7 +251,7 @@ const Sidebar = memo(function Sidebar({ compact, setCompact, openSearch }) {
                   type="button"
                   onClick={() => {
                     setStatusMenuOpen(false);
-                    navigate(`/people/${me.user_id}`);
+                    navigate(withRoom(`/people/${me.user_id}`));
                   }}
                   className="flex w-full items-center gap-2 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-sub hover:bg-surface2 hover:text-ink transition-colors"
                 >
@@ -266,7 +270,7 @@ const Sidebar = memo(function Sidebar({ compact, setCompact, openSearch }) {
         >
           <button
             type="button"
-            onClick={() => (compact ? setStatusMenuOpen((v) => !v) : navigate(`/people/${me.user_id}`))}
+            onClick={() => (compact ? setStatusMenuOpen((v) => !v) : navigate(withRoom(`/people/${me.user_id}`)))}
             className="shrink-0 rounded-full focus:outline-none"
             data-testid="sidebar-profile-btn"
             title={`${me.name} (${t(`nav_status_${currentStatusMeta.value}`, currentStatusMeta.label)})`}
@@ -278,7 +282,7 @@ const Sidebar = memo(function Sidebar({ compact, setCompact, openSearch }) {
               <div className="min-w-0 flex-1">
                 <button
                   type="button"
-                  onClick={() => navigate(`/people/${me.user_id}`)}
+                  onClick={() => navigate(withRoom(`/people/${me.user_id}`))}
                   className="flex w-full items-center gap-1 truncate text-left text-[13px] font-bold text-ink leading-tight hover:text-brand transition-colors"
                 >
                   <span className="truncate">{me.name}</span>
@@ -379,11 +383,14 @@ const Sidebar = memo(function Sidebar({ compact, setCompact, openSearch }) {
 function MobileNav({ openSearch }) {
   const [more, setMore] = useState(false);
   const [soundOn, setSoundOn] = useState(() => isSoundEnabled());
-  const { unread, me, logout, ws, savePrefs, isDemo, t, updateAvailabilityStatus, canAccessArchives } = useApp();
+  const { unread, me, logout, ws, savePrefs, isDemo, t, updateAvailabilityStatus, canAccessArchives, currentRoomSlug } = useApp();
   const loc = useLocation();
   const navigate = useNavigate();
   const dark = document.documentElement.classList.contains("dark");
   const currentStatusMeta = getAvailabilityStatusMeta(me?.availability_status);
+  const roomPrefix = `/w/${currentRoomSlug || "asli-workspace"}`;
+  const withRoom = (p) => (p === "/" ? roomPrefix : `${roomPrefix}${p}`);
+  const strippedPath = loc.pathname.replace(/^\/w\/[a-z0-9-]+(?=\/|$)/i, "") || "/";
 
   const handleMobileStatusSelect = async (statusValue) => {
     playSound("pop");
@@ -399,7 +406,7 @@ function MobileNav({ openSearch }) {
     if (next) playSound("click");
   };
 
-  const currentNav = NAV.find((n) => (n.to === "/" ? loc.pathname === "/" : loc.pathname.startsWith(n.to)));
+  const currentNav = NAV.find((n) => (n.to === "/" ? strippedPath === "/" : strippedPath.startsWith(n.to)));
   const activeTitle = currentNav ? t(`nav_${currentNav.id}`, currentNav.label) : (ws?.brand_name || "ASLI");
 
   const marketplaceOn = ws?.marketplace_enabled !== false;
@@ -418,7 +425,7 @@ function MobileNav({ openSearch }) {
       >
         <button
           type="button"
-          onClick={() => navigate("/")}
+          onClick={() => navigate(withRoom("/"))}
           className="flex items-center gap-2 min-w-0 text-left py-1"
         >
           <Logo size={26} ws={ws} />
@@ -445,7 +452,7 @@ function MobileNav({ openSearch }) {
             <Search size={18} />
           </button>
           <NavLink
-            to="/notifications"
+            to={withRoom("/notifications")}
             className="btn-ghost relative flex h-10 w-10 items-center justify-center rounded-xl text-sub hover:text-ink"
             aria-label="Notifikasi"
             data-testid="mobile-notifications-btn"
@@ -468,11 +475,11 @@ function MobileNav({ openSearch }) {
         {MOBILE_TABS.map((n) => (
           <NavLink
             key={n.id}
-            to={n.to}
+            to={withRoom(n.to)}
             end={n.to === "/"}
             onClick={() => playSound("tab")}
-            onPointerDown={() => warmNavTarget(n.to)}
-            onTouchStart={() => warmNavTarget(n.to)}
+            onPointerDown={() => warmNavTarget(withRoom(n.to))}
+            onTouchStart={() => warmNavTarget(withRoom(n.to))}
             data-testid={`mobile-nav-${n.id}`}
             className={({ isActive }) =>
               `relative flex h-14 min-h-[44px] flex-col items-center justify-center gap-0.5 transition-colors ${
@@ -525,7 +532,7 @@ function MobileNav({ openSearch }) {
                 type="button"
                 onClick={() => {
                   setMore(false);
-                  navigate(`/people/${me.user_id}`);
+                  navigate(withRoom(`/people/${me.user_id}`));
                 }}
                 className="flex w-full items-center justify-between gap-3 text-left hover:opacity-90 transition-opacity"
                 data-testid="more-nav-profile"
@@ -588,10 +595,10 @@ function MobileNav({ openSearch }) {
                 {collabItems.map((n) => (
                   <NavLink
                     key={n.id}
-                    to={n.to}
+                    to={withRoom(n.to)}
                     onClick={() => setMore(false)}
-                    onMouseEnter={() => warmNavTarget(n.to)}
-                    onTouchStart={() => warmNavTarget(n.to)}
+                    onMouseEnter={() => warmNavTarget(withRoom(n.to))}
+                    onTouchStart={() => warmNavTarget(withRoom(n.to))}
                     data-testid={`more-nav-${n.id}`}
                     className={({ isActive }) =>
                       `flex min-h-[72px] flex-col items-center justify-center gap-1.5 rounded-2xl border p-2.5 text-xs font-semibold transition-colors ${
@@ -617,10 +624,10 @@ function MobileNav({ openSearch }) {
                 {orgItems.map((n) => (
                   <NavLink
                     key={n.id}
-                    to={n.to}
+                    to={withRoom(n.to)}
                     onClick={() => setMore(false)}
-                    onMouseEnter={() => warmNavTarget(n.to)}
-                    onTouchStart={() => warmNavTarget(n.to)}
+                    onMouseEnter={() => warmNavTarget(withRoom(n.to))}
+                    onTouchStart={() => warmNavTarget(withRoom(n.to))}
                     data-testid={`more-nav-${n.id}`}
                     className={({ isActive }) =>
                       `flex min-h-[72px] flex-col items-center justify-center gap-1.5 rounded-2xl border p-2.5 text-xs font-semibold transition-colors ${
@@ -646,10 +653,10 @@ function MobileNav({ openSearch }) {
                 {sysItems.map((n) => (
                   <NavLink
                     key={n.id}
-                    to={n.to}
+                    to={withRoom(n.to)}
                     onClick={() => setMore(false)}
-                    onMouseEnter={() => warmNavTarget(n.to)}
-                    onTouchStart={() => warmNavTarget(n.to)}
+                    onMouseEnter={() => warmNavTarget(withRoom(n.to))}
+                    onTouchStart={() => warmNavTarget(withRoom(n.to))}
                     data-testid={`more-nav-${n.id}`}
                     className="flex h-12 items-center gap-2.5 rounded-2xl border border-slate-200/70 dark:border-slate-800 bg-surface2/60 px-3.5 text-xs font-semibold text-ink hover:bg-surface2"
                   >
@@ -678,6 +685,17 @@ function MobileNav({ openSearch }) {
                 </button>
                 <button
                   type="button"
+                  onClick={() => {
+                    setMore(false);
+                    navigate("/login?switch=1");
+                  }}
+                  className="flex h-12 items-center gap-2.5 rounded-2xl border border-slate-200/70 dark:border-slate-800 bg-surface2/60 px-3.5 text-xs font-semibold text-ink hover:bg-surface2"
+                >
+                  <ArrowLeftRight size={18} className="text-brand shrink-0" />
+                  <span className="truncate">Ganti Akun</span>
+                </button>
+                <button
+                  type="button"
                   onClick={logout}
                   data-testid="more-nav-logout"
                   className="flex h-12 items-center gap-2.5 rounded-2xl border border-rose-200 dark:border-rose-900/50 bg-rose-50/60 dark:bg-rose-950/30 px-3.5 text-xs font-semibold text-rose-600 dark:text-rose-400"
@@ -700,8 +718,8 @@ export default function Shell() {
   const [notifOpen, setNotifOpen] = useState(false);
   const [compact, setCompactState] = useState(() => window.innerWidth < 1024 || !!prefs.sidebar_compact);
   const loc = useLocation();
-  const chatOpen = /^\/messages\/.+/.test(loc.pathname);
-  const isMessagesRoot = loc.pathname === "/messages";
+  const chatOpen = /^(\/w\/[^/]+)?\/messages\/.+/.test(loc.pathname);
+  const isMessagesRoot = /^(\/w\/[^/]+)?\/messages\/?$/.test(loc.pathname);
   const [mobileViewportStyle, setMobileViewportStyle] = useState(null);
 
   useEffect(() => {

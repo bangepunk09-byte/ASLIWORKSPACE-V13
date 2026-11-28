@@ -6,7 +6,6 @@ import { api, errMsg, uploadFile, fileUrl } from "../../lib/api";
 import { PRESET_AVATARS } from "../../lib/avatars";
 import { upsertAccountInVault } from "../../lib/persistentMirror";
 import { PasswordStrengthMeter } from "../../components/PasswordStrengthMeter";
-import { ROLE_NAMES } from "../../components/common";
 import { AppSelect } from "../../components/ui/select";
 import { DatePicker } from "../../components/ui/date-picker";
 import { Card } from "./AdminPanels";
@@ -245,7 +244,6 @@ export function UserProfileSettings() {
               <div>
                 <h4 className="text-sm font-bold text-ink">{f.name || "Nama Pengguna"}</h4>
                 <p className="text-xs text-sub">{me?.email}</p>
-                <p className="mt-1 text-[11px] font-semibold text-brand">Peran: {ROLE_NAMES[me?.role] || me?.role}</p>
               </div>
             </div>
 
@@ -327,8 +325,8 @@ export function UserProfileSettings() {
               className="h-10 w-full rounded-xl border bg-surface2 px-3 text-xs font-medium text-ink"
               data-testid="profile-settings-level-select"
             >
-              {DEFAULT_ORG_LEVELS.map((lvl, idx) => (
-                <option key={lvl} value={lvl}>{idx + 1}. {lvl}</option>
+              {DEFAULT_ORG_LEVELS.map((lvl) => (
+                <option key={lvl} value={lvl}>{lvl}</option>
               ))}
             </AppSelect>
           </div>

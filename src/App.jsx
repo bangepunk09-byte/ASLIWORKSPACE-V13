@@ -1,10 +1,11 @@
-import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
 import { Component, Suspense, lazy, useEffect, useRef, useState } from "react";
 import { Toaster } from "./components/ui/sonner";
 import { AppProvider, useApp } from "./context/AppContext";
 import Shell from "./components/Shell";
 import { Spinner } from "./components/common";
 import { routeLoaders } from "./lib/routePreload";
+import { isValidRoomSlug, roomStorageKey } from "./lib/roomContext";
 
 import Dashboard from "./pages/Dashboard";
 import Beranda from "./pages/Beranda";
@@ -15,6 +16,7 @@ import Projects from "./pages/Projects";
 import EmployeeArchives from "./pages/EmployeeArchives";
 
 const Login = lazy(routeLoaders["/login"]);
+const PlatformOwnerConsole = lazy(routeLoaders["/platform-owner"]);
 const Groups = lazy(routeLoaders["/groups"]);
 const Directory = lazy(routeLoaders["/directory"]);
 const Profile = lazy(routeLoaders["/people"]);
@@ -97,8 +99,52 @@ function AuthCallback() {
 
 function Protected({ children }) {
   const { session, t } = useApp();
-  if (session === undefined) return <Spinner label={t("err_loading_circle", "Loading ASLI")} />;
+  if (session === undefined) return <Spinner label={t("err_loading_circle", "Loading ASLIWORKSPACE")} />;
   if (!session?.user?.user_id) return <Navigate to="/login" replace />;
+  if (session.user?.needs_onboarding) {
+    return (
+      <Suspense fallback={<Spinner label={t("err_loading_page", "Memuat halaman")} />}>
+        <Onboarding />
+      </Suspense>
+    );
+  }
+  return children;
+}
+
+function RoomProtected({ children }) {
+  const { slug } = useParams();
+  const { session, currentRoomSlug, enterRoomSession, t } = useApp();
+  const cleanSlug = isValidRoomSlug(slug) ? slug : "asli-workspace";
+  const [switching, setSwitching] = useState(() => cleanSlug !== currentRoomSlug);
+
+  useEffect(() => {
+    if (cleanSlug === currentRoomSlug) {
+      setSwitching(false);
+      return;
+    }
+    setSwitching(true);
+    try {
+      const raw =
+        sessionStorage.getItem(roomStorageKey("circle_tab_session_cache", cleanSlug)) ||
+        localStorage.getItem(roomStorageKey("circle_session_cache", cleanSlug));
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.user?.user_id) {
+          enterRoomSession(cleanSlug, parsed);
+          setSwitching(false);
+          return;
+        }
+      }
+    } catch {}
+    setSwitching(false);
+  }, [cleanSlug, currentRoomSlug, enterRoomSession]);
+
+  if (switching || session === undefined) {
+    return <Spinner label={t("err_loading_circle", "Memuat Workspace Room")} />;
+  }
+  if (!session?.user?.user_id || cleanSlug !== currentRoomSlug) {
+    return <Navigate to={`/w/${cleanSlug}/login`} replace />;
+  }
   if (session.user?.needs_onboarding) {
     return (
       <Suspense fallback={<Spinner label={t("err_loading_page", "Memuat halaman")} />}>
@@ -112,6 +158,40 @@ function Protected({ children }) {
 function LazyPage({ children }) {
   return <Suspense fallback={<RouteFallback />}>{children}</Suspense>;
 }
+
+const workspaceChildRoutes = (
+  <>
+    <Route index element={<Dashboard />} />
+    <Route path="beranda" element={<Beranda />} />
+    <Route path="beranda/:pid" element={<Beranda />} />
+    <Route path="messages" element={<Messages />} />
+    <Route path="messages/:cid" element={<Messages />} />
+    <Route path="groups" element={<LazyPage><Groups /></LazyPage>} />
+    <Route path="directory" element={<LazyPage><Directory /></LazyPage>} />
+    <Route path="employee" element={<Employees />} />
+    <Route path="people" element={<Employees />} />
+    <Route path="people/:uid" element={<LazyPage><Profile /></LazyPage>} />
+    <Route path="org" element={<LazyPage><Org /></LazyPage>} />
+    <Route path="tasks" element={<Tasks />} />
+    <Route path="schedule" element={<LazyPage><Schedule /></LazyPage>} />
+    <Route path="projects" element={<Projects />} />
+    <Route path="projects/:pid" element={<Projects />} />
+    <Route path="marketplace" element={<LazyPage><Marketplace /></LazyPage>} />
+    <Route path="marketplace/:itemId" element={<LazyPage><Marketplace /></LazyPage>} />
+    <Route
+      path="notifications"
+      element={
+        <LazyPage>
+          <div className="h-[calc(100dvh-7.5rem)] bg-surface md:h-screen">
+            <NotificationList />
+          </div>
+        </LazyPage>
+      }
+    />
+    <Route path="archives" element={<LazyPage><EmployeeArchives /></LazyPage>} />
+    <Route path="settings" element={<LazyPage><Settings /></LazyPage>} />
+  </>
+);
 
 function Router() {
   const location = useLocation();
@@ -127,27 +207,27 @@ function Router() {
           </Suspense>
         }
       />
-      <Route element={<Protected><Shell /></Protected>}>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/beranda" element={<Beranda />} />
-        <Route path="/beranda/:pid" element={<Beranda />} />
-        <Route path="/messages" element={<Messages />} />
-        <Route path="/messages/:cid" element={<Messages />} />
-        <Route path="/groups" element={<LazyPage><Groups /></LazyPage>} />
-        <Route path="/directory" element={<LazyPage><Directory /></LazyPage>} />
-        <Route path="/employee" element={<Employees />} />
-        <Route path="/people" element={<Employees />} />
-        <Route path="/people/:uid" element={<LazyPage><Profile /></LazyPage>} />
-        <Route path="/org" element={<LazyPage><Org /></LazyPage>} />
-        <Route path="/tasks" element={<Tasks />} />
-        <Route path="/schedule" element={<LazyPage><Schedule /></LazyPage>} />
-        <Route path="/projects" element={<Projects />} />
-        <Route path="/projects/:pid" element={<Projects />} />
-        <Route path="/marketplace" element={<LazyPage><Marketplace /></LazyPage>} />
-        <Route path="/marketplace/:itemId" element={<LazyPage><Marketplace /></LazyPage>} />
-        <Route path="/notifications" element={<LazyPage><div className="h-[calc(100dvh-7.5rem)] bg-surface md:h-screen"><NotificationList /></div></LazyPage>} />
-        <Route path="/archives" element={<LazyPage><EmployeeArchives /></LazyPage>} />
-        <Route path="/settings" element={<LazyPage><Settings /></LazyPage>} />
+      <Route
+        path="/w/:slug/login"
+        element={
+          <Suspense fallback={<Spinner label={t("err_loading_page", "Memuat halaman")} />}>
+            <Login />
+          </Suspense>
+        }
+      />
+      <Route
+        path="/platform-owner"
+        element={
+          <Suspense fallback={<Spinner label={t("err_loading_page", "Memuat Console Owner")} />}>
+            <PlatformOwnerConsole />
+          </Suspense>
+        }
+      />
+      <Route path="/w/:slug" element={<RoomProtected><Shell /></RoomProtected>}>
+        {workspaceChildRoutes}
+      </Route>
+      <Route path="/" element={<Protected><Shell /></Protected>}>
+        {workspaceChildRoutes}
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

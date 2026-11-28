@@ -1,5 +1,6 @@
 import { scheduleJsonStorageWrite } from "./workspaceCaches";
 import { enforceTaskApprovalInvariant } from "./snapshotMerge";
+import { getActiveRoomSlug, roomStorageKey } from "./roomContext";
 
 // ---- Shared Tasks & Boards Workspace Cache ----
 export const DEFAULT_BOARDS = [
@@ -21,6 +22,7 @@ export const TASKS_CACHE_BOX = {
 };
 
 export function hydrateTasksWorkspaceCache({ tasks, boards, allBoards, projects } = {}) {
+  const rid = getActiveRoomSlug();
   if (Array.isArray(tasks)) {
     TASKS_CACHE_BOX.tasks = tasks.map((t) => enforceTaskApprovalInvariant(t));
   }
@@ -30,7 +32,7 @@ export function hydrateTasksWorkspaceCache({ tasks, boards, allBoards, projects 
       .map((b) => ({ ...b, is_accessible: b.is_accessible ?? true }));
     if (clean.length > 0) {
       TASKS_CACHE_BOX.boards = clean;
-      scheduleJsonStorageWrite("circle_boards_cache", clean);
+      scheduleJsonStorageWrite(roomStorageKey("circle_boards_cache", rid), clean);
     }
   }
   if (Array.isArray(allBoards) && allBoards.length > 0) {
@@ -72,7 +74,7 @@ export const ORG_UNITS_CACHE_BOX = {
 
 try {
   if (typeof localStorage !== "undefined") {
-    const saved = localStorage.getItem("circle_org_units_cache");
+    const saved = localStorage.getItem(roomStorageKey("circle_org_units_cache"));
     if (saved) {
       const parsed = JSON.parse(saved);
       if (Array.isArray(parsed) && parsed.length > 0) ORG_UNITS_CACHE_BOX.units = restoreCachedUnits(parsed);
@@ -83,7 +85,7 @@ try {
 export function hydrateOrgUnitsCache(units) {
   if (Array.isArray(units) && units.length > 0) {
     ORG_UNITS_CACHE_BOX.units = units;
-    scheduleJsonStorageWrite("circle_org_units_cache", units);
+    scheduleJsonStorageWrite(roomStorageKey("circle_org_units_cache"), units);
   }
 }
 
@@ -99,6 +101,23 @@ export const ADMIN_PANELS_CACHE_BOX = {
   recoveryKey: "",
 };
 
+export function resetAllBootstrapCaches() {
+  TASKS_CACHE_BOX.tasks = null;
+  TASKS_CACHE_BOX.boards = null;
+  TASKS_CACHE_BOX.allBoards = null;
+  TASKS_CACHE_BOX.projects = null;
+  ORG_UNITS_CACHE_BOX.units = INITIAL_UNITS;
+  ADMIN_PANELS_CACHE_BOX.stats = null;
+  ADMIN_PANELS_CACHE_BOX.auditLogs = null;
+  ADMIN_PANELS_CACHE_BOX.users = null;
+  ADMIN_PANELS_CACHE_BOX.invites = null;
+  ADMIN_PANELS_CACHE_BOX.accessReqs = null;
+  ADMIN_PANELS_CACHE_BOX.divisions = null;
+  ADMIN_PANELS_CACHE_BOX.stickers = null;
+  ADMIN_PANELS_CACHE_BOX.recoveryKey = "";
+  Object.keys(TEAM_STATS_MEMORY_CACHE).forEach((k) => delete TEAM_STATS_MEMORY_CACHE[k]);
+}
+
 export function hydrateAdminPanelsCache({
   adminStats,
   auditLogs,
@@ -109,34 +128,35 @@ export function hydrateAdminPanelsCache({
   stickers,
   recoveryKey,
 } = {}) {
+  const rid = getActiveRoomSlug();
   try {
     if (adminStats && typeof adminStats === "object") {
       ADMIN_PANELS_CACHE_BOX.stats = adminStats;
-      scheduleJsonStorageWrite("circle_admin_stats", adminStats);
+      scheduleJsonStorageWrite(roomStorageKey("circle_admin_stats", rid), adminStats);
     }
     if (Array.isArray(auditLogs)) {
       ADMIN_PANELS_CACHE_BOX.auditLogs = auditLogs;
-      scheduleJsonStorageWrite("circle_admin_audit", auditLogs);
+      scheduleJsonStorageWrite(roomStorageKey("circle_admin_audit", rid), auditLogs);
     }
     if (Array.isArray(users) && users.length > 0) {
       ADMIN_PANELS_CACHE_BOX.users = users;
-      scheduleJsonStorageWrite("circle_admin_users", users);
+      scheduleJsonStorageWrite(roomStorageKey("circle_admin_users", rid), users);
     }
     if (Array.isArray(invitations)) {
       ADMIN_PANELS_CACHE_BOX.invites = invitations;
-      scheduleJsonStorageWrite("circle_admin_invites", invitations);
+      scheduleJsonStorageWrite(roomStorageKey("circle_admin_invites", rid), invitations);
     }
     if (Array.isArray(accessRequests)) {
       ADMIN_PANELS_CACHE_BOX.accessReqs = accessRequests;
-      scheduleJsonStorageWrite("circle_admin_access_reqs", accessRequests);
+      scheduleJsonStorageWrite(roomStorageKey("circle_admin_access_reqs", rid), accessRequests);
     }
     if (Array.isArray(divisions) && divisions.length > 0) {
       ADMIN_PANELS_CACHE_BOX.divisions = divisions;
-      scheduleJsonStorageWrite("circle_admin_divisions", divisions);
+      scheduleJsonStorageWrite(roomStorageKey("circle_admin_divisions", rid), divisions);
     }
     if (stickers && Array.isArray(stickers.packs)) {
       ADMIN_PANELS_CACHE_BOX.stickers = stickers;
-      scheduleJsonStorageWrite("circle_admin_stickers_data", stickers);
+      scheduleJsonStorageWrite(roomStorageKey("circle_admin_stickers_data", rid), stickers);
     }
     if (typeof recoveryKey === "string" && recoveryKey) {
       ADMIN_PANELS_CACHE_BOX.recoveryKey = recoveryKey;

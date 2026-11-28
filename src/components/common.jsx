@@ -615,12 +615,17 @@ export function GhostButton({ children, className = "", ...p }) {
   return <button className={`btn-ghost inline-flex h-10 items-center justify-center gap-2 border bg-surface px-4 text-sm font-semibold disabled:opacity-50 ${className}`} {...p}>{children}</button>;
 }
 
+export const ROLE_OPTIONS = [
+  ["super_admin", "Super Admin"],
+  ["employee", "Anggota"],
+];
+
 export const ROLE_NAMES = {
   super_admin: "Super Admin",
-  workspace_admin: "Workspace Admin",
-  department_manager: "Manajer Divisi",
-  project_manager: "Project Manager",
-  employee: "Employee",
+  workspace_admin: "Anggota",
+  department_manager: "Anggota",
+  project_manager: "Anggota",
+  employee: "Anggota",
   member: "Anggota",
 };
 

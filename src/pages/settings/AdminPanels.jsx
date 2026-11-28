@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Trash2, Plus, ArrowUp, ArrowDown, Upload, KeyRound, Eye, EyeOff, RefreshCw, Copy, Check, ShieldCheck, Zap, Webhook, CheckCircle2, RotateCcw, Building2, Lock } from "lucide-react";
+import { Trash2, Plus, ArrowUp, ArrowDown, Upload, KeyRound, Eye, EyeOff, RefreshCw, Copy, Check, Pencil, ShieldCheck, Zap, Webhook, CheckCircle2, RotateCcw, Building2, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { useApp } from "../../context/AppContext";
 import { api, errMsg, uploadFile, fileUrl } from "../../lib/api";
 import { DEFAULT_COPYWRITING, LOGIN_COPYWRITING_SECTIONS, cleanCopywritingMap } from "../../lib/i18n";
-import { Avatar, LabelChip, ROLE_NAMES, rel, Logo, Spinner, renderFormattedCopy, RichCopyField } from "../../components/common";
+import { Avatar, LabelChip, ROLE_OPTIONS, rel, Logo, Spinner, renderFormattedCopy, RichCopyField } from "../../components/common";
 import { humanizeLogAction, resolveActorName } from "../../lib/logHumanizer";
 import { Switch } from "../../components/ui/switch";
 import { AppSelect, Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "../../components/ui/select";
@@ -253,7 +253,7 @@ export function PeopleAccess() {
   const [invites, setInvites] = useState(() => INVITES_CACHE || []);
   const [accessRequests, setAccessRequests] = useState(() => ACCESS_REQ_CACHE || []);
   const [loading, setLoading] = useState(false);
-  const [reqFilter, setReqFilter] = useState("all");
+  const [reqFilter, setReqFilter] = useState("pending");
   const [inv, setInv] = useState({ email: "", role: "employee" });
   const formatDomains = (raw) => {
     if (Array.isArray(raw) && raw.length > 0) return raw.join(", ");
@@ -277,6 +277,14 @@ export function PeopleAccess() {
   const [showRecoveryKey, setShowRecoveryKey] = useState(false);
   const [copiedRecoveryKey, setCopiedRecoveryKey] = useState(false);
   const [busyRecoveryKey, setBusyRecoveryKey] = useState(false);
+
+  const [roomInviteCode, setRoomInviteCode] = useState("");
+  const [copiedInviteCode, setCopiedInviteCode] = useState(false);
+  const [copiedInviteLink, setCopiedInviteLink] = useState(false);
+  const [busyRegenInviteCode, setBusyRegenInviteCode] = useState(false);
+  const [editingInviteCode, setEditingInviteCode] = useState(false);
+  const [customInviteInput, setCustomInviteInput] = useState("");
+  const [busySaveInviteCode, setBusySaveInviteCode] = useState(false);
 
   const isTopAdmin = me?.role === "super_admin" || me?.role === "workspace_admin";
 
@@ -337,6 +345,9 @@ export function PeopleAccess() {
       setAccessRequests(r.data); 
       localStorage.setItem("circle_admin_access_reqs", JSON.stringify(r.data));
     }).catch(() => {}).finally(() => setLoading(false));
+    api.get("/admin/room-invite-code").then((r) => {
+      if (r.data?.invite_code) setRoomInviteCode(r.data.invite_code);
+    }).catch(() => {});
     if (isTopAdmin) {
       api.get("/admin/recovery-key").then((r) => {
         if (r.data?.recovery_key) {
@@ -619,10 +630,169 @@ export function PeopleAccess() {
       </Card>
 
       <Card title="Undang Anggota Baru" testid="invite-card">
+        {roomInviteCode && (
+          <div className="mb-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-surface2/50 p-3.5 sm:p-4 space-y-2.5" data-testid="room-unique-invite-box">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-xs font-bold text-ink">Kode Undangan Unik Room</p>
+                <p className="text-[11px] text-sub">
+                  Bagikan kode ini ke rekan tim yang belum memiliki workspace (1 akun Google hanya untuk 1 workspace).
+                </p>
+              </div>
+              <div className="font-mono text-base font-extrabold tracking-wider text-brand tabular-nums" data-testid="room-invite-code-value">
+                {roomInviteCode}
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(roomInviteCode);
+                    setCopiedInviteCode(true);
+                    setTimeout(() => setCopiedInviteCode(false), 1800);
+                    toast.success("Kode undangan room berhasil disalin!");
+                  } catch {}
+                }}
+                className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-surface px-3 text-xs font-semibold text-ink hover:bg-surface2 transition-colors cursor-pointer"
+                data-testid="copy-room-invite-code-btn"
+              >
+                {copiedInviteCode ? <Check size={13} className="text-emerald-600" /> : <Copy size={13} />}
+                <span>{copiedInviteCode ? "Kode Disalin" : "Salin Kode"}</span>
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    const url = `${window.location.origin}/login?invite=${encodeURIComponent(roomInviteCode)}`;
+                    await navigator.clipboard.writeText(url);
+                    setCopiedInviteLink(true);
+                    setTimeout(() => setCopiedInviteLink(false), 1800);
+                    toast.success("Tautan undangan room berhasil disalin!");
+                  } catch {}
+                }}
+                className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-surface px-3 text-xs font-semibold text-ink hover:bg-surface2 transition-colors cursor-pointer"
+                data-testid="copy-room-invite-link-btn"
+              >
+                {copiedInviteLink ? <Check size={13} className="text-emerald-600" /> : <Copy size={13} />}
+                <span>{copiedInviteLink ? "Tautan Disalin" : "Salin Link Undangan"}</span>
+              </button>
+              {isTopAdmin && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCustomInviteInput(roomInviteCode);
+                      setEditingInviteCode((v) => !v);
+                    }}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-surface px-3 text-xs font-semibold text-ink hover:bg-surface2 transition-colors cursor-pointer"
+                    data-testid="custom-room-invite-code-btn"
+                  >
+                    <Pencil size={12} />
+                    <span>Custom Kode</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busyRegenInviteCode}
+                    onClick={async () => {
+                      setBusyRegenInviteCode(true);
+                      try {
+                        const r = await api.post("/admin/room-invite-code/regenerate");
+                        if (r.data?.invite_code) {
+                          setRoomInviteCode(r.data.invite_code);
+                          setEditingInviteCode(false);
+                          toast.success(`Kode undangan unik diperbarui: ${r.data.invite_code}`);
+                        }
+                      } catch (err) {
+                        toast.error(errMsg(err, "Gagal memperbarui kode undangan room"));
+                      } finally {
+                        setBusyRegenInviteCode(false);
+                      }
+                    }}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-surface px-3 text-xs font-semibold text-sub hover:text-ink transition-colors cursor-pointer disabled:opacity-50"
+                    data-testid="regen-room-invite-code-btn"
+                  >
+                    <RefreshCw size={12} className={busyRegenInviteCode ? "animate-spin" : ""} />
+                    <span>Acak Kode</span>
+                  </button>
+                </>
+              )}
+            </div>
+            {editingInviteCode && isTopAdmin && (() => {
+              const trimmed = String(customInviteInput || "").trim();
+              const hasMinLen = trimmed.length >= 9 && !/\s/.test(trimmed);
+              const hasDigit = /[0-9]/.test(trimmed);
+              const hasSymbol = /[^A-Za-z0-9\s]/.test(trimmed);
+              const isValidCode = hasMinLen && hasDigit && hasSymbol;
+              return (
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    if (!isValidCode) return;
+                    setBusySaveInviteCode(true);
+                    try {
+                      const r = await api.put("/admin/room-invite-code", { invite_code: trimmed });
+                      if (r.data?.invite_code) {
+                        setRoomInviteCode(r.data.invite_code);
+                        setEditingInviteCode(false);
+                        toast.success(`Kode undangan custom disimpan: ${r.data.invite_code}`);
+                      }
+                    } catch (err) {
+                      toast.error(errMsg(err, "Gagal menyimpan kode undangan custom"));
+                    } finally {
+                      setBusySaveInviteCode(false);
+                    }
+                  }}
+                  className="pt-2.5 border-t border-slate-200/80 dark:border-slate-700/80 space-y-2.5"
+                  data-testid="custom-room-invite-form"
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="text"
+                      value={customInviteInput}
+                      onChange={(e) => setCustomInviteInput(e.target.value.replace(/\s+/g, "").toUpperCase())}
+                      placeholder="Cth: ASLI-TIM#2026"
+                      maxLength={32}
+                      className={`${inp} h-9 flex-1 min-w-[200px] font-mono font-bold uppercase tracking-wider text-xs`}
+                      data-testid="custom-room-invite-input"
+                    />
+                    <button
+                      type="submit"
+                      disabled={!isValidCode || busySaveInviteCode}
+                      className="btn-accent h-9 px-3.5 text-xs font-bold disabled:opacity-50"
+                      data-testid="save-custom-invite-code-btn"
+                    >
+                      {busySaveInviteCode ? "Menyimpan..." : "Simpan Kode"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditingInviteCode(false)}
+                      className="inline-flex h-9 items-center rounded-lg border border-border bg-surface px-3 text-xs font-semibold text-sub hover:text-ink cursor-pointer"
+                    >
+                      Batal
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] font-medium">
+                    <span className={hasMinLen ? "text-emerald-600 font-semibold" : "text-sub"}>
+                      {hasMinLen ? "✓" : "•"} Minimal 9 karakter (tanpa spasi)
+                    </span>
+                    <span className={hasDigit ? "text-emerald-600 font-semibold" : "text-sub"}>
+                      {hasDigit ? "✓" : "•"} Wajib ada angka (0-9)
+                    </span>
+                    <span className={hasSymbol ? "text-emerald-600 font-semibold" : "text-sub"}>
+                      {hasSymbol ? "✓" : "•"} Wajib ada simbol (-, #, @, !, _)
+                    </span>
+                  </div>
+                </form>
+              );
+            })()}
+          </div>
+        )}
+        <p className="mb-2 text-xs font-semibold text-sub">Undang langsung via Email Google</p>
         <div className="flex flex-wrap gap-2"><input value={inv.email} onChange={(e) => setInv({ ...inv, email: e.target.value })} placeholder="nama@perusahaan.com" className={`${inp} min-w-[200px] flex-1`} data-testid="invite-email-input" />
-          <AppSelect value={inv.role} onChange={(e) => setInv({ ...inv, role: e.target.value })} className={`${inp} font-medium`} data-testid="invite-role-select">{Object.entries(ROLE_NAMES).filter(([k]) => me?.role === "super_admin" || !["super_admin", "workspace_admin"].includes(k)).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</AppSelect>
+          <AppSelect value={inv.role} onChange={(e) => setInv({ ...inv, role: e.target.value })} className={`${inp} font-medium`} data-testid="invite-role-select">{ROLE_OPTIONS.filter(([k]) => k !== "super_admin" || me?.role === "super_admin").map(([k, l]) => <option key={k} value={k}>{l}</option>)}</AppSelect>
           <button onClick={() => run(() => api.post("/admin/invitations", inv), "Undangan tersimpan — rekan tim dapat langsung masuk dengan Google").then((ok) => { if (ok) { setInv({ email: "", role: "employee" }); load(); } })} className="btn-accent h-10 px-4 text-sm font-semibold" data-testid="invite-submit-btn">Undang</button></div>
-        <ul className="mt-3 space-y-1">{invites.map((i) => <li key={i.id} className="flex items-center gap-2 text-sm"><span className="flex-1">{i.email}</span><span className="text-xs text-sub">{ROLE_NAMES[i.role] || i.role} · {i.used ? "bergabung" : "menunggu"}</span><button onClick={() => run(() => api.delete(`/admin/invitations/${i.id}`)).then(load)} className="text-sub" aria-label="Hapus undangan"><Trash2 size={14} /></button></li>)}</ul>
+        <ul className="mt-3 space-y-1">{invites.map((i) => <li key={i.id} className="flex items-center gap-2 text-sm"><span className="flex-1">{i.email}</span><span className="text-xs text-sub">{i.used ? "bergabung" : "menunggu"}</span><button onClick={() => run(() => api.delete(`/admin/invitations/${i.id}`)).then(load)} className="text-sub" aria-label="Hapus undangan"><Trash2 size={14} /></button></li>)}</ul>
       </Card>
 
       <Card title="Tim, Divisi & Akses" testid="users-admin">
@@ -680,44 +850,26 @@ export function PeopleAccess() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {DEFAULT_ORG_LEVELS.map((lvl, idx) => (
-                          <SelectItem key={lvl} value={lvl}>{idx + 1}. {lvl}</SelectItem>
+                        {DEFAULT_ORG_LEVELS.map((lvl) => (
+                          <SelectItem key={lvl} value={lvl}>{lvl}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
 
                     <Select
-                      value={u.role || "employee"}
+                      value={u.role === "super_admin" ? "super_admin" : "employee"}
                       onValueChange={(val) => upd(u.user_id, { role: val })}
                       disabled={!canManageTarget}
                     >
-                      <SelectTrigger className="h-8 w-auto min-w-[144px] shrink-0 rounded-xl bg-surface2 border-slate-200 dark:border-slate-800 px-3 text-xs font-medium" data-testid={`role-select-${u.user_id}`}>
+                      <SelectTrigger className="h-8 w-auto min-w-[132px] shrink-0 rounded-xl bg-surface2 border-slate-200 dark:border-slate-800 px-3 text-xs font-medium" data-testid={`role-select-${u.user_id}`}>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {u.role && !ROLE_NAMES[u.role] && (
-                          <SelectItem value={u.role}>{u.role}</SelectItem>
-                        )}
-                        {Object.entries(ROLE_NAMES)
+                        {ROLE_OPTIONS
                           .filter(([k]) => k !== "super_admin" || me?.role === "super_admin" || u.role === "super_admin")
                           .map(([k, l]) => (
                             <SelectItem key={k} value={k}>{l}</SelectItem>
                           ))}
-                      </SelectContent>
-                    </Select>
-
-                    <Select
-                      value={u.status || "active"}
-                      onValueChange={(val) => upd(u.user_id, { status: val })}
-                      disabled={u.user_id === me?.user_id || !canManageTarget}
-                    >
-                      <SelectTrigger className="h-8 w-auto min-w-[98px] shrink-0 rounded-xl bg-surface2 border-slate-200 dark:border-slate-800 px-3 text-xs font-medium" data-testid={`status-select-${u.user_id}`}>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="active">Aktif</SelectItem>
-                        <SelectItem value="pending">Menunggu</SelectItem>
-                        <SelectItem value="inactive">Nonaktif</SelectItem>
                       </SelectContent>
                     </Select>
 
@@ -785,9 +937,6 @@ export function PeopleAccess() {
                   <div className="mt-1 flex items-center gap-1.5 flex-wrap">
                     <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-brand/10 text-brand">
                       Divisi: {deleteTargetUser.department || "General"}
-                    </span>
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-surface text-sub border">
-                      {ROLE_NAMES[deleteTargetUser.role] || deleteTargetUser.role}
                     </span>
                   </div>
                 </div>
@@ -965,10 +1114,12 @@ export function WeeklyReportCard() {
   const { ws, users = [], reloadWs } = useApp();
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
+  const normalizeReportRoles = (arr) =>
+    Array.from(new Set((arr || []).map((r) => (r === "super_admin" ? "super_admin" : "employee"))));
   const [selectedRoles, setSelectedRoles] = useState(() =>
     Array.isArray(ws?.report_recipient_roles)
-      ? ws.report_recipient_roles
-      : ["super_admin", "workspace_admin", "department_manager", "project_manager"]
+      ? normalizeReportRoles(ws.report_recipient_roles)
+      : ["super_admin", "employee"]
   );
   const [selectedUserIds, setSelectedUserIds] = useState(() =>
     Array.isArray(ws?.report_recipient_ids) ? ws.report_recipient_ids : []
@@ -979,7 +1130,7 @@ export function WeeklyReportCard() {
   const [newEmail, setNewEmail] = useState("");
 
   useEffect(() => {
-    if (Array.isArray(ws?.report_recipient_roles)) setSelectedRoles(ws.report_recipient_roles);
+    if (Array.isArray(ws?.report_recipient_roles)) setSelectedRoles(normalizeReportRoles(ws.report_recipient_roles));
     if (Array.isArray(ws?.report_recipient_ids)) setSelectedUserIds(ws.report_recipient_ids);
     if (Array.isArray(ws?.report_custom_emails)) setCustomEmails(ws.report_custom_emails);
   }, [ws?.report_recipient_roles, ws?.report_recipient_ids, ws?.report_custom_emails]);
@@ -1031,9 +1182,10 @@ export function WeeklyReportCard() {
 
   const [confirmSendOpen, setConfirmSendOpen] = useState(false);
 
-  const activeRecipientUsers = humanUsers.filter(
-    (u) => selectedUserIds.includes(u.user_id) || selectedRoles.includes(u.role)
-  );
+  const activeRecipientUsers = humanUsers.filter((u) => {
+    const uRoleKey = u.role === "super_admin" ? "super_admin" : "employee";
+    return selectedUserIds.includes(u.user_id) || selectedRoles.includes(uRoleKey);
+  });
 
   const computedRecipientEmails = Array.from(
     new Set([
@@ -1117,7 +1269,7 @@ export function WeeklyReportCard() {
       <div className="mt-4">
         <p className="text-xs font-bold text-ink mb-2">Role Penerima Otomatis</p>
         <div className="flex flex-wrap gap-2">
-          {Object.entries(ROLE_NAMES).map(([roleKey, roleLabel]) => {
+          {ROLE_OPTIONS.map(([roleKey, roleLabel]) => {
             const active = selectedRoles.includes(roleKey);
             return (
               <button
@@ -1162,7 +1314,8 @@ export function WeeklyReportCard() {
         </div>
         <div className="max-h-48 overflow-y-auto divide-y rounded-2xl border bg-surface2/40 px-3 py-1">
           {humanUsers.map((u) => {
-            const isRoleMatched = selectedRoles.includes(u.role);
+            const uRoleKey = u.role === "super_admin" ? "super_admin" : "employee";
+            const isRoleMatched = selectedRoles.includes(uRoleKey);
             const isChecked = selectedUserIds.includes(u.user_id) || isRoleMatched;
             return (
               <label
@@ -1176,7 +1329,7 @@ export function WeeklyReportCard() {
                     checked={isChecked}
                     onChange={() => {
                       if (isRoleMatched && !selectedUserIds.includes(u.user_id)) {
-                        toggleRole(u.role);
+                        toggleRole(uRoleKey);
                       } else {
                         toggleUser(u.user_id);
                       }
@@ -1189,9 +1342,6 @@ export function WeeklyReportCard() {
                     <p className="text-[11px] text-sub truncate">{u.email} · {u.department || "Workspace"}</p>
                   </div>
                 </div>
-                <span className="rounded-full bg-surface px-2.5 py-0.5 text-[10px] font-semibold text-sub border shrink-0">
-                  {ROLE_NAMES[u.role] || u.role}
-                </span>
               </label>
             );
           })}
@@ -1548,7 +1698,22 @@ export function WorkspaceBranding() {
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        {[["brand_name", "Nama Aplikasi"], ["name", "Nama Workspace"], ["tagline", "Tagline"], ["description", "Deskripsi"], ["org_levels", "Level Organisasi"]].map(([k, l]) => <label key={k} className="text-xs font-semibold text-sub">{l}<input value={f[k] || ""} onChange={(e) => setF({ ...f, [k]: e.target.value })} className={`${inp} mt-1 w-full`} data-testid={`ws-${k}-input`} /></label>)}
+        <label className="text-xs font-semibold text-sub">
+          <span className="flex items-center justify-between gap-2">
+            <span>Nama Aplikasi</span>
+            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-sub">
+              <Lock size={11} /> Terkunci
+            </span>
+          </span>
+          <input
+            value="ASLIWORKSPACE"
+            readOnly
+            disabled
+            className={`${inp} mt-1 w-full bg-surface2/90 font-extrabold text-ink/80 cursor-not-allowed`}
+            data-testid="ws-app-name-locked"
+          />
+        </label>
+        {[["name", "Nama Workspace"], ["tagline", "Tagline"], ["description", "Deskripsi"], ["org_levels", "Level Organisasi"]].map(([k, l]) => <label key={k} className="text-xs font-semibold text-sub">{l}<input value={f[k] || ""} onChange={(e) => setF({ ...f, [k]: e.target.value })} className={`${inp} mt-1 w-full`} data-testid={`ws-${k}-input`} /></label>)}
       </div>
 
       {/* Pengaturan Teks Halaman Login & Pendaftaran */}

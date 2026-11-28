@@ -576,10 +576,8 @@ const AccessRequestCard = memo(function AccessRequestCard({ m }) {
                     className="h-8 flex-1 rounded-xl border bg-surface px-2.5 text-xs font-semibold text-ink"
                     data-testid="access-role-select"
                   >
-                    <option value="employee">{tr("common_role_employee", "Employee")}</option>
-                    <option value="project_manager">{tr("common_role_project_manager", "Project Manager")}</option>
-                    <option value="department_manager">Department Manager</option>
-                    <option value="workspace_admin">{tr("common_role_workspace_admin", "Workspace Admin")}</option>
+                    <option value="employee">Anggota</option>
+                    {me?.role === "super_admin" && <option value="super_admin">Super Admin</option>}
                   </AppSelect>
                 </div>
               )}

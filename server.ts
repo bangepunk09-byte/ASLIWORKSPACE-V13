@@ -48,9 +48,21 @@ import {
   saveWorkspaceSnapshotToPostgres,
   listWorkspaceSnapshotsFromPostgres,
   getWorkspaceSnapshotFromPostgres,
+  loadSaasPlatformFromPostgres,
+  saveSaasPlatformToPostgres,
+  saveSaasRoomToPostgres,
+  deleteSaasRoomFromPostgres,
 } from './src/db/persistence.ts';
 import { verifyFirebaseIdTokenSafe } from './src/middleware/auth.ts';
 import { humanizeLogAction, resolveActorName } from './src/lib/logHumanizer.ts';
+import {
+  roomAls,
+  createScopedDbProxy,
+  SaaSPlatformManager,
+  DEFAULT_ROOM_SLUG,
+  slugifyRoom,
+  generateInviteCode,
+} from './src/server/saasPlatform.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MASTER_KEY = getMasterKey(__dirname);
@@ -86,10 +98,18 @@ async function startServer() {
   });
 
   const broadcast = (data: any) => {
-    const msg = JSON.stringify(data);
-    wss.clients.forEach((client) => {
+    const activeSlug = roomAls.getStore()?.slug || DEFAULT_ROOM_SLUG;
+    const payload =
+      data && typeof data === 'object' && !data.room_slug
+        ? { ...data, room_slug: activeSlug }
+        : data;
+    const msg = JSON.stringify(payload);
+    wss.clients.forEach((client: any) => {
       if (client.readyState === WebSocket.OPEN) {
-        client.send(msg);
+        const clientRoom = client._roomSlug || DEFAULT_ROOM_SLUG;
+        if (clientRoom === activeSlug) {
+          client.send(msg);
+        }
       }
     });
   };
@@ -277,8 +297,8 @@ async function startServer() {
 
   const initialServerTasks: any[] = [];
 
-  // In-memory mock data store for ASLI Workspace with explicit any/Record types
-  const db: Record<string, any> = {
+  // In-memory store for default room (ASLI WORKSPACE /w/asli-workspace) wrapped in ALS-scoped Proxy for multi-room isolation
+  const defaultDb: Record<string, any> = {
     files: {},
     meetings: [],
     workspace: {
@@ -363,6 +383,7 @@ async function startServer() {
     deleted_task_ids: [],
     deleted_marketplace_listing_ids: [],
   };
+  const db: Record<string, any> = createScopedDbProxy(defaultDb);
 
   const DB_FILE = path.join(__dirname, '.circle_workspace_db.json');
   const DB_MIRROR_FILE = path.join(__dirname, '.circle_workspace_db.mirror.json');
@@ -579,7 +600,7 @@ async function startServer() {
 
   function flushDbToFileSync() {
     try {
-      const payload = JSON.stringify(db);
+      const payload = JSON.stringify(defaultDb);
       fs.writeFileSync(DB_TMP_FILE, payload, 'utf-8');
       fs.renameSync(DB_TMP_FILE, DB_FILE);
       fs.writeFileSync(DB_MIRROR_TMP_FILE, payload, 'utf-8');
@@ -604,7 +625,7 @@ async function startServer() {
         pendingWrite = false;
         const shouldWriteMirror = pendingForceMirror || Date.now() - lastMirrorWriteAt >= 5000;
         pendingForceMirror = false;
-        const payload = JSON.stringify(db);
+        const payload = JSON.stringify(defaultDb);
         if (shouldWriteMirror) {
           await Promise.all([
             fs.promises.writeFile(DB_TMP_FILE, payload, 'utf-8').then(() => fs.promises.rename(DB_TMP_FILE, DB_FILE)),
@@ -649,10 +670,10 @@ async function startServer() {
     let snapshotClone: Record<string, any>;
     try {
       snapshotClone = typeof structuredClone === 'function'
-        ? structuredClone(db)
-        : JSON.parse(JSON.stringify(db));
+        ? structuredClone(defaultDb)
+        : JSON.parse(JSON.stringify(defaultDb));
     } catch {
-      snapshotClone = JSON.parse(JSON.stringify(db));
+      snapshotClone = JSON.parse(JSON.stringify(defaultDb));
     }
     pgSaveChain = pgSaveChain
       .catch(() => {})
@@ -681,6 +702,101 @@ async function startServer() {
 
   let warmAvatarFilesInRamRef: (() => Promise<void>) | null = null;
   let clearMissingFileCacheRef: (() => void) | null = null;
+
+  let saasRef: SaaSPlatformManager | null = null;
+  let saasPgSaveChain: Promise<void> = Promise.resolve();
+  let saasPgTimer: ReturnType<typeof setTimeout> | null = null;
+  const saasRoomPgTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  function cloneJsonSafe<T>(obj: T): T {
+    try {
+      return typeof structuredClone === 'function' ? structuredClone(obj) : JSON.parse(JSON.stringify(obj));
+    } catch {
+      return JSON.parse(JSON.stringify(obj));
+    }
+  }
+
+  function enqueueSaasPlatformPostgresSave(snapshot: Record<string, any>, revision: number): Promise<void> {
+    if (!isPostgresAvailable()) return Promise.resolve();
+    const cloned = cloneJsonSafe(snapshot);
+    saasPgSaveChain = saasPgSaveChain
+      .catch(() => {})
+      .then(() => saveSaasPlatformToPostgres(cloned, revision))
+      .catch(() => {});
+    return saasPgSaveChain;
+  }
+
+  function scheduleSaasPlatformPostgresSave(snapshot: Record<string, any>, revision: number) {
+    if (isServerBootstrapping || !isPostgresAvailable()) return;
+    if (saasPgTimer) {
+      clearTimeout(saasPgTimer);
+      saasPgTimer = null;
+    }
+    saasPgTimer = setTimeout(() => {
+      saasPgTimer = null;
+      void enqueueSaasPlatformPostgresSave(snapshot, revision);
+    }, 150);
+  }
+
+  function scheduleSaasRoomPostgresSave(slug: string, roomDb: Record<string, any>, immediate = false) {
+    if (isServerBootstrapping || !isPostgresAvailable()) return;
+    const clean = slugifyRoom(slug);
+    if (!clean || clean === DEFAULT_ROOM_SLUG) return;
+    const prevTimer = saasRoomPgTimers.get(clean);
+    if (prevTimer) {
+      clearTimeout(prevTimer);
+      saasRoomPgTimers.delete(clean);
+    }
+    const delayMs = immediate ? 80 : 1200;
+    const timer = setTimeout(() => {
+      saasRoomPgTimers.delete(clean);
+      const latestDb = saasRef?.getRoomDb(clean) || roomDb;
+      if (!latestDb || saasRef?.roomsMeta && !saasRef.roomsMeta[clean]) return;
+      const cloned = cloneJsonSafe(latestDb);
+      saasPgSaveChain = saasPgSaveChain
+        .catch(() => {})
+        .then(() => saveSaasRoomToPostgres(clean, cloned))
+        .catch(() => {});
+    }, delayMs);
+    saasRoomPgTimers.set(clean, timer);
+  }
+
+  function enqueueSaasRoomDeletePostgres(slug: string) {
+    const clean = slugifyRoom(slug);
+    if (!clean || clean === DEFAULT_ROOM_SLUG) return;
+    const prevTimer = saasRoomPgTimers.get(clean);
+    if (prevTimer) {
+      clearTimeout(prevTimer);
+      saasRoomPgTimers.delete(clean);
+    }
+    if (!isPostgresAvailable()) return;
+    saasPgSaveChain = saasPgSaveChain
+      .catch(() => {})
+      .then(() => deleteSaasRoomFromPostgres(clean))
+      .catch(() => {});
+  }
+
+  async function flushPendingSaasPostgresSaves(): Promise<void> {
+    if (!isPostgresAvailable() || !saasRef) return;
+    if (saasPgTimer) {
+      clearTimeout(saasPgTimer);
+      saasPgTimer = null;
+      void enqueueSaasPlatformPostgresSave(saasRef.exportPlatformStateSnapshot(), saasRef.platformRevision);
+    }
+    for (const [slug, t] of Array.from(saasRoomPgTimers.entries())) {
+      clearTimeout(t);
+      saasRoomPgTimers.delete(slug);
+      const rdb = saasRef.roomDbs.get(slug);
+      if (rdb && slug !== DEFAULT_ROOM_SLUG) {
+        const cloned = cloneJsonSafe(rdb);
+        saasPgSaveChain = saasPgSaveChain
+          .catch(() => {})
+          .then(() => saveSaasRoomToPostgres(slug, cloned))
+          .catch(() => {});
+      }
+    }
+    await saasPgSaveChain.catch(() => {});
+  }
 
   async function ensurePostgresHydrated() {
     if (pgHydrated) return;
@@ -717,6 +833,18 @@ async function startServer() {
           ensureWorkspaceCheckpointTemplates();
           migrateSecurityAtRest();
           sanitizeConversationsAndMessages();
+          // Ensure designated @asliri.id super_admin accounts retain super_admin role across Cloud SQL hydrations (never revive deleted accounts)
+          for (const targetEmail of ["saeful@asliri.id", "saeful.rohman@asliri.id"]) {
+            if (isUserExplicitlyDeleted(undefined, targetEmail)) continue;
+            const su = (Array.isArray(db.users) ? db.users : []).find(
+              (u: any) => String(u?.email || "").toLowerCase().trim() === targetEmail
+            );
+            if (su) {
+              su.role = "super_admin";
+              su.status = "active";
+              if (!su.org_unit_id) su.org_unit_id = "unit_mgmt";
+            }
+          }
           db.revision = Math.max(Number(db.revision || 0), Number(loaded.revision || 0));
           serverBootedFreshSeed = isDatabaseInEmptySeedState();
           flushDbToFileSync();
@@ -727,10 +855,39 @@ async function startServer() {
             void warmAvatarFilesInRamRef();
           }
         } else if (!isDatabaseInEmptySeedState()) {
-          await saveWorkspaceToPostgres(db, { allowEmptyOverwrite: false });
-          await syncUploadedFilesMapToPostgres(getCachedUploadedFilesBase64(), db.files || {});
+          await saveWorkspaceToPostgres(defaultDb, { allowEmptyOverwrite: false });
+          await syncUploadedFilesMapToPostgres(getCachedUploadedFilesBase64(), defaultDb.files || {});
           console.log('[PostgreSQL] Seeded Cloud SQL from existing local workspace database.');
         }
+
+        // Hydrate SaaS platform state (Platform Owner Console & isolated non-default rooms)
+        if (saasRef) {
+          const loadedSaas = await loadSaasPlatformFromPostgres();
+          if (loadedSaas && loadedSaas.hasPersistedData) {
+            saasRef.applyHydratedPlatformState(
+              loadedSaas.platformState,
+              loadedSaas.rooms,
+              loadedSaas.revision
+            );
+            const nonDefaultCount = saasRef.exportNonDefaultRooms().length;
+            console.log(
+              `[PostgreSQL] Hydrated SaaS Platform state (rev ${loadedSaas.revision}, extra_rooms=${nonDefaultCount}).`
+            );
+          } else if (saasRef.hasCustomStateWorthSeeding()) {
+            await saveSaasPlatformToPostgres(
+              cloneJsonSafe(saasRef.exportPlatformStateSnapshot()),
+              saasRef.platformRevision
+            );
+            const extraRooms = saasRef.exportNonDefaultRooms();
+            for (const r of extraRooms) {
+              await saveSaasRoomToPostgres(r.slug, cloneJsonSafe(r.db));
+            }
+            console.log(
+              `[PostgreSQL] Seeded Cloud SQL with SaaS Platform state and ${extraRooms.length} room(s).`
+            );
+          }
+        }
+
         pgHydrated = true;
       } catch {
         pgHydrated = true;
@@ -742,6 +899,13 @@ async function startServer() {
   }
 
   function saveDbToFile(immediate = false, options: { allowEmptyOverwrite?: boolean } = {}) {
+    const alsStore = roomAls.getStore();
+    if (alsStore && alsStore.slug !== DEFAULT_ROOM_SLUG) {
+      alsStore.db.revision = Number(alsStore.db.revision || 0) + 1;
+      alsStore.db.last_mutated_at = new Date().toISOString();
+      saasRef?.scheduleSaveRoomDb(alsStore.slug, immediate);
+      return;
+    }
     saveInvokeSeq++;
     bumpDbRevision();
     scheduleAsyncDbFlush(immediate);
@@ -1109,7 +1273,7 @@ async function startServer() {
     }
   }
 
-  // Ensure Super Admin user saeful@asliri.id exists
+  // Ensure Super Admin user saeful@asliri.id exists & saeful.rohman@asliri.id is promoted to super_admin
   let saefulAdmin = db.users.find((u: any) => u.email?.toLowerCase() === "saeful@asliri.id");
   if (!saefulAdmin) {
     saefulAdmin = {
@@ -1138,6 +1302,17 @@ async function startServer() {
     }
   }
 
+  let saefulRohmanPromoted = false;
+  const saefulRohmanAdmin = db.users.find((u: any) => String(u?.email || "").toLowerCase().trim() === "saeful.rohman@asliri.id");
+  if (saefulRohmanAdmin) {
+    if (saefulRohmanAdmin.role !== "super_admin" || saefulRohmanAdmin.status !== "active") {
+      saefulRohmanAdmin.role = "super_admin";
+      saefulRohmanAdmin.status = "active";
+      if (!saefulRohmanAdmin.org_unit_id) saefulRohmanAdmin.org_unit_id = "unit_mgmt";
+      saefulRohmanPromoted = true;
+    }
+  }
+
   // Ensure Admin ASLI RI has a password set
   const defaultAdmin = db.users.find((u: any) => u.email?.toLowerCase() === "admin@asliri.local");
   if (defaultAdmin && !defaultAdmin.password_hash && !defaultAdmin.password) {
@@ -1146,7 +1321,7 @@ async function startServer() {
   }
 
   // Migrate any legacy plaintext passwords or recovery keys to salted scrypt & AES-256-GCM on startup
-  if (migrateSecurityAtRest()) {
+  if (migrateSecurityAtRest() || saefulRohmanPromoted) {
     saveDbToFile(true);
   }
 
@@ -2344,10 +2519,69 @@ async function startServer() {
   saveDbToFile();
   isServerBootstrapping = false;
 
-  // Lazy-hydrate workspace state from Cloud SQL PostgreSQL on the very first incoming API request
-  app.use('/api', async (_req, _res, next) => {
+  const saas = new SaaSPlatformManager(__dirname, MASTER_KEY, defaultDb);
+  saas.setPersistenceHandlers({
+    onSavePlatformState: (snapshot, revision) => scheduleSaasPlatformPostgresSave(snapshot, revision),
+    onSaveRoomDb: (slug, roomDb, immediate) => scheduleSaasRoomPostgresSave(slug, roomDb, immediate),
+    onDeleteRoomDb: (slug) => enqueueSaasRoomDeletePostgres(slug),
+  });
+  saasRef = saas;
+
+  const resolveRequestRoomSlug = (req: any): string => {
+    const headerSlug = req.headers?.['x-workspace-room'];
+    if (typeof headerSlug === 'string' && headerSlug.trim()) {
+      return saas.resolveRoomSlug(headerSlug.trim());
+    }
+    const querySlug = req.query?.room;
+    if (typeof querySlug === 'string' && querySlug.trim()) {
+      return saas.resolveRoomSlug(querySlug.trim());
+    }
+    const customDomainMatch = saas.resolveRoomSlugFromHost(req.headers?.['x-forwarded-host'] || req.headers?.host);
+    if (customDomainMatch) return customDomainMatch;
+    const ref = String(req.headers?.referer || '');
+    const m = /\/w\/([a-z0-9-]+)/i.exec(ref);
+    if (m && m[1]) {
+      return saas.resolveRoomSlug(m[1]);
+    }
+    return DEFAULT_ROOM_SLUG;
+  };
+
+  // Lazy-hydrate workspace state from Cloud SQL PostgreSQL on the very first incoming API request,
+  // and bind AsyncLocalStorage multi-room database context for complete tenant isolation.
+  app.use('/api', async (req, res, next) => {
     await ensurePostgresHydrated();
-    next();
+    saas.syncDefaultRoomFromDb();
+
+    const p = String(req.path || '');
+    const isPlatformLevel =
+      p.startsWith('/platform-owner') ||
+      p.startsWith('/saas') ||
+      p.startsWith('/billing/webhook') ||
+      p === '/health';
+
+    const slug = resolveRequestRoomSlug(req);
+    const meta = saas.getRoomMeta(slug);
+
+    if (
+      !isPlatformLevel &&
+      !p.startsWith('/billing') &&
+      !p.startsWith('/public') &&
+      meta?.status === 'suspended'
+    ) {
+      return res.status(403).json({
+        code: 'ROOM_SUSPENDED',
+        detail: `Workspace room "${meta.name}" sedang dinonaktifkan sementara oleh Platform Owner.`,
+      });
+    }
+
+    res.on('finish', () => {
+      if (!p.startsWith('/platform-owner')) {
+        saas.recordTelemetry(slug, res.statusCode);
+      }
+    });
+
+    const roomDb = saas.getRoomDb(slug);
+    return roomAls.run({ slug, db: roomDb }, () => next());
   });
 
   // Auto-save DB on any data-modifying HTTP request (only if handler did not already save)
@@ -2495,9 +2729,14 @@ async function startServer() {
     return false;
   }
 
-  function mergeKnownAccountsIntoDb(accounts: any[] | undefined | null, forceActiveUserId?: string): boolean {
+  function mergeKnownAccountsIntoDb(
+    accounts: any[] | undefined | null,
+    forceActiveUserId?: string,
+    options?: { allowCreateUsers?: boolean }
+  ): boolean {
     if (!Array.isArray(accounts) || accounts.length === 0) return false;
     if (!Array.isArray(db.users)) db.users = [];
+    const allowCreate = Boolean(options?.allowCreateUsers);
     let changed = false;
 
     for (const raw of accounts) {
@@ -2513,10 +2752,17 @@ async function startServer() {
       );
 
       if (!existing) {
+        if (!allowCreate) continue;
         const defaultAvatar =
           raw.avatar ||
           raw.picture ||
           `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(raw.name || cleanEmail)}`;
+        const restoredStatus =
+          raw.status === "inactive" || raw.status === "rejected" || raw.status === "pending"
+            ? raw.status
+            : raw.status === "active" && (raw.onboarding_completed === true || raw.onboarded === true)
+            ? "active"
+            : "pending";
         const restoredUser: any = {
           user_id: uid,
           email: cleanEmail,
@@ -2525,8 +2771,8 @@ async function startServer() {
           job_title: raw.job_title || "Staff Member",
           department: raw.department || "Marketing",
           org_unit_id: raw.org_unit_id || null,
-          status: uid === forceActiveUserId ? "active" : (raw.status || "active"),
-          online: uid === forceActiveUserId,
+          status: restoredStatus,
+          online: restoredStatus === "active" && uid === forceActiveUserId,
           is_demo: false,
           avatar: defaultAvatar,
           picture: defaultAvatar,
@@ -2545,7 +2791,6 @@ async function startServer() {
           restoredUser.onboarding_completed === undefined &&
           (raw.onboarding_completed === true ||
             raw.onboarded === true ||
-            restoredUser.status === "active" ||
             Boolean(restoredUser.password_hash))
         ) {
           restoredUser.onboarding_completed = true;
@@ -2554,17 +2799,10 @@ async function startServer() {
         syncUserDivisionAndGroupMembership(restoredUser);
         changed = true;
       } else {
-        // Restore missing password_hash, active status, or missing extended profile fields
+        // Restore missing password_hash or missing extended profile fields (NEVER auto-promote pending -> active)
         if (!existing.password_hash && raw.password_hash && typeof raw.password_hash === "string") {
           existing.password_hash = raw.password_hash;
           existing.password_updated_at = raw.password_updated_at || new Date().toISOString();
-          changed = true;
-        }
-        if (
-          existing.status === "pending" &&
-          (raw.status === "active" || existing.user_id === forceActiveUserId)
-        ) {
-          existing.status = "active";
           changed = true;
         }
         for (const k of PROFILE_PERSIST_KEYS) {
@@ -2632,25 +2870,9 @@ async function startServer() {
         (u.user_id === payload.uid ||
           (candidateEmail && String(u.email || "").toLowerCase().trim() === candidateEmail))
     );
-    if (!found && headerProfile && (headerProfile.user_id === payload.uid || (candidateEmail && headerEmail === candidateEmail))) {
-      if (isUserExplicitlyDeleted(payload.uid, candidateEmail || headerProfile.email)) {
-        return null;
-      }
-      mergeKnownAccountsIntoDb([{ ...headerProfile, user_id: payload.uid }], payload.uid);
-      found = (db.users || []).find(
-        (u: any) =>
-          u &&
-          (u.user_id === payload.uid ||
-            (candidateEmail && String(u.email || "").toLowerCase().trim() === candidateEmail))
-      );
-    }
     if (!found || found.is_bot) return null;
-    if (found.status === "inactive" || found.status === "rejected") {
+    if (found.status === "inactive" || found.status === "rejected" || found.status === "pending") {
       return null;
-    }
-    if (found.status === "pending") {
-      found.status = "active";
-      saveDbToFile(true);
     }
     const tokenTv = Number(payload.tv || 1);
     if (typeof found.token_version !== "number" || found.token_version < 1) {
@@ -3992,7 +4214,7 @@ async function startServer() {
               }
               return mergedUser;
             });
-          mergeKnownAccountsIntoDb(existingUsers);
+          mergeKnownAccountsIntoDb(existingUsers, undefined, { allowCreateUsers: true });
         } else if (k === "tasks") {
           db.tasks = rawData.tasks.filter(
             (t: any) =>
@@ -4004,6 +4226,20 @@ async function startServer() {
           db.marketplace_listings = rawData.marketplace_listings.filter(
             (l: any) => l && !delMktSet.has(String(l.id))
           );
+        } else if (k === "invitations") {
+          const delEmailSet = new Set(
+            (Array.isArray(db.deleted_user_emails) ? db.deleted_user_emails : [])
+              .map((e: any) => String(e || "").toLowerCase().trim())
+              .filter(Boolean)
+          );
+          db.invitations = rawData.invitations.filter((item: any) => {
+            if (!item || typeof item !== "object") return false;
+            const itemId = String(item.id || "").trim();
+            if (itemId && delEntitySet.has(itemId)) return false;
+            const invEmail = String(item.email || "").toLowerCase().trim();
+            if (invEmail && delEmailSet.has(invEmail) && item.used) return false;
+            return true;
+          });
         } else {
           db[k] = rawData[k].filter((item: any) => {
             if (!item || typeof item !== "object") return true;
@@ -4325,7 +4561,7 @@ async function startServer() {
     // 2. Users
     if (Array.isArray(rawData.users) && rawData.users.length > 0) {
       const beforeCount = (db.users || []).length;
-      mergeKnownAccountsIntoDb(rawData.users);
+      mergeKnownAccountsIntoDb(rawData.users, undefined, { allowCreateUsers: Boolean(serverBootedFreshSeed) });
       if ((db.users || []).length !== beforeCount) anyChanged = true;
     }
 
@@ -4395,7 +4631,14 @@ async function startServer() {
       if (Array.isArray(rawData[key]) && rawData[key].length > 0) {
         const cleanIncoming = rawData[key].filter((item: any) => !isItemDeleted(item));
         const { list, changed } = mergeArrayById(db[key] || [], cleanIncoming, "id");
-        const filteredList = list.filter((item: any) => !isItemDeleted(item));
+        const filteredList = list.filter((item: any) => {
+          if (isItemDeleted(item)) return false;
+          if (key === "invitations" && item?.used) {
+            const invEmail = String(item.email || "").toLowerCase().trim();
+            if (invEmail && isUserExplicitlyDeleted(undefined, invEmail)) return false;
+          }
+          return true;
+        });
         if (changed || filteredList.length !== (db[key] || []).length) {
           if (key === "messages") {
             filteredList.sort(
@@ -4627,10 +4870,7 @@ async function startServer() {
   });
 
   app.post("/api/workspace/auto-hydrate", async (req, res) => {
-    const { snapshot, snapshot_sig, known_accounts, revision: clientRevision } = req.body || {};
-    if (Array.isArray(known_accounts) && known_accounts.length > 0) {
-      mergeKnownAccountsIntoDb(known_accounts);
-    }
+    const { snapshot, snapshot_sig, revision: clientRevision } = req.body || {};
 
     if (!snapshot || typeof snapshot !== "object") {
       return res.json({
@@ -4662,8 +4902,8 @@ async function startServer() {
       summary.users <= 2;
 
     const rawSnapData = snapshot.data && typeof snapshot.data === "object" ? snapshot.data : snapshot;
-    if (Array.isArray(rawSnapData?.users)) {
-      mergeKnownAccountsIntoDb(rawSnapData.users);
+    if ((isFreshSeedState || (isAdmin && isSignedSnapshot)) && Array.isArray(rawSnapData?.users)) {
+      mergeKnownAccountsIntoDb(rawSnapData.users, undefined, { allowCreateUsers: true });
     }
 
     const incomingRev = Number(clientRevision ?? snapshot.revision ?? rawSnapData?.revision ?? 0);
@@ -4708,7 +4948,6 @@ async function startServer() {
         if (callerUser) {
           if (preAuthUserId) callerUser.user_id = preAuthUserId;
           if (preTokenVersion !== null) callerUser.token_version = preTokenVersion;
-          if (callerUser.status === "pending") callerUser.status = "active";
         }
       }
     }
@@ -4762,7 +5001,7 @@ async function startServer() {
         (u.user_id === tokenPayload.uid ||
           (candidateEmail && String(u.email || "").toLowerCase().trim() === candidateEmail))
     );
-    if (!reqUser && Array.isArray(known_accounts) && known_accounts.length > 0) {
+    if (!reqUser && serverBootedFreshSeed && Array.isArray(known_accounts) && known_accounts.length > 0) {
       const matchingKnown = known_accounts.filter(
         (a: any) =>
           a &&
@@ -4770,7 +5009,7 @@ async function startServer() {
             (candidateEmail && String(a.email || "").toLowerCase().trim() === candidateEmail))
       );
       if (matchingKnown.length > 0) {
-        mergeKnownAccountsIntoDb(matchingKnown, tokenPayload.uid);
+        mergeKnownAccountsIntoDb(matchingKnown, tokenPayload.uid, { allowCreateUsers: true });
         reqUser = (db.users || []).find(
           (u: any) =>
             u &&
@@ -4779,24 +5018,6 @@ async function startServer() {
         );
       }
     }
-    if (!reqUser && user && typeof user === "object" && (user.user_id === tokenPayload.uid || candidateEmail) && (user.email || candidateEmail)) {
-      mergeKnownAccountsIntoDb([{ ...user, user_id: user.user_id || tokenPayload.uid, email: user.email || candidateEmail }], tokenPayload.uid);
-      reqUser = (db.users || []).find(
-        (u: any) =>
-          u &&
-          (u.user_id === tokenPayload.uid ||
-            (candidateEmail && String(u.email || "").toLowerCase().trim() === candidateEmail))
-      );
-    }
-    if (!reqUser && headerProfile && (headerProfile.user_id === tokenPayload.uid || candidateEmail)) {
-      mergeKnownAccountsIntoDb([{ ...headerProfile, user_id: headerProfile.user_id || tokenPayload.uid, email: headerProfile.email || candidateEmail }], tokenPayload.uid);
-      reqUser = (db.users || []).find(
-        (u: any) =>
-          u &&
-          (u.user_id === tokenPayload.uid ||
-            (candidateEmail && String(u.email || "").toLowerCase().trim() === candidateEmail))
-      );
-    }
 
     if (!reqUser || reqUser.is_bot) {
       return res.status(401).json({ detail: "Sesi tidak dapat dipulihkan." });
@@ -4804,14 +5025,18 @@ async function startServer() {
     if (reqUser.status === "inactive" || reqUser.status === "rejected") {
       return res.status(401).json({ revoked: true, detail: "Akun telah dinonaktifkan." });
     }
+    if (reqUser.status === "pending") {
+      return res.status(403).json({
+        status: "pending",
+        revoked: true,
+        detail: "Akun Anda masih menunggu approval Super Admin."
+      });
+    }
     const tokenTv = Number(tokenPayload.tv || 1);
     if (typeof reqUser.token_version !== "number" || reqUser.token_version < 1) {
       reqUser.token_version = tokenTv;
     }
 
-    if (reqUser.status === "pending") {
-      reqUser.status = "active";
-    }
     setUserOnlineStatus(reqUser.user_id, true);
     syncUserDivisionAndGroupMembership(reqUser);
     const freshToken = issueUserSession(req, res, reqUser);
@@ -4830,7 +5055,18 @@ async function startServer() {
   app.get("/api/auth/me", (req, res) => {
     const reqUser = getReqUser(req);
     if (!reqUser) {
-      return res.status(401).json({ error: "Not authenticated" });
+      const token = extractAuthToken(req);
+      const tokenPayload = verifySessionToken(token, MASTER_KEY);
+      const headerProfile = decodeUserProfileHeader(req);
+      const candUid = tokenPayload?.uid || headerProfile?.user_id;
+      const candEmail = tokenPayload?.email || headerProfile?.email;
+      const wasRemoved = Boolean(
+        (candUid || candEmail) && isUserExplicitlyDeleted(candUid, candEmail)
+      );
+      return res.status(401).json({
+        error: "Not authenticated",
+        ...(wasRemoved ? { was_removed: true, revoked: true } : {}),
+      });
     }
     const latestUser = db.users.find((u: any) => u.user_id === reqUser.user_id) || reqUser;
     setUserOnlineStatus(latestUser.user_id, true);
@@ -4964,10 +5200,7 @@ async function startServer() {
 
   // Email & Password Login (with scrypt constant-time verification, brute-force lockout & HMAC session token)
   app.post("/api/auth/login", (req, res) => {
-    const { email, password, known_accounts } = req.body || {};
-    if (Array.isArray(known_accounts) && known_accounts.length > 0) {
-      mergeKnownAccountsIntoDb(known_accounts);
-    }
+    const { email, password } = req.body || {};
     if (!email || !password) {
       return res.status(400).json({ detail: "Email dan password wajib diisi." });
     }
@@ -5086,14 +5319,17 @@ async function startServer() {
     }
 
     const cleanEmail = emailCheck.email;
+    const wasExplicitlyDeleted = isUserExplicitlyDeleted(undefined, cleanEmail);
     const existingUser = db.users.find((u: any) => u.email?.toLowerCase() === cleanEmail);
 
     const invitation = (Array.isArray(db.invitations) ? db.invitations : []).find(
-      (inv: any) => inv.email?.toLowerCase() === cleanEmail
+      (inv: any) => !inv?.used && inv.email?.toLowerCase() === cleanEmail
     );
     const canAutoJoinDomain =
       db.workspace?.auto_join_domain !== false && isAllowedCompanyDomain(emailCheck.domain);
-    const autoApproveNow = Boolean(invitation || canAutoJoinDomain || db.workspace?.require_approval === false);
+    const autoApproveNow = Boolean(
+      (invitation && !wasExplicitlyDeleted) || canAutoJoinDomain || db.workspace?.require_approval === false
+    );
 
     if (existingUser && existingUser.status === "active") {
       return res.status(400).json({ detail: "Email ini sudah memiliki akun aktif. Silakan langsung masuk (login)." });
@@ -5279,14 +5515,10 @@ async function startServer() {
       note,
       password,
       mode,
-      known_accounts,
       idToken,
       check_only,
       profile_submitted
     } = req.body || {};
-    if (Array.isArray(known_accounts) && known_accounts.length > 0) {
-      mergeKnownAccountsIntoDb(known_accounts);
-    }
     const verifiedFirebase = idToken ? await verifyFirebaseIdTokenSafe(idToken) : null;
     const resolvedEmail = verifiedFirebase?.email || email;
     const resolvedName = name || verifiedFirebase?.name;
@@ -5306,20 +5538,21 @@ async function startServer() {
       user.firebase_uid = verifiedFirebase.uid;
     }
 
-    // Super admin default email whitelist
+    // Super admin default email whitelist (hanya @asliri.id dan root lokal)
     const isSuperAdminEmail =
-      cleanEmail === "be.creativestudio21@gmail.com" ||
       cleanEmail === "admin@asliri.local" ||
-      cleanEmail === "saeful@asliri.id";
+      cleanEmail === "saeful@asliri.id" ||
+      cleanEmail === "saeful.rohman@asliri.id";
 
-    // Check if email was explicitly invited by Admin or belongs to allowed company domain
+    // Check if email has an UNUSED invitation from Admin or belongs to @asliri.id / allowed company domain
     const invitation = (Array.isArray(db.invitations) ? db.invitations : []).find(
-      (inv: any) => inv.email?.toLowerCase() === cleanEmail
+      (inv: any) => !inv?.used && inv.email?.toLowerCase() === cleanEmail
     );
+    const isAsliDomain = emailCheck.domain === "asliri.id";
     const canAutoJoinDomain =
-      db.workspace?.auto_join_domain !== false && isAllowedCompanyDomain(emailCheck.domain);
+      isAsliDomain || (db.workspace?.auto_join_domain !== false && isAllowedCompanyDomain(emailCheck.domain));
     const isAutoApproveEligible = Boolean(
-      isSuperAdminEmail || invitation || canAutoJoinDomain || db.workspace?.require_approval === false
+      isSuperAdminEmail || invitation || canAutoJoinDomain
     );
 
     const makeCleanUserSlug = (nameStr: string, emailStr: string) => {
@@ -5336,7 +5569,7 @@ async function startServer() {
       return candidate;
     };
 
-    if (user && (user.status === "inactive" || user.status === "rejected")) {
+    if (user && !wasExplicitlyDeleted && (user.status === "inactive" || user.status === "rejected")) {
       return res.status(403).json({
         status: "inactive",
         detail: "Akun Anda dinonaktifkan atau ditolak. Silakan hubungi Workspace Administrator."
@@ -5345,6 +5578,7 @@ async function startServer() {
 
     const hasExistingProfileData = Boolean(
       user &&
+        !wasExplicitlyDeleted &&
         String(user.name || "").trim() &&
         String(user.department || "").trim() &&
         (user.status === "active" ||
@@ -5354,6 +5588,7 @@ async function startServer() {
     );
     const hasCompletedOnboarding = Boolean(
       user &&
+        !wasExplicitlyDeleted &&
         user.onboarding_completed !== false &&
         (user.onboarding_completed === true ||
           user.onboarded === true ||
@@ -5361,7 +5596,7 @@ async function startServer() {
           hasExistingProfileData)
     );
 
-    if (user && user.status === "pending" && hasCompletedOnboarding && !isAutoApproveEligible) {
+    if (user && !wasExplicitlyDeleted && user.status === "pending" && hasCompletedOnboarding && !isAutoApproveEligible) {
       return res.status(403).json({
         status: "pending",
         detail: "Permintaan akses untuk akun Anda sedang ditinjau oleh Super Admin / Manajer Divisi. Anda dapat masuk setelah di-approve.",
@@ -5425,6 +5660,17 @@ async function startServer() {
       const avatarUrl = resolvedPicture || `https://api.dicebear.com/7.x/pixel-art/svg?seed=${encodeURIComponent(cleanName)}`;
 
       if (!user) {
+        if (isAutoApproveEligible) {
+          const activeSlug = roomAls.getStore()?.slug || DEFAULT_ROOM_SLUG;
+          const qCheck = saas.checkRoomMemberQuota(activeSlug);
+          if (qCheck.exceeded) {
+            return res.status(402).json({
+              code: "QUOTA_EXCEEDED",
+              detail: `Kuota anggota paket ${qCheck.plan.name} (maks. ${qCheck.max} anggota) sudah penuh (${qCheck.current}/${qCheck.max}). Hubungi Admin untuk upgrade paket di Pengaturan -> Langganan & Kuota.`,
+              quota: qCheck,
+            });
+          }
+        }
         const newUserId = isSuperAdminEmail ? "user_superadmin_google" : makeCleanUserSlug(cleanName, cleanEmail);
         user = {
           user_id: newUserId,
@@ -5451,6 +5697,17 @@ async function startServer() {
         };
         db.users.push(user);
       } else {
+        if (user.status !== "active" && isAutoApproveEligible) {
+          const activeSlug = roomAls.getStore()?.slug || DEFAULT_ROOM_SLUG;
+          const qCheck = saas.checkRoomMemberQuota(activeSlug);
+          if (qCheck.exceeded) {
+            return res.status(402).json({
+              code: "QUOTA_EXCEEDED",
+              detail: `Kuota anggota paket ${qCheck.plan.name} (maks. ${qCheck.max} anggota) sudah penuh (${qCheck.current}/${qCheck.max}). Upgrade paket di Pengaturan -> Langganan & Kuota.`,
+              quota: qCheck,
+            });
+          }
+        }
         if (verifiedFirebase?.uid) user.firebase_uid = verifiedFirebase.uid;
         user.name = cleanName;
         user.department = cleanDept;
@@ -6473,15 +6730,45 @@ async function startServer() {
     if (accessReq.type === "delete_user") {
       if (!Array.isArray(db.deleted_user_ids)) db.deleted_user_ids = [];
       if (!Array.isArray(db.deleted_user_emails)) db.deleted_user_emails = [];
-      if (accessReq.target_user_id && !db.deleted_user_ids.includes(accessReq.target_user_id)) {
-        db.deleted_user_ids.push(accessReq.target_user_id);
-      }
-      if (accessReq.email && !db.deleted_user_emails.includes(String(accessReq.email).toLowerCase().trim())) {
-        db.deleted_user_emails.push(String(accessReq.email).toLowerCase().trim());
-      }
       const delUid = accessReq.target_user_id;
       const delEmail = String(accessReq.email || "").toLowerCase().trim();
-      db.users = db.users.filter((u: any) => u.user_id !== delUid);
+      if (delUid && !db.deleted_user_ids.includes(delUid)) {
+        db.deleted_user_ids.push(delUid);
+      }
+      if (delEmail && !db.deleted_user_emails.includes(delEmail)) {
+        db.deleted_user_emails.push(delEmail);
+      }
+      db.users = (db.users || []).filter(
+        (u: any) =>
+          u &&
+          u.user_id !== delUid &&
+          (!delEmail || String(u.email || "").toLowerCase().trim() !== delEmail)
+      );
+      if (Array.isArray(db.invitations) && delEmail) {
+        const removedInvIds = db.invitations
+          .filter((inv: any) => String(inv?.email || "").toLowerCase().trim() === delEmail)
+          .map((inv: any) => inv?.id)
+          .filter(Boolean);
+        if (removedInvIds.length > 0) recordServerDeletedIds(removedInvIds);
+        db.invitations = db.invitations.filter(
+          (inv: any) => String(inv?.email || "").toLowerCase().trim() !== delEmail
+        );
+      }
+      if (Array.isArray(db.access_requests) && delEmail) {
+        db.access_requests.forEach((r: any) => {
+          if (
+            r &&
+            r.id !== accessReq.id &&
+            r.type !== "delete_user" &&
+            r.status === "pending" &&
+            String(r.email || "").toLowerCase().trim() === delEmail
+          ) {
+            r.status = "rejected";
+            r.rejected_by = "System (Akun Dihapus)";
+            r.rejected_at = accessReq.approved_at;
+          }
+        });
+      }
       if (db.session_user_id === delUid) db.session_user_id = null;
       [db.groups, db.conversations].forEach((list) => {
         (list || []).forEach((g: any) => {
@@ -6501,6 +6788,7 @@ async function startServer() {
         }
       });
       saveDbToFile(true);
+      saas.savePlatformState();
       broadcast({ type: "user:removed", user_id: delUid, email: delEmail });
       broadcast({ type: "access_requests:changed" });
       broadcast({ type: "users:changed" });
@@ -6562,13 +6850,31 @@ async function startServer() {
     if (role) accessReq.assigned_role = role;
     if (department) accessReq.assigned_department = department;
 
+    // Enforce active member quota before activating a member
+    const existingTargetUser = db.users.find((u: any) => u.email?.toLowerCase() === accessReq.email.toLowerCase());
+    if (!existingTargetUser || existingTargetUser.status !== "active") {
+      const activeSlug = roomAls.getStore()?.slug || DEFAULT_ROOM_SLUG;
+      const qCheck = saas.checkRoomMemberQuota(activeSlug);
+      if (qCheck.exceeded) {
+        return res.status(402).json({
+          code: "QUOTA_EXCEEDED",
+          detail: `Kuota anggota paket ${qCheck.plan.name} (maks. ${qCheck.max} anggota aktif) sudah penuh. Silakan upgrade paket di Pengaturan -> Langganan & Kuota untuk meng-approve anggota baru.`,
+          quota: qCheck,
+        });
+      }
+    }
+
     // Activate user in db.users
     unmarkUserDeleted(accessReq.target_user_id, accessReq.email);
-    let user = db.users.find((u: any) => u.email?.toLowerCase() === accessReq.email.toLowerCase());
+    let user = existingTargetUser;
     if (user) {
       user.status = "active";
       if (role) user.role = role;
       if (department) user.department = department;
+      if (user.onboarding_completed !== false && (user.department || accessReq.department)) {
+        user.onboarding_completed = true;
+      }
+      if (!user.phone && accessReq.phone) user.phone = accessReq.phone;
       unmarkUserDeleted(user.user_id, user.email);
     } else {
       user = {
@@ -6578,6 +6884,9 @@ async function startServer() {
         role: role || "employee",
         job_title: accessReq.job_title || "Employee",
         department: department || accessReq.department || "Marketing",
+        phone: accessReq.phone || "",
+        onboarding_completed: Boolean(accessReq.department && accessReq.job_title && accessReq.phone),
+        auth_provider: "google",
         status: "active",
         online: false,
         is_demo: false,
@@ -7093,14 +7402,44 @@ async function startServer() {
       if (!Array.isArray(db.deleted_user_ids)) db.deleted_user_ids = [];
       if (!Array.isArray(db.deleted_user_emails)) db.deleted_user_emails = [];
       const delEmail = String(targetUser.email || "").toLowerCase().trim();
-      if (targetUser.user_id && !db.deleted_user_ids.includes(targetUser.user_id)) {
-        db.deleted_user_ids.push(targetUser.user_id);
+      const delUid = targetUser.user_id;
+      if (delUid && !db.deleted_user_ids.includes(delUid)) {
+        db.deleted_user_ids.push(delUid);
       }
       if (delEmail && !db.deleted_user_emails.includes(delEmail)) {
         db.deleted_user_emails.push(delEmail);
       }
-      const delUid = targetUser.user_id;
-      db.users = db.users.filter((u: any) => u.user_id !== delUid);
+      db.users = (db.users || []).filter(
+        (u: any) =>
+          u &&
+          u.user_id !== delUid &&
+          (!delEmail || String(u.email || "").toLowerCase().trim() !== delEmail)
+      );
+      if (Array.isArray(db.invitations) && delEmail) {
+        const removedInvIds = db.invitations
+          .filter((inv: any) => String(inv?.email || "").toLowerCase().trim() === delEmail)
+          .map((inv: any) => inv?.id)
+          .filter(Boolean);
+        if (removedInvIds.length > 0) recordServerDeletedIds(removedInvIds);
+        db.invitations = db.invitations.filter(
+          (inv: any) => String(inv?.email || "").toLowerCase().trim() !== delEmail
+        );
+      }
+      if (Array.isArray(db.access_requests) && delEmail) {
+        const nowDelIso = new Date().toISOString();
+        db.access_requests.forEach((r: any) => {
+          if (
+            r &&
+            r.type !== "delete_user" &&
+            r.status === "pending" &&
+            String(r.email || "").toLowerCase().trim() === delEmail
+          ) {
+            r.status = "rejected";
+            r.rejected_by = "System (Akun Dihapus)";
+            r.rejected_at = nowDelIso;
+          }
+        });
+      }
       if (db.session_user_id === delUid) db.session_user_id = null;
       [db.groups, db.conversations].forEach((list) => {
         (list || []).forEach((g: any) => {
@@ -7112,7 +7451,9 @@ async function startServer() {
       if (db.marketplace_carts && delUid) delete db.marketplace_carts[delUid];
       if (db.marketplace_wishlists && delUid) delete db.marketplace_wishlists[delUid];
       saveDbToFile(true);
+      saas.savePlatformState();
       broadcast({ type: "user:removed", user_id: delUid, email: delEmail });
+      broadcast({ type: "access_requests:changed" });
       broadcast({ type: "users:changed" });
       broadcast({ type: "groups:changed" });
       broadcast({ type: "conversations:changed" });
@@ -15594,6 +15935,46 @@ async function startServer() {
     res.json(sanitizeUsersList(db.users));
   });
 
+  app.get("/api/admin/room-invite-code", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser || !["super_admin", "workspace_admin", "department_manager"].includes(reqUser.role)) {
+      return res.status(403).json({ detail: "Hanya Admin / Manajer yang dapat melihat kode undangan room." });
+    }
+    const activeSlug = roomAls.getStore()?.slug || DEFAULT_ROOM_SLUG;
+    const meta = saas.getRoomMeta(activeSlug);
+    res.json({
+      slug: activeSlug,
+      room_name: db.workspace?.name || meta?.name || "ASLI WORKSPACE",
+      invite_code: meta?.invite_code || "",
+    });
+  });
+
+  app.post("/api/admin/room-invite-code/regenerate", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser || !["super_admin", "workspace_admin"].includes(reqUser.role)) {
+      return res.status(403).json({ detail: "Hanya Super Admin / Workspace Admin yang dapat memperbarui kode undangan room." });
+    }
+    const activeSlug = roomAls.getStore()?.slug || DEFAULT_ROOM_SLUG;
+    const nextCode = saas.regenerateRoomInviteCode(activeSlug);
+    if (!nextCode) {
+      return res.status(404).json({ detail: "Room tidak ditemukan." });
+    }
+    res.json({ slug: activeSlug, invite_code: nextCode });
+  });
+
+  app.put("/api/admin/room-invite-code", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser || !["super_admin", "workspace_admin"].includes(reqUser.role)) {
+      return res.status(403).json({ detail: "Hanya Super Admin / Workspace Admin yang dapat mengubah kode undangan room." });
+    }
+    const activeSlug = roomAls.getStore()?.slug || DEFAULT_ROOM_SLUG;
+    const result = saas.setCustomRoomInviteCode(activeSlug, String(req.body?.invite_code || ""));
+    if (!result.ok) {
+      return res.status(400).json({ detail: result.error || "Kode undangan room tidak valid." });
+    }
+    res.json({ slug: activeSlug, invite_code: result.invite_code });
+  });
+
   app.get("/api/admin/invitations", (req, res) => {
     const reqUser = getReqUser(req);
     if (!reqUser || !["super_admin", "workspace_admin", "department_manager"].includes(reqUser.role)) {
@@ -15607,7 +15988,27 @@ async function startServer() {
     if (!reqUser || !["super_admin", "workspace_admin", "department_manager"].includes(reqUser.role)) {
       return res.status(403).json({ detail: "Hanya Admin / Manajer yang dapat membuat undangan." });
     }
-    const inv = { id: `inv_${Date.now()}`, ...req.body, used: false };
+    const activeSlug = roomAls.getStore()?.slug || DEFAULT_ROOM_SLUG;
+    const cleanInvEmail = String(req.body?.email || "").toLowerCase().trim();
+    if (!cleanInvEmail || !cleanInvEmail.includes("@")) {
+      return res.status(400).json({ detail: "Masukkan alamat Email Google yang valid." });
+    }
+    const existingBinding = saas.findAccountExistingRoom(cleanInvEmail, activeSlug);
+    if (existingBinding) {
+      return res.status(409).json({
+        code: "ACCOUNT_ALREADY_IN_WORKSPACE",
+        detail: `Akun ${cleanInvEmail} sudah terdaftar di workspace "${existingBinding.meta.name}". 1 akun Google hanya dapat masuk ke 1 workspace.`,
+      });
+    }
+    const qCheck = saas.checkRoomMemberQuota(activeSlug);
+    if (qCheck.exceeded) {
+      return res.status(402).json({
+        code: "QUOTA_EXCEEDED",
+        detail: `Kuota anggota paket ${qCheck.plan.name} (maks. ${qCheck.max} anggota aktif) sudah penuh (${qCheck.current}/${qCheck.max}). Upgrade paket di Pengaturan -> Langganan & Kuota terlebih dahulu.`,
+        quota: qCheck,
+      });
+    }
+    const inv = { id: `inv_${Date.now()}`, ...req.body, email: cleanInvEmail, used: false };
     db.invitations.push(inv);
     saveDbToFile();
     res.json(inv);
@@ -15763,10 +16164,11 @@ async function startServer() {
     const matchedUsers = (db.users || []).filter((u: any) => {
       if (!u || u.is_bot || u.role === "assistant" || u.user_id === CIRCLE_BOT_ID) return false;
       if (u.status && u.status !== "active") return false;
+      const uRoleNorm = u.role === "super_admin" ? "super_admin" : "employee";
       if (explicitUserIds.size > 0) {
-        return explicitUserIds.has(u.user_id) || rolesToMatch.includes(u.role);
+        return explicitUserIds.has(u.user_id) || rolesToMatch.includes(u.role) || rolesToMatch.includes(uRoleNorm);
       }
-      return rolesToMatch.includes(u.role);
+      return rolesToMatch.includes(u.role) || rolesToMatch.includes(uRoleNorm);
     });
 
     if (matchedUsers.length === 0 && reqUser) {
@@ -17231,6 +17633,17 @@ async function startServer() {
         circleBot.picture = botAvatar;
       }
     }
+    db.workspace.app_name = "ASLIWORKSPACE";
+    const activeSlug = roomAls.getStore()?.slug || DEFAULT_ROOM_SLUG;
+    const activeMeta = saas.roomsMeta[activeSlug];
+    if (activeMeta) {
+      activeMeta.name = String(db.workspace.name || activeMeta.name);
+      activeMeta.brand_name = String(db.workspace.brand_name || db.workspace.name || activeMeta.brand_name);
+      if (req.body?.custom_domain !== undefined) {
+        activeMeta.custom_domain = String(req.body.custom_domain || "").trim();
+      }
+      saas.savePlatformState();
+    }
     saveDbToFile(true);
     broadcast({ type: "workspace:changed", data: db.workspace });
     broadcast({ type: "workspace:updated", data: db.workspace });
@@ -17518,16 +17931,22 @@ async function startServer() {
   app.patch("/api/prefs", handlePrefsUpdate);
 
   app.get("/api/public/branding", (req, res) => {
+    const activeSlug = roomAls.getStore()?.slug || DEFAULT_ROOM_SLUG;
+    const meta = saas.getRoomMeta(activeSlug);
     res.json({
+      slug: activeSlug,
+      app_name: "ASLIWORKSPACE",
       brand_name: db.workspace.name,
       tagline: db.workspace.tagline,
       logo_file_id: db.workspace.logo_file_id,
+      favicon_file_id: db.workspace.favicon_file_id,
       login_image_file_id: db.workspace.login_image_file_id,
       divisions: db.workspace.divisions || DEFAULT_ALIGNED_DIVISIONS,
       custom_copywriting: db.workspace.custom_copywriting || {},
       allowed_domains: getNormalizedAllowedDomains(),
       auto_join_domain: db.workspace?.auto_join_domain !== false,
-      require_approval: db.workspace?.require_approval !== false
+      require_approval: db.workspace?.require_approval !== false,
+      custom_domain: meta?.custom_domain || "",
     });
   });
 
@@ -18879,28 +19298,1473 @@ async function startServer() {
     });
   });
 
-  // WebSocket handling with cryptographic token verification & presence tracking
+  // ==================== SAAS MULTI-ROOM, BILLING & PLATFORM OWNER APIs ====================
+
+  const activateRoomSubscription = (slug: string, planId: string, billingCycle: "monthly" | "annual") => {
+    const cleanSlug = saas.resolveRoomSlug(slug);
+    const roomDb = saas.getRoomDb(cleanSlug);
+    const plan = saas.getPlanById(planId);
+    const nowIso = new Date().toISOString();
+    const expiresDate = new Date();
+    expiresDate.setDate(expiresDate.getDate() + (billingCycle === "annual" ? 365 : 30));
+    const expiresIso = expiresDate.toISOString();
+
+    if (!roomDb.workspace || typeof roomDb.workspace !== "object") roomDb.workspace = {};
+    roomDb.workspace.subscription = {
+      plan_id: plan.id,
+      plan: plan.id,
+      plan_name: plan.name,
+      billing_cycle: billingCycle,
+      max_members: plan.max_members,
+      storage_mb: plan.storage_mb,
+      updated_at: nowIso,
+      expires_at: plan.monthly_price > 0 ? expiresIso : undefined,
+    };
+
+    const meta = saas.roomsMeta[cleanSlug];
+    if (meta) {
+      meta.plan_id = plan.id;
+      meta.billing_cycle = billingCycle;
+      meta.expires_at = plan.monthly_price > 0 ? expiresIso : undefined;
+    }
+
+    if (cleanSlug === DEFAULT_ROOM_SLUG) {
+      saveDbToFile(true);
+    } else {
+      saas.scheduleSaveRoomDb(cleanSlug, true);
+    }
+    saas.savePlatformState();
+
+    roomAls.run({ slug: cleanSlug, db: roomDb }, () => {
+      broadcast({ type: "workspace:changed", data: roomDb.workspace });
+    });
+  };
+
+  app.post("/api/saas/upload-branding", upload.single("file"), async (req: any, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ detail: "File gambar wajib dipilih." });
+      }
+      const mime = String(req.file.mimetype || "").toLowerCase();
+      if (!mime.startsWith("image/")) {
+        return res.status(400).json({ detail: "Hanya file gambar (PNG, JPG, WebP, SVG) yang diperbolehkan." });
+      }
+      const fileId = `brand_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      const ext = path.extname(path.basename(req.file.originalname || "logo.png")) || ".png";
+      const filename = `${fileId}${ext}`;
+      const diskPath = path.resolve(UPLOADS_DIR, filename);
+      if (!diskPath.startsWith(path.resolve(UPLOADS_DIR) + path.sep)) {
+        return res.status(400).json({ detail: "Nama file tidak valid." });
+      }
+      putHotFileCache(fileId, req.file.buffer, req.file.mimetype || "image/png", req.file.originalname);
+      await fs.promises.writeFile(diskPath, req.file.buffer);
+      defaultDb.files[fileId] = {
+        id: fileId,
+        name: req.file.originalname,
+        filename,
+        mimetype: req.file.mimetype || "image/png",
+        size: req.file.size,
+      };
+      invalidateUploadedFilesCache();
+      void saveUploadedFileToPostgres({
+        id: fileId,
+        filename,
+        originalName: req.file.originalname,
+        mimetype: req.file.mimetype || "image/png",
+        sizeBytes: req.file.size,
+        buffer: req.file.buffer,
+      }).catch((e) => {
+        console.warn("Failed to persist branding upload in PostgreSQL:", e);
+      });
+      saveDbToFile(true);
+      return res.json({
+        id: fileId,
+        name: req.file.originalname,
+        url: `/api/public/logo/${fileId}`,
+      });
+    } catch (e: any) {
+      return res.status(500).json({ detail: e?.message || "Gagal mengunggah aset branding." });
+    }
+  });
+
+  app.post("/api/saas/auth/google-lookup", async (req, res) => {
+    const { email, name, picture, idToken } = req.body || {};
+    const verifiedFirebase = idToken ? await verifyFirebaseIdTokenSafe(idToken) : null;
+    const rawEmail = verifiedFirebase?.email || email;
+    const cleanEmail = String(rawEmail || "").toLowerCase().trim();
+    if (!cleanEmail || !cleanEmail.includes("@") || !cleanEmail.includes(".")) {
+      return res.status(400).json({ detail: "Masukkan alamat Email Google yang valid." });
+    }
+    const cleanName = String(verifiedFirebase?.name || name || cleanEmail.split("@")[0]).trim();
+    const cleanPic = String(verifiedFirebase?.picture || picture || "").trim();
+
+    const rooms = saas.findRoomsForGoogleAccount(cleanEmail);
+    const isPlatformOwner = saas.isPlatformOwnerEmail(cleanEmail);
+    const lookupToken = signSessionToken(
+      `google_lookup_${cleanEmail}`,
+      1,
+      MASTER_KEY,
+      30 * 60 * 1000,
+      cleanEmail
+    );
+
+    res.json({
+      email: cleanEmail,
+      name: cleanName,
+      picture: cleanPic,
+      verified_oauth: Boolean(verifiedFirebase),
+      rooms,
+      is_platform_owner: isPlatformOwner,
+      lookup_token: lookupToken,
+    });
+  });
+
+  app.get("/api/saas/rooms/:slug/public-branding", (req, res) => {
+    const cleanSlug = slugifyRoom(req.params.slug);
+    const meta = saas.roomsMeta[cleanSlug];
+    if (!meta) {
+      return res.status(404).json({ detail: `Workspace room "/w/${cleanSlug}" tidak ditemukan.` });
+    }
+    const rdb = saas.getRoomDb(cleanSlug);
+    res.json({
+      slug: cleanSlug,
+      app_name: "ASLIWORKSPACE",
+      name: String(rdb.workspace?.name || meta.name),
+      brand_name: String(rdb.workspace?.brand_name || rdb.workspace?.name || meta.brand_name),
+      tagline: rdb.workspace?.tagline || "Enterprise Collaboration & Management",
+      description: rdb.workspace?.description || "",
+      logo_file_id: rdb.workspace?.logo_file_id || "default_workspace_logo",
+      favicon_file_id: rdb.workspace?.favicon_file_id || rdb.workspace?.logo_file_id || "default_workspace_logo",
+      login_image_file_id: rdb.workspace?.login_image_file_id || "default_login_bg",
+      divisions: rdb.workspace?.divisions || DEFAULT_ALIGNED_DIVISIONS,
+      allowed_domains: rdb.workspace?.allowed_domains || [],
+      auto_join_domain: rdb.workspace?.auto_join_domain !== false,
+      require_approval: rdb.workspace?.require_approval !== false,
+      custom_domain: meta.custom_domain || "",
+      status: meta.status,
+    });
+  });
+
+  app.post("/api/saas/rooms", async (req, res) => {
+    const body = req.body || {};
+    const verifiedFirebase = body.idToken ? await verifyFirebaseIdTokenSafe(body.idToken) : null;
+    const superAdminEmail = String(verifiedFirebase?.email || body.super_admin_email || "").toLowerCase().trim();
+    const superAdminName = String(body.super_admin_name || verifiedFirebase?.name || "").trim();
+    const superAdminPicture = String(body.super_admin_picture || verifiedFirebase?.picture || "").trim();
+
+    const existingBinding = saas.findAccountExistingRoom(superAdminEmail);
+    if (existingBinding) {
+      return res.status(409).json({
+        code: "ACCOUNT_ALREADY_IN_WORKSPACE",
+        detail: `Akun Google ${superAdminEmail} sudah terhubung ke workspace "${existingBinding.meta.name}". 1 akun Google hanya dapat masuk ke 1 workspace.`,
+        existing_room: { slug: existingBinding.slug, name: existingBinding.meta.name },
+      });
+    }
+
+    const created = saas.createRoom({
+      workspace_name: body.workspace_name,
+      slug: body.slug,
+      tagline: body.tagline,
+      description: body.description,
+      org_levels: body.org_levels,
+      divisions: body.divisions,
+      logo_file_id: body.logo_file_id,
+      favicon_file_id: body.favicon_file_id,
+      login_image_file_id: body.login_image_file_id,
+      custom_domain: body.custom_domain,
+      allowed_domains: body.allowed_domains,
+      auto_join_domain: body.auto_join_domain,
+      require_approval: body.require_approval,
+      super_admin_name: superAdminName,
+      super_admin_email: superAdminEmail,
+      super_admin_picture: superAdminPicture,
+    });
+
+    if (!created.ok || !created.slug || !created.db) {
+      return res.status(400).json({ detail: created.error || "Gagal membuat room workspace baru." });
+    }
+
+    const slug = created.slug;
+    const roomDb = created.db;
+    const adminUser = (roomDb.users || []).find((u: any) => u.email?.toLowerCase() === superAdminEmail);
+    if (!adminUser) {
+      return res.status(500).json({ detail: "Gagal inisialisasi akun Super Admin room." });
+    }
+
+    let token = "";
+    roomAls.run({ slug, db: roomDb }, () => {
+      syncUserDivisionAndGroupMembership(adminUser);
+      token = issueUserSession(req, res, adminUser);
+      saas.scheduleSaveRoomDb(slug, true);
+    });
+
+    return res.json({
+      slug,
+      meta: created.meta,
+      token,
+      user: sanitizeUser(adminUser),
+      account_vault_entry: buildAccountVaultEntry(adminUser),
+      workspace: roomDb.workspace,
+      prefs: roomDb.prefs?.[adminUser.user_id] || { theme_mode: "light" },
+    });
+  });
+
+  app.post("/api/saas/rooms/:slug/enter", async (req, res) => {
+    const cleanSlug = slugifyRoom(req.params.slug);
+    const meta = saas.roomsMeta[cleanSlug];
+    if (!meta) {
+      return res.status(404).json({ detail: `Workspace room "/w/${cleanSlug}" tidak ditemukan.` });
+    }
+    if (meta.status === "suspended") {
+      return res.status(403).json({
+        code: "ROOM_SUSPENDED",
+        detail: `Workspace room "${meta.name}" sedang dinonaktifkan sementara.`,
+      });
+    }
+
+    const {
+      email,
+      name,
+      picture,
+      idToken,
+      department,
+      job_title,
+      phone,
+      work_mode,
+      note,
+      profile_submitted,
+    } = req.body || {};
+    const verifiedFirebase = idToken ? await verifyFirebaseIdTokenSafe(idToken) : null;
+    const cleanEmail = String(verifiedFirebase?.email || email || "").toLowerCase().trim();
+    if (!cleanEmail || !cleanEmail.includes("@")) {
+      return res.status(400).json({ detail: "Email Google wajib diisi." });
+    }
+
+    const existingBinding = saas.findAccountExistingRoom(cleanEmail, cleanSlug);
+    if (existingBinding) {
+      return res.status(409).json({
+        code: "ACCOUNT_ALREADY_IN_WORKSPACE",
+        detail: `Akun ${cleanEmail} sudah terhubung ke workspace "${existingBinding.meta.name}" (/w/${existingBinding.slug}). 1 akun Google hanya dapat masuk ke 1 workspace.`,
+        existing_room: { slug: existingBinding.slug, name: existingBinding.meta.name },
+      });
+    }
+
+    const roomDb = saas.getRoomDb(cleanSlug);
+    return roomAls.run({ slug: cleanSlug, db: roomDb }, () => {
+      if (!Array.isArray(roomDb.users)) roomDb.users = [];
+      const wasExplicitlyDeleted = isUserExplicitlyDeleted(undefined, cleanEmail);
+      let user = roomDb.users.find((u: any) => String(u?.email || "").toLowerCase().trim() === cleanEmail);
+
+      if (user && !wasExplicitlyDeleted && (user.status === "inactive" || user.status === "rejected")) {
+        return res.status(403).json({
+          status: "inactive",
+          detail: "Akun Anda dinonaktifkan atau ditolak di workspace ini.",
+        });
+      }
+
+      const invitation = (Array.isArray(roomDb.invitations) ? roomDb.invitations : []).find(
+        (inv: any) => !inv?.used && String(inv?.email || "").toLowerCase().trim() === cleanEmail
+      );
+      const emailDomain = cleanEmail.split("@")[1] || "";
+      const isAsliDomain = emailDomain === "asliri.id";
+      const allowedDomains = Array.isArray(roomDb.workspace?.allowed_domains) ? roomDb.workspace.allowed_domains : [];
+      const canAutoJoinDomain =
+        isAsliDomain ||
+        (roomDb.workspace?.auto_join_domain !== false &&
+          Boolean(emailDomain) &&
+          allowedDomains.some((d: string) => String(d || "").toLowerCase().replace(/^@+/, "").trim() === emailDomain));
+      const isDefaultSuperAdmin =
+        cleanSlug === DEFAULT_ROOM_SLUG &&
+        ["admin@asliri.local", "saeful@asliri.id", "saeful.rohman@asliri.id"].includes(cleanEmail);
+      const isRoomOwner =
+        !wasExplicitlyDeleted && String(meta.owner_email || "").toLowerCase().trim() === cleanEmail;
+
+      const hasExistingProfileData = Boolean(
+        user &&
+          !wasExplicitlyDeleted &&
+          String(user.name || "").trim() &&
+          String(user.department || "").trim() &&
+          user.onboarding_completed !== false &&
+          user.status === "active"
+      );
+      const existingActiveMember = hasExistingProfileData;
+
+      // @asliri.id, domain perusahaan terotorisasi, undangan resmi (unused), owner aktif, atau akun yang sudah aktif + onboarding dapat langsung aktif;
+      // semua akun di luar @asliri.id yang belum di-approve wajib isi data dan menunggu approval Super Admin.
+      const isAutoApproveEligible = Boolean(
+        existingActiveMember || isAsliDomain || canAutoJoinDomain || invitation || isRoomOwner || isDefaultSuperAdmin
+      );
+
+      if (user && !wasExplicitlyDeleted && user.status === "pending" && !isAutoApproveEligible) {
+        return res.status(403).json({
+          status: "pending",
+          detail: "Data diri Anda sudah dikirim dan sedang menunggu approval Super Admin room. Anda dapat masuk setelah disetujui.",
+        });
+      }
+
+      const needsOnboarding = !user || wasExplicitlyDeleted || user.onboarding_completed === false || (!existingActiveMember && !hasExistingProfileData);
+
+      const googleNameFallback = String(verifiedFirebase?.name || name || cleanEmail.split("@")[0]).trim();
+      const googlePic = String(verifiedFirebase?.picture || picture || "").trim();
+      const roomDivisions =
+        Array.isArray(roomDb.workspace?.divisions) && roomDb.workspace.divisions.length > 0
+          ? roomDb.workspace.divisions
+          : DEFAULT_ALIGNED_DIVISIONS;
+
+      if (needsOnboarding && profile_submitted !== true) {
+        const existingTitle = wasExplicitlyDeleted ? "" : String(user?.job_title || "").trim();
+        const sanitizeTitle = ["Staff Member", "Anggota Tim", "Workspace Administrator"].includes(existingTitle)
+          ? ""
+          : existingTitle;
+        const existingName = wasExplicitlyDeleted ? "" : String(user?.name || "").trim();
+        const sanitizeName = existingName && existingName !== "Super Admin" ? existingName : "";
+        return res.json({
+          status: "needs_onboarding",
+          requires_profile_data: true,
+          was_removed: wasExplicitlyDeleted,
+          auto_approve_eligible: isAutoApproveEligible,
+          flow: "enter",
+          room: {
+            slug: cleanSlug,
+            name: String(roomDb.workspace?.name || meta.name),
+            brand_name: String(roomDb.workspace?.brand_name || meta.brand_name || meta.name),
+            divisions: roomDivisions,
+          },
+          google_profile: {
+            email: cleanEmail,
+            name: sanitizeName || googleNameFallback,
+            picture: (wasExplicitlyDeleted ? googlePic : user?.avatar || googlePic) || "",
+            department: wasExplicitlyDeleted ? "" : (user?.department || ""),
+            job_title: sanitizeTitle,
+            phone: wasExplicitlyDeleted ? "" : (user?.phone || ""),
+            work_mode: wasExplicitlyDeleted ? "On-site" : (user?.work_mode || "On-site"),
+            bio: wasExplicitlyDeleted ? "" : (user?.bio || ""),
+          },
+        });
+      }
+
+      if (needsOnboarding && profile_submitted === true) {
+        const cleanName = String(verifiedFirebase?.name || name || "").trim();
+        const cleanDept = String(department || "").trim();
+        const cleanTitle = String(job_title || "").trim();
+        const cleanPhone = String(phone || "").trim();
+        if (!cleanName || !cleanDept || !cleanTitle || !cleanPhone) {
+          return res.status(400).json({
+            detail: "Nama lengkap, divisi, jabatan/posisi, dan nomor WhatsApp/telepon wajib diisi terlebih dahulu.",
+          });
+        }
+      }
+
+      if ((!user || user.status !== "active") && isAutoApproveEligible) {
+        const qCheck = saas.checkRoomMemberQuota(cleanSlug);
+        if (qCheck.exceeded) {
+          return res.status(402).json({
+            code: "QUOTA_EXCEEDED",
+            detail: `Kuota anggota paket ${qCheck.plan.name} di room "${meta.name}" (maks. ${qCheck.max} anggota) sudah penuh. Hubungi Super Admin room untuk upgrade paket.`,
+            quota: qCheck,
+          });
+        }
+      }
+
+      const nowIso = new Date().toISOString();
+      const resolvedName = String(verifiedFirebase?.name || name || user?.name || cleanEmail.split("@")[0]).trim();
+      const resolvedPic = String(
+        googlePic || user?.avatar || user?.picture || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(resolvedName)}`
+      ).trim();
+      const cleanDept = String(department || user?.department || roomDivisions[0] || "Management").trim();
+      const cleanTitle = String(job_title || user?.job_title || "Anggota Tim").trim();
+      const cleanPhone = String(phone || user?.phone || "").trim();
+      const cleanWorkMode = String(work_mode || user?.work_mode || "On-site").trim() || "On-site";
+      const cleanNote = String(note || "").trim();
+
+      if (!user) {
+        user = {
+          user_id: `user_g_${crypto.createHash("sha1").update(`${cleanSlug}:${cleanEmail}`).digest("hex").slice(0, 10)}`,
+          email: cleanEmail,
+          name: resolvedName,
+          role: invitation?.role || (isRoomOwner || isDefaultSuperAdmin ? "super_admin" : "employee"),
+          job_title: cleanTitle,
+          department: cleanDept,
+          phone: cleanPhone,
+          work_mode: cleanWorkMode,
+          bio: cleanNote,
+          join_date: nowIso.slice(0, 10),
+          token_version: 1,
+          onboarding_completed: true,
+          auth_provider: "google",
+          online: isAutoApproveEligible,
+          is_demo: false,
+          status: isAutoApproveEligible ? "active" : "pending",
+          avatar: resolvedPic,
+          picture: resolvedPic,
+        };
+        roomDb.users.push(user);
+      } else {
+        if (needsOnboarding && profile_submitted === true) {
+          user.name = resolvedName;
+          user.department = cleanDept;
+          user.job_title = cleanTitle;
+          user.phone = cleanPhone;
+          user.work_mode = cleanWorkMode;
+          if (cleanNote) user.bio = cleanNote;
+        }
+        if (isDefaultSuperAdmin) user.role = "super_admin";
+        if (isAutoApproveEligible && user.status === "pending") user.status = "active";
+        if (!user.auth_provider) user.auth_provider = "google";
+        const hasPlaceholderAvatar = !user.avatar || String(user.avatar).includes("dicebear.com");
+        if (googlePic && hasPlaceholderAvatar) {
+          user.avatar = googlePic;
+          user.picture = googlePic;
+        } else if (resolvedPic && !user.avatar) {
+          user.avatar = resolvedPic;
+          user.picture = resolvedPic;
+        }
+        user.onboarding_completed = true;
+      }
+
+      if (invitation) invitation.used = true;
+      unmarkUserDeleted(user.user_id, cleanEmail);
+      syncUserDivisionAndGroupMembership(user);
+
+      if (!isAutoApproveEligible) {
+        user.online = false;
+        user.status = "pending";
+        if (!Array.isArray(roomDb.access_requests)) roomDb.access_requests = [];
+        const existingReq = roomDb.access_requests.find(
+          (r: any) => String(r?.email || "").toLowerCase().trim() === cleanEmail && r?.status === "pending"
+        );
+        const reqId = existingReq?.id || `req_${Date.now()}`;
+        const accessReq = existingReq || {
+          id: reqId,
+          name: resolvedName,
+          email: cleanEmail,
+          department: cleanDept,
+          job_title: cleanTitle,
+          phone: cleanPhone,
+          note: cleanNote || `Pendaftaran masuk room ${meta.name}`,
+          status: "pending",
+          created_at: nowIso,
+        };
+        if (!existingReq) {
+          roomDb.access_requests.unshift(accessReq);
+          const approvers = roomDb.users.filter((u: any) =>
+            u && !u.is_bot && (u.role === "super_admin" || u.role === "workspace_admin")
+          );
+          const targetApprovers = approvers.length > 0 ? approvers : roomDb.users.slice(0, 1);
+          targetApprovers.forEach((admin: any) => {
+            if (!admin?.user_id) return;
+            const convId = `conv_circle_${admin.user_id}`;
+            let conv = (roomDb.conversations || []).find((c: any) => c.id === convId);
+            if (!conv) {
+              conv = {
+                id: convId,
+                type: "dm",
+                name: roomDb.workspace?.assistant_name || "Asli",
+                admin_ids: [CIRCLE_BOT_ID],
+                members: [CIRCLE_BOT_ID, admin.user_id],
+                member_ids: [CIRCLE_BOT_ID, admin.user_id],
+                unread: 1,
+                last_message_preview: `Permohonan akses room dari ${resolvedName}`,
+                last_message_at: nowIso,
+              };
+              roomDb.conversations.unshift(conv);
+            } else {
+              conv.unread = (conv.unread || 0) + 1;
+              conv.last_message_preview = `Permohonan akses room dari ${resolvedName}`;
+              conv.last_message_at = nowIso;
+            }
+            const msg = {
+              id: `msg_req_${reqId}_${admin.user_id}`,
+              conversation_id: conv.id,
+              sender_id: CIRCLE_BOT_ID,
+              user_id: CIRCLE_BOT_ID,
+              text: `Halo ${String(admin.name || "Admin").split(" ")[0]}! Ada pendaftar baru di luar @asliri.id (${cleanEmail}) untuk divisi ${cleanDept}. Silakan tinjau approval di bawah ini:`,
+              type: "access_request_card",
+              access_request: accessReq,
+              created_at: nowIso,
+            };
+            roomDb.messages.push(msg);
+            broadcast({ type: "message:new", data: { ...msg, member_ids: [CIRCLE_BOT_ID, admin.user_id] } });
+
+            createNotification({
+              user_id: admin.user_id,
+              title: "Permohonan Masuk Room Baru",
+              body: `${resolvedName} (${cleanEmail}) mengisi data profil dan menunggu approval Super Admin.`,
+              type: "access_request",
+              category: "system",
+              access_request: accessReq,
+            });
+          });
+        }
+        saveDbToFile(true);
+        saas.savePlatformState();
+        broadcast({ type: "access_requests:changed" });
+        broadcast({ type: "conversations:changed" });
+        return res.status(202).json({
+          status: "registered_pending",
+          detail: "Data diri berhasil disimpan! Akun Anda (di luar @asliri.id) sedang menunggu approval Super Admin sebelum dapat masuk ke workspace.",
+          user: sanitizeUser(user),
+          access_request: accessReq,
+        });
+      }
+
+      setUserOnlineStatus(user.user_id, true);
+      const token = issueUserSession(req, res, user);
+      saveDbToFile(true);
+      saas.savePlatformState();
+
+      return res.json({
+        slug: cleanSlug,
+        token,
+        user: sanitizeUser(user),
+        account_vault_entry: buildAccountVaultEntry(user),
+        workspace: roomDb.workspace,
+        prefs: roomDb.prefs?.[user.user_id] || { theme_mode: "light" },
+      });
+    });
+  });
+
+  app.post("/api/saas/rooms/join-by-code", async (req, res) => {
+    const {
+      invite_code,
+      email,
+      name,
+      picture,
+      idToken,
+      department,
+      job_title,
+      phone,
+      work_mode,
+      note,
+      profile_submitted,
+    } = req.body || {};
+    const verifiedFirebase = idToken ? await verifyFirebaseIdTokenSafe(idToken) : null;
+    const cleanEmail = String(verifiedFirebase?.email || email || "").toLowerCase().trim();
+    if (!cleanEmail || !cleanEmail.includes("@")) {
+      return res.status(400).json({ detail: "Email Google wajib diisi sebelum bergabung dengan kode." });
+    }
+    const cleanCode = String(invite_code || "").trim().toUpperCase();
+    const found = saas.findRoomByInviteCode(cleanCode);
+    if (!found) {
+      return res.status(404).json({ detail: "Kode undangan room tidak valid atau tidak ditemukan." });
+    }
+    if (found.meta.status === "suspended") {
+      return res.status(403).json({ detail: `Workspace "${found.meta.name}" sedang disuspend sementara.` });
+    }
+
+    const existingBinding = saas.findAccountExistingRoom(cleanEmail, found.slug);
+    if (existingBinding) {
+      return res.status(409).json({
+        code: "ACCOUNT_ALREADY_IN_WORKSPACE",
+        detail: `Akun ${cleanEmail} sudah terhubung ke workspace "${existingBinding.meta.name}" (/w/${existingBinding.slug}). 1 akun Google hanya dapat masuk ke 1 workspace.`,
+        existing_room: { slug: existingBinding.slug, name: existingBinding.meta.name },
+      });
+    }
+
+    const { slug: cleanSlug, db: roomDb } = found;
+    return roomAls.run({ slug: cleanSlug, db: roomDb }, () => {
+      if (!Array.isArray(roomDb.users)) roomDb.users = [];
+      const wasExplicitlyDeleted = isUserExplicitlyDeleted(undefined, cleanEmail);
+      let user = roomDb.users.find((u: any) => String(u?.email || "").toLowerCase().trim() === cleanEmail);
+
+      if (user && !wasExplicitlyDeleted && (user.status === "inactive" || user.status === "rejected")) {
+        return res.status(403).json({
+          status: "inactive",
+          detail: "Akun Anda dinonaktifkan atau ditolak di workspace ini.",
+        });
+      }
+
+      const invitation = (Array.isArray(roomDb.invitations) ? roomDb.invitations : []).find(
+        (inv: any) => !inv?.used && String(inv?.email || "").toLowerCase().trim() === cleanEmail
+      );
+      const emailDomain = cleanEmail.split("@")[1] || "";
+      const isAsliDomain = emailDomain === "asliri.id";
+      const allowedDomains = Array.isArray(roomDb.workspace?.allowed_domains) ? roomDb.workspace.allowed_domains : [];
+      const canAutoJoinDomain =
+        isAsliDomain ||
+        (roomDb.workspace?.auto_join_domain !== false &&
+          Boolean(emailDomain) &&
+          allowedDomains.some((d: string) => String(d || "").toLowerCase().replace(/^@+/, "").trim() === emailDomain));
+      const isRoomOwner =
+        !wasExplicitlyDeleted && String(found.meta.owner_email || "").toLowerCase().trim() === cleanEmail;
+      const isDefaultSuperAdmin =
+        cleanSlug === DEFAULT_ROOM_SLUG &&
+        ["admin@asliri.local", "saeful@asliri.id", "saeful.rohman@asliri.id"].includes(cleanEmail);
+
+      const hasExistingProfileData = Boolean(
+        user &&
+          !wasExplicitlyDeleted &&
+          String(user.name || "").trim() &&
+          String(user.department || "").trim() &&
+          user.onboarding_completed !== false &&
+          user.status === "active"
+      );
+      const existingActiveMember = hasExistingProfileData;
+
+      // Semua akun kecuali @asliri.id (atau undangan resmi unused/owner/sudah aktif) wajib isi data dan menunggu approval Super Admin sebelum dapat masuk
+      const isAutoApproveEligible = Boolean(
+        existingActiveMember ||
+          isAsliDomain ||
+          canAutoJoinDomain ||
+          invitation ||
+          isRoomOwner ||
+          isDefaultSuperAdmin
+      );
+
+      if (user && !wasExplicitlyDeleted && user.status === "pending" && !isAutoApproveEligible) {
+        return res.status(403).json({
+          status: "pending",
+          detail: "Data diri Anda sudah dikirim dan sedang menunggu approval Super Admin room ini. Anda dapat masuk setelah disetujui.",
+        });
+      }
+
+      const roomDivisions =
+        Array.isArray(roomDb.workspace?.divisions) && roomDb.workspace.divisions.length > 0
+          ? roomDb.workspace.divisions
+          : DEFAULT_ALIGNED_DIVISIONS;
+
+      const needsOnboarding = !user || wasExplicitlyDeleted || user.onboarding_completed === false || (!existingActiveMember && !hasExistingProfileData);
+      const googlePic = String(verifiedFirebase?.picture || picture || "").trim();
+      const googleNameFallback = String(verifiedFirebase?.name || name || cleanEmail.split("@")[0]).trim();
+
+      if (needsOnboarding && profile_submitted !== true) {
+        const existingTitle = wasExplicitlyDeleted ? "" : String(user?.job_title || "").trim();
+        const sanitizeTitle = ["Staff Member", "Anggota Tim", "Workspace Administrator"].includes(existingTitle)
+          ? ""
+          : existingTitle;
+        const existingName = wasExplicitlyDeleted ? "" : String(user?.name || "").trim();
+        const sanitizeName = existingName && existingName !== "Super Admin" ? existingName : "";
+        return res.json({
+          status: "needs_onboarding",
+          requires_profile_data: true,
+          was_removed: wasExplicitlyDeleted,
+          auto_approve_eligible: isAutoApproveEligible,
+          flow: "join_by_code",
+          invite_code: cleanCode,
+          room: {
+            slug: cleanSlug,
+            name: String(roomDb.workspace?.name || found.meta.name),
+            brand_name: String(roomDb.workspace?.brand_name || found.meta.brand_name || found.meta.name),
+            divisions: roomDivisions,
+          },
+          google_profile: {
+            email: cleanEmail,
+            name: sanitizeName || googleNameFallback,
+            picture: (wasExplicitlyDeleted ? googlePic : user?.avatar || googlePic) || "",
+            department: wasExplicitlyDeleted ? "" : (user?.department || ""),
+            job_title: sanitizeTitle,
+            phone: wasExplicitlyDeleted ? "" : (user?.phone || ""),
+            work_mode: wasExplicitlyDeleted ? "On-site" : (user?.work_mode || "On-site"),
+            bio: wasExplicitlyDeleted ? "" : (user?.bio || ""),
+          },
+        });
+      }
+
+      if (needsOnboarding && profile_submitted === true) {
+        const cleanName = String(verifiedFirebase?.name || name || "").trim();
+        const cleanDept = String(department || "").trim();
+        const cleanTitle = String(job_title || "").trim();
+        const cleanPhone = String(phone || "").trim();
+        if (!cleanName || !cleanDept || !cleanTitle || !cleanPhone) {
+          return res.status(400).json({
+            detail: "Nama lengkap, divisi, jabatan/posisi, dan nomor WhatsApp/telepon wajib diisi terlebih dahulu.",
+          });
+        }
+      }
+
+      if ((!user || user.status !== "active") && isAutoApproveEligible) {
+        const qCheck = saas.checkRoomMemberQuota(cleanSlug);
+        if (qCheck.exceeded) {
+          return res.status(402).json({
+            code: "QUOTA_EXCEEDED",
+            detail: `Kuota anggota paket ${qCheck.plan.name} pada room "${found.meta.name}" (maks. ${qCheck.max} anggota) sudah penuh. Hubungi Super Admin room untuk upgrade paket.`,
+            quota: qCheck,
+          });
+        }
+      }
+
+      const nowIso = new Date().toISOString();
+      const resolvedName = String(verifiedFirebase?.name || name || user?.name || cleanEmail.split("@")[0]).trim();
+      const resolvedPic = String(
+        googlePic || user?.avatar || user?.picture || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(resolvedName)}`
+      ).trim();
+      const cleanDept = String(department || user?.department || roomDivisions[0] || "Management").trim();
+      const cleanTitle = String(job_title || user?.job_title || "Anggota Tim").trim();
+      const cleanPhone = String(phone || user?.phone || "").trim();
+      const cleanWorkMode = String(work_mode || user?.work_mode || "On-site").trim() || "On-site";
+      const cleanNote = String(note || "").trim();
+
+      if (!user) {
+        user = {
+          user_id: `user_g_${crypto.createHash("sha1").update(`${cleanSlug}:${cleanEmail}`).digest("hex").slice(0, 10)}`,
+          email: cleanEmail,
+          name: resolvedName,
+          role: invitation?.role || (isRoomOwner || isDefaultSuperAdmin ? "super_admin" : "employee"),
+          job_title: cleanTitle,
+          department: cleanDept,
+          phone: cleanPhone,
+          work_mode: cleanWorkMode,
+          bio: cleanNote,
+          join_date: nowIso.slice(0, 10),
+          token_version: 1,
+          onboarding_completed: true,
+          auth_provider: "google",
+          online: isAutoApproveEligible,
+          is_demo: false,
+          status: isAutoApproveEligible ? "active" : "pending",
+          avatar: resolvedPic,
+          picture: resolvedPic,
+        };
+        roomDb.users.push(user);
+      } else {
+        if (needsOnboarding && profile_submitted === true) {
+          user.name = resolvedName;
+          user.department = cleanDept;
+          user.job_title = cleanTitle;
+          user.phone = cleanPhone;
+          user.work_mode = cleanWorkMode;
+          if (cleanNote) user.bio = cleanNote;
+        }
+        if (isDefaultSuperAdmin) user.role = "super_admin";
+        user.status = isAutoApproveEligible ? "active" : "pending";
+        user.onboarding_completed = true;
+      }
+
+      if (invitation) invitation.used = true;
+      unmarkUserDeleted(user.user_id, cleanEmail);
+      syncUserDivisionAndGroupMembership(user);
+
+      if (!isAutoApproveEligible) {
+        user.online = false;
+        if (!Array.isArray(roomDb.access_requests)) roomDb.access_requests = [];
+        const existingReq = roomDb.access_requests.find(
+          (r: any) => String(r?.email || "").toLowerCase().trim() === cleanEmail && r?.status === "pending"
+        );
+        const reqId = existingReq?.id || `req_${Date.now()}`;
+        const accessReq = existingReq || {
+          id: reqId,
+          name: resolvedName,
+          email: cleanEmail,
+          department: cleanDept,
+          job_title: cleanTitle,
+          phone: cleanPhone,
+          note: cleanNote || `Bergabung menggunakan kode undangan ${cleanCode}`,
+          status: "pending",
+          created_at: nowIso,
+        };
+        if (!existingReq) {
+          roomDb.access_requests.unshift(accessReq);
+          const approvers = roomDb.users.filter((u: any) =>
+            u && !u.is_bot && (u.role === "super_admin" || u.role === "workspace_admin")
+          );
+          const targetApprovers = approvers.length > 0 ? approvers : roomDb.users.slice(0, 1);
+          targetApprovers.forEach((admin: any) => {
+            if (!admin?.user_id) return;
+            const convId = `conv_circle_${admin.user_id}`;
+            let conv = (roomDb.conversations || []).find((c: any) => c.id === convId);
+            if (!conv) {
+              conv = {
+                id: convId,
+                type: "dm",
+                name: roomDb.workspace?.assistant_name || "Asli",
+                admin_ids: [CIRCLE_BOT_ID],
+                members: [CIRCLE_BOT_ID, admin.user_id],
+                member_ids: [CIRCLE_BOT_ID, admin.user_id],
+                unread: 1,
+                last_message_preview: `Permohonan bergabung room dari ${resolvedName}`,
+                last_message_at: nowIso,
+              };
+              roomDb.conversations.unshift(conv);
+            } else {
+              conv.unread = (conv.unread || 0) + 1;
+              conv.last_message_preview = `Permohonan bergabung room dari ${resolvedName}`;
+              conv.last_message_at = nowIso;
+            }
+            const msg = {
+              id: `msg_req_${reqId}_${admin.user_id}`,
+              conversation_id: conv.id,
+              sender_id: CIRCLE_BOT_ID,
+              user_id: CIRCLE_BOT_ID,
+              text: `Halo ${String(admin.name || "Admin").split(" ")[0]}! Ada pendaftar baru di luar @asliri.id (${cleanEmail}) menggunakan kode undangan untuk divisi ${cleanDept}. Silakan tinjau approval di bawah ini:`,
+              type: "access_request_card",
+              access_request: accessReq,
+              created_at: nowIso,
+            };
+            roomDb.messages.push(msg);
+            broadcast({ type: "message:new", data: { ...msg, member_ids: [CIRCLE_BOT_ID, admin.user_id] } });
+
+            createNotification({
+              user_id: admin.user_id,
+              title: "Permintaan Bergabung Room Baru",
+              body: `${resolvedName} (${cleanEmail}) mengajukan bergabung ke room melalui kode undangan dan menunggu approval Super Admin.`,
+              type: "access_request",
+              category: "system",
+              access_request: accessReq,
+            });
+          });
+        }
+        saveDbToFile(true);
+        saas.savePlatformState();
+        broadcast({ type: "access_requests:changed" });
+        broadcast({ type: "conversations:changed" });
+        return res.status(202).json({
+          status: "registered_pending",
+          detail: "Data diri berhasil disimpan! Permintaan bergabung Anda sedang menunggu approval Super Admin room ini.",
+          user: sanitizeUser(user),
+          access_request: accessReq,
+        });
+      }
+
+      setUserOnlineStatus(user.user_id, true);
+      const token = issueUserSession(req, res, user);
+      saveDbToFile(true);
+      saas.savePlatformState();
+
+      return res.json({
+        slug: cleanSlug,
+        token,
+        user: sanitizeUser(user),
+        account_vault_entry: buildAccountVaultEntry(user),
+        workspace: roomDb.workspace,
+        prefs: roomDb.prefs?.[user.user_id] || { theme_mode: "light" },
+      });
+    });
+  });
+
+  // ---- Workspace Billing & Quota Endpoints (Hanya untuk Super Admin) ----
+  app.get("/api/billing/overview", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    if (reqUser.role !== "super_admin") {
+      return res.status(403).json({ detail: "Menu Langganan & Kuota hanya berlaku untuk Super Admin." });
+    }
+    const activeSlug = roomAls.getStore()?.slug || DEFAULT_ROOM_SLUG;
+    const meta = saas.getRoomMeta(activeSlug);
+    const quota = saas.checkRoomMemberQuota(activeSlug);
+    const storageUsedMb = saas.getRoomStorageUsedMb(activeSlug);
+    const activePlans = saas.plans.filter((p) => p.is_active);
+    const roomTxs = saas.transactions.filter((t) => t.room_slug === activeSlug);
+
+    res.json({
+      room_slug: activeSlug,
+      room_name: db.workspace?.name || meta?.name,
+      invite_code: meta?.invite_code || "",
+      active_plan: quota.plan,
+      billing_cycle: db.workspace?.subscription?.billing_cycle || meta?.billing_cycle || "monthly",
+      expires_at: db.workspace?.subscription?.expires_at || meta?.expires_at || null,
+      quota: {
+        current_members: quota.current,
+        max_members: quota.max,
+        exceeded: quota.exceeded,
+        remaining: Math.max(0, quota.max - quota.current),
+      },
+      storage: {
+        used_mb: storageUsedMb,
+        limit_mb: quota.plan.storage_mb,
+      },
+      plans: activePlans,
+      gateway: saas.getGatewayStatusInfo(),
+      transactions: roomTxs,
+    });
+  });
+
+  app.post("/api/billing/checkout", async (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser || reqUser.role !== "super_admin") {
+      return res.status(403).json({ detail: "Menu Langganan & Kuota hanya berlaku untuk Super Admin." });
+    }
+    const activeSlug = roomAls.getStore()?.slug || DEFAULT_ROOM_SLUG;
+    const meta = saas.getRoomMeta(activeSlug);
+    const { plan_id, billing_cycle = "monthly", method = "qris" } = req.body || {};
+    const targetPlan = saas.plans.find((p) => p.id === plan_id && p.is_active);
+    if (!targetPlan) {
+      return res.status(404).json({ detail: "Paket langganan tidak ditemukan atau sedang nonaktif." });
+    }
+    const cycle: "monthly" | "annual" = billing_cycle === "annual" ? "annual" : "monthly";
+    const amount = cycle === "annual" ? Number(targetPlan.annual_price || 0) : Number(targetPlan.monthly_price || 0);
+    const nowIso = new Date().toISOString();
+    const txId = `tx_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const invoiceNo = `INV-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    // Free plan or zero-price activation immediately
+    if (amount <= 0) {
+      const tx = {
+        id: txId,
+        invoice_no: invoiceNo,
+        room_slug: activeSlug,
+        room_name: String(db.workspace?.name || meta.name),
+        plan_id: targetPlan.id,
+        plan_name: targetPlan.name,
+        billing_cycle: cycle,
+        amount: 0,
+        method: "free_tier",
+        gateway_mode: saas.gatewayConfig.mode,
+        gateway_provider: "internal",
+        payer_email: reqUser.email,
+        status: "paid" as const,
+        created_at: nowIso,
+        paid_at: nowIso,
+      };
+      saas.transactions.unshift(tx);
+      activateRoomSubscription(activeSlug, targetPlan.id, cycle);
+      return res.json({ transaction: tx, instant_activated: true, workspace: db.workspace });
+    }
+
+    const gatewayInfo = saas.getGatewayStatusInfo();
+
+    // Live Production Payment Gateway integration (Midtrans Snap or Xendit Invoice via server env secrets)
+    if (gatewayInfo.mode === "live") {
+      if (gatewayInfo.live_provider === "midtrans") {
+        const serverKey = process.env.MIDTRANS_SERVER_KEY;
+        if (!serverKey) {
+          return res.status(400).json({
+            code: "GATEWAY_NOT_CONFIGURED",
+            detail: "MIDTRANS_SERVER_KEY belum diisi di environment server. Silakan lengkapi Secrets atau alihkan ke Mode Sandbox Lokal di Platform Owner Console.",
+          });
+        }
+        try {
+          const snapBase = saas.gatewayConfig.midtrans_is_production
+            ? "https://app.midtrans.com/snap/v1/transactions"
+            : "https://app.sandbox.midtrans.com/snap/v1/transactions";
+          const authBasic = Buffer.from(`${serverKey}:`).toString("base64");
+          const resp = await fetch(snapBase, {
+            method: "POST",
+            headers: {
+              Accept: "application/json",
+              "Content-Type": "application/json",
+              Authorization: `Basic ${authBasic}`,
+            },
+            body: JSON.stringify({
+              transaction_details: { order_id: invoiceNo, gross_amount: amount },
+              item_details: [
+                {
+                  id: targetPlan.id,
+                  price: amount,
+                  quantity: 1,
+                  name: `ASLIWORKSPACE ${targetPlan.name} (${cycle})`.slice(0, 50),
+                },
+              ],
+              customer_details: {
+                first_name: reqUser.name || "Admin",
+                email: reqUser.email,
+              },
+            }),
+          });
+          const data: any = await resp.json();
+          if (!resp.ok || !data?.redirect_url) {
+            return res.status(400).json({
+              detail: data?.error_messages?.join(", ") || "Gagal membuat transaksi Midtrans Snap.",
+            });
+          }
+          const tx = {
+            id: txId,
+            invoice_no: invoiceNo,
+            room_slug: activeSlug,
+            room_name: String(db.workspace?.name || meta.name),
+            plan_id: targetPlan.id,
+            plan_name: targetPlan.name,
+            billing_cycle: cycle,
+            amount,
+            method: String(method || "midtrans_snap"),
+            gateway_mode: "live" as const,
+            gateway_provider: "midtrans",
+            payer_email: reqUser.email,
+            status: "pending" as const,
+            created_at: nowIso,
+            snap_url: data.redirect_url,
+          };
+          saas.transactions.unshift(tx);
+          saas.savePlatformState();
+          return res.json({ transaction: tx, mode: "live", provider: "midtrans", snap_url: data.redirect_url, snap_token: data.token });
+        } catch (err: any) {
+          return res.status(502).json({ detail: `Koneksi Midtrans gagal: ${err?.message || "network error"}` });
+        }
+      } else {
+        const xenditKey = process.env.XENDIT_SECRET_KEY;
+        if (!xenditKey) {
+          return res.status(400).json({
+            code: "GATEWAY_NOT_CONFIGURED",
+            detail: "XENDIT_SECRET_KEY belum diisi di environment server. Lengkapi Secrets atau ubah gateway ke Sandbox Lokal di Platform Owner Console.",
+          });
+        }
+        try {
+          const authBasic = Buffer.from(`${xenditKey}:`).toString("base64");
+          const resp = await fetch("https://api.xendit.co/v2/invoices", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Basic ${authBasic}`,
+            },
+            body: JSON.stringify({
+              external_id: invoiceNo,
+              amount,
+              payer_email: reqUser.email,
+              description: `Langganan ASLIWORKSPACE ${targetPlan.name} (${cycle}) - ${meta.name}`,
+              currency: "IDR",
+            }),
+          });
+          const data: any = await resp.json();
+          if (!resp.ok || !data?.invoice_url) {
+            return res.status(400).json({ detail: data?.message || "Gagal membuat Xendit Invoice." });
+          }
+          const tx = {
+            id: txId,
+            invoice_no: invoiceNo,
+            room_slug: activeSlug,
+            room_name: String(db.workspace?.name || meta.name),
+            plan_id: targetPlan.id,
+            plan_name: targetPlan.name,
+            billing_cycle: cycle,
+            amount,
+            method: String(method || "xendit_invoice"),
+            gateway_mode: "live" as const,
+            gateway_provider: "xendit",
+            payer_email: reqUser.email,
+            status: "pending" as const,
+            created_at: nowIso,
+            snap_url: data.invoice_url,
+          };
+          saas.transactions.unshift(tx);
+          saas.savePlatformState();
+          return res.json({ transaction: tx, mode: "live", provider: "xendit", snap_url: data.invoice_url });
+        } catch (err: any) {
+          return res.status(502).json({ detail: `Koneksi Xendit gagal: ${err?.message || "network error"}` });
+        }
+      }
+    }
+
+    // Local Sandbox Simulator (QRIS / Virtual Account / E-Wallet)
+    const cleanMethod = String(method || "qris").toLowerCase();
+    const vaMap: Record<string, string> = {
+      va_bca: `88081${Math.floor(1000000000 + Math.random() * 8999999999)}`,
+      va_mandiri: `89508${Math.floor(1000000000 + Math.random() * 8999999999)}`,
+      va_bni: `82410${Math.floor(1000000000 + Math.random() * 8999999999)}`,
+      va_bri: `88810${Math.floor(1000000000 + Math.random() * 8999999999)}`,
+    };
+    const vaNumber = vaMap[cleanMethod] || `ASLI-${Math.floor(10000000 + Math.random() * 89999999)}`;
+
+    const tx = {
+      id: txId,
+      invoice_no: invoiceNo,
+      room_slug: activeSlug,
+      room_name: String(db.workspace?.name || meta.name),
+      plan_id: targetPlan.id,
+      plan_name: targetPlan.name,
+      billing_cycle: cycle,
+      amount,
+      method: cleanMethod,
+      gateway_mode: "sandbox" as const,
+      gateway_provider: "local_sandbox",
+      payer_email: reqUser.email,
+      status: "pending" as const,
+      created_at: nowIso,
+      va_number: vaNumber,
+    };
+    saas.transactions.unshift(tx);
+    saas.savePlatformState();
+
+    res.json({
+      transaction: tx,
+      mode: "sandbox",
+      provider: "local_sandbox",
+      va_number: vaNumber,
+      qris_code: `ASLIWORKSPACE|${invoiceNo}|${amount}|${activeSlug}`,
+    });
+  });
+
+  app.post("/api/billing/confirm", (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser || reqUser.role !== "super_admin") {
+      return res.status(403).json({ detail: "Menu Langganan & Kuota hanya berlaku untuk Super Admin." });
+    }
+    const activeSlug = roomAls.getStore()?.slug || DEFAULT_ROOM_SLUG;
+    const { transaction_id } = req.body || {};
+    const tx = saas.transactions.find((t) => t.id === transaction_id && t.room_slug === activeSlug);
+    if (!tx) {
+      return res.status(404).json({ detail: "Transaksi tidak ditemukan." });
+    }
+    if (tx.gateway_mode !== "sandbox") {
+      return res.status(400).json({ detail: "Transaksi Live Gateway dikonfirmasi otomatis melalui webhook pembayaran." });
+    }
+    tx.status = "paid";
+    tx.paid_at = new Date().toISOString();
+    activateRoomSubscription(activeSlug, tx.plan_id, tx.billing_cycle);
+
+    res.json({
+      success: true,
+      transaction: tx,
+      workspace: db.workspace,
+    });
+  });
+
+  app.post("/api/billing/webhook/midtrans", (req, res) => {
+    const { order_id, status_code, gross_amount, signature_key, transaction_status, fraud_status } = req.body || {};
+    const serverKey = process.env.MIDTRANS_SERVER_KEY || "";
+    if (!serverKey) return res.status(503).json({ detail: "Midtrans webhook belum dikonfigurasi." });
+    const expectedSig = crypto
+      .createHash("sha512")
+      .update(`${order_id}${status_code}${gross_amount}${serverKey}`)
+      .digest("hex");
+    if (String(signature_key || "") !== expectedSig) {
+      return res.status(403).json({ detail: "Invalid Midtrans signature" });
+    }
+    const tx = saas.transactions.find((t) => t.invoice_no === order_id);
+    if (tx) {
+      const isSettled =
+        transaction_status === "settlement" ||
+        (transaction_status === "capture" && fraud_status === "accept");
+      if (isSettled) {
+        tx.status = "paid";
+        tx.paid_at = new Date().toISOString();
+        activateRoomSubscription(tx.room_slug, tx.plan_id, tx.billing_cycle);
+      } else if (["deny", "cancel", "expire"].includes(String(transaction_status))) {
+        tx.status = "failed";
+        saas.savePlatformState();
+      }
+    }
+    res.json({ ok: true });
+  });
+
+  app.post("/api/billing/webhook/xendit", (req, res) => {
+    const expectedTok = process.env.XENDIT_WEBHOOK_TOKEN || "";
+    const providedTok = String(req.headers?.["x-callback-token"] || "");
+    if (!expectedTok || providedTok !== expectedTok) {
+      return res.status(403).json({ detail: "Invalid Xendit callback token" });
+    }
+    const { external_id, status } = req.body || {};
+    const tx = saas.transactions.find((t) => t.invoice_no === external_id);
+    if (tx) {
+      if (String(status).toUpperCase() === "PAID" || String(status).toUpperCase() === "SETTLED") {
+        tx.status = "paid";
+        tx.paid_at = new Date().toISOString();
+        activateRoomSubscription(tx.room_slug, tx.plan_id, tx.billing_cycle);
+      } else if (String(status).toUpperCase() === "EXPIRED") {
+        tx.status = "failed";
+        saas.savePlatformState();
+      }
+    }
+    res.json({ ok: true });
+  });
+
+  // ---- Platform Owner Console (Superpower Admin) ----
+  app.post("/api/platform-owner/auth", async (req, res) => {
+    const { mode, email, password, idToken } = req.body || {};
+    if (mode === "google") {
+      const verifiedFirebase = idToken ? await verifyFirebaseIdTokenSafe(idToken) : null;
+      const cleanEmail = String(verifiedFirebase?.email || email || "").toLowerCase().trim();
+      if (!saas.isPlatformOwnerEmail(cleanEmail)) {
+        return res.status(403).json({
+          detail: `Akun Google ${cleanEmail || "(kosong)"} tidak terdaftar sebagai Platform Owner. Gunakan akun owner resmi atau login dengan kredensial Superpower Admin.`,
+        });
+      }
+      const ownerRec = saas.getOwnerRecord(cleanEmail);
+      const token = saas.signOwnerToken(cleanEmail, ownerRec?.name || "Platform Owner");
+      return res.json({
+        token,
+        owner: ownerRec
+          ? saas.sanitizeOwnerProfile(ownerRec)
+          : { email: cleanEmail, name: "Platform Owner", role: "superpower_admin" },
+      });
+    }
+
+    const check = saas.verifyOwnerCredentials(email, password);
+    if (!check.ok || !check.owner) {
+      return res.status(401).json({ detail: "Email atau passkey Superpower Admin tidak valid." });
+    }
+    const token = saas.signOwnerToken(check.owner.email, check.owner.name);
+    res.json({
+      token,
+      owner: check.owner,
+    });
+  });
+
+  app.get("/api/platform-owner/dashboard", (req, res) => {
+    const owner = saas.verifyOwnerToken(req);
+    if (!owner) {
+      return res.status(401).json({ detail: "Sesi Platform Owner tidak valid atau telah berakhir." });
+    }
+    saas.syncDefaultRoomFromDb();
+    res.json({
+      owner: { ...owner, role: "superpower_admin" },
+      ...saas.buildDashboardPayload(),
+    });
+  });
+
+  app.put("/api/platform-owner/plans", (req, res) => {
+    const owner = saas.verifyOwnerToken(req);
+    if (!owner) return res.status(401).json({ detail: "Unauthorized" });
+    const incomingPlans = req.body?.plans;
+    if (!Array.isArray(incomingPlans) || incomingPlans.length === 0) {
+      return res.status(400).json({ detail: "Daftar paket tidak boleh kosong." });
+    }
+    saas.plans = incomingPlans.map((p: any, idx: number) => ({
+      id: String(p.id || `plan_${idx + 1}`).trim(),
+      name: String(p.name || `Paket ${idx + 1}`).trim(),
+      badge: String(p.badge || "").trim(),
+      description: String(p.description || "").trim(),
+      monthly_price: Math.max(0, Number(p.monthly_price || 0)),
+      annual_price: Math.max(0, Number(p.annual_price || 0)),
+      max_members: Math.max(1, Number(p.max_members || 5)),
+      storage_mb: Math.max(64, Number(p.storage_mb || 512)),
+      highlight: Boolean(p.highlight),
+      is_active: p.is_active !== false,
+      features: Array.isArray(p.features)
+        ? p.features.map((f: any) => String(f || "").trim()).filter(Boolean)
+        : [],
+    }));
+    saas.savePlatformState();
+    res.json({ plans: saas.plans });
+  });
+
+  app.put("/api/platform-owner/gateway", (req, res) => {
+    const owner = saas.verifyOwnerToken(req);
+    if (!owner) return res.status(401).json({ detail: "Unauthorized" });
+    const { mode, live_provider, midtrans_is_production, enabled_channels } = req.body || {};
+    if (mode === "sandbox" || mode === "live") {
+      saas.gatewayConfig.mode = mode;
+    }
+    if (live_provider === "midtrans" || live_provider === "xendit") {
+      saas.gatewayConfig.live_provider = live_provider;
+    }
+    if (typeof midtrans_is_production === "boolean") {
+      saas.gatewayConfig.midtrans_is_production = midtrans_is_production;
+    }
+    if (Array.isArray(enabled_channels)) {
+      saas.gatewayConfig.enabled_channels = enabled_channels.map((c: any) => String(c));
+    }
+    saas.gatewayConfig.updated_at = new Date().toISOString();
+    saas.savePlatformState();
+    res.json({ gateway: saas.getGatewayStatusInfo() });
+  });
+
+  app.put("/api/platform-owner/governance", (req, res) => {
+    const owner = saas.verifyOwnerToken(req);
+    if (!owner) return res.status(401).json({ detail: "Unauthorized" });
+    saas.governance = {
+      ...saas.governance,
+      ...(req.body || {}),
+    };
+    saas.savePlatformState();
+    res.json({ governance: saas.governance });
+  });
+
+  app.patch("/api/platform-owner/rooms/:slug", (req, res) => {
+    const owner = saas.verifyOwnerToken(req);
+    if (!owner) return res.status(401).json({ detail: "Unauthorized" });
+    const cleanSlug = slugifyRoom(req.params.slug);
+    const meta = saas.roomsMeta[cleanSlug];
+    if (!meta) return res.status(404).json({ detail: "Room tidak ditemukan." });
+    const { status, plan_id, custom_domain, regenerate_invite } = req.body || {};
+    if (status === "active" || status === "suspended") {
+      if (cleanSlug === DEFAULT_ROOM_SLUG && status === "suspended") {
+        return res.status(400).json({ detail: "Room utama ASLI WORKSPACE tidak dapat disuspend." });
+      }
+      meta.status = status;
+    }
+    if (typeof custom_domain === "string") {
+      meta.custom_domain = custom_domain.trim();
+    }
+    if (regenerate_invite) {
+      meta.invite_code = generateInviteCode(cleanSlug, saas.getAllInviteCodes(cleanSlug));
+    }
+    if (plan_id) {
+      activateRoomSubscription(cleanSlug, String(plan_id), meta.billing_cycle || "monthly");
+    } else {
+      saas.savePlatformState();
+    }
+    res.json({ meta });
+  });
+
+  app.delete("/api/platform-owner/rooms/:slug", (req, res) => {
+    const owner = saas.verifyOwnerToken(req);
+    if (!owner) return res.status(401).json({ detail: "Unauthorized" });
+    const cleanSlug = slugifyRoom(req.params.slug);
+    if (cleanSlug === DEFAULT_ROOM_SLUG) {
+      return res.status(400).json({ detail: "Room utama ASLI WORKSPACE tidak boleh dihapus." });
+    }
+    if (!saas.roomsMeta[cleanSlug]) {
+      return res.status(404).json({ detail: "Room tidak ditemukan." });
+    }
+    saas.deleteRoom(cleanSlug);
+    res.json({ success: true });
+  });
+
+  app.post("/api/platform-owner/transactions/:id/mark-paid", (req, res) => {
+    const owner = saas.verifyOwnerToken(req);
+    if (!owner) return res.status(401).json({ detail: "Unauthorized" });
+    const tx = saas.transactions.find((t) => t.id === req.params.id);
+    if (!tx) return res.status(404).json({ detail: "Transaksi tidak ditemukan." });
+    tx.status = "paid";
+    tx.paid_at = new Date().toISOString();
+    activateRoomSubscription(tx.room_slug, tx.plan_id, tx.billing_cycle);
+    res.json({ success: true, transaction: tx });
+  });
+
+  app.post("/api/platform-owner/backup-all", (req, res) => {
+    const owner = saas.verifyOwnerToken(req);
+    if (!owner) return res.status(401).json({ detail: "Unauthorized" });
+    const dashboard = saas.buildDashboardPayload();
+    const snapId = `snap_${Date.now()}`;
+    const snapDir = path.join(__dirname, ".platform_backups");
+    const bundle: Record<string, any> = {
+      snapshot_id: snapId,
+      created_at: new Date().toISOString(),
+      created_by: owner.email,
+      rooms: {},
+    };
+    for (const r of dashboard.rooms) {
+      bundle.rooms[r.slug] = { meta: r, db: saas.getRoomDb(r.slug) };
+    }
+    try {
+      fs.mkdirSync(snapDir, { recursive: true });
+      fs.writeFileSync(path.join(snapDir, `${snapId}.json`), JSON.stringify(bundle), "utf-8");
+    } catch (e) {
+      console.warn("[PlatformOwner] Snapshot disk write failed:", e);
+    }
+    const snap = {
+      id: snapId,
+      created_at: new Date().toISOString(),
+      created_by: owner.email,
+      rooms_count: dashboard.rooms.length,
+      total_size_kb: dashboard.kpis.storage_kb,
+      note: `Snapshot penuh ${dashboard.rooms.length} room`,
+    };
+    saas.snapshots.unshift(snap);
+    if (saas.snapshots.length > 30) saas.snapshots = saas.snapshots.slice(0, 30);
+    saas.savePlatformState();
+    void saveWorkspaceSnapshotToPostgres({
+      snapshotId: snapId,
+      label: snap.note,
+      source: "platform_backup",
+      revision: saas.platformRevision,
+      summary: {
+        rooms_count: snap.rooms_count,
+        total_size_kb: snap.total_size_kb,
+        created_by: snap.created_by,
+      },
+      payload: cloneJsonSafe(bundle),
+    }).catch(() => {});
+    res.json({ snapshot: snap, snapshots: saas.snapshots });
+  });
+
+  app.get("/api/platform-owner/rooms/:slug/export", (req, res) => {
+    const owner = saas.verifyOwnerToken(req);
+    if (!owner) return res.status(401).json({ detail: "Unauthorized" });
+    const cleanSlug = slugifyRoom(req.params.slug);
+    const meta = saas.roomsMeta[cleanSlug];
+    if (!meta) return res.status(404).json({ detail: "Room tidak ditemukan." });
+    const payload = {
+      exported_at: new Date().toISOString(),
+      room_slug: cleanSlug,
+      meta,
+      data: saas.getRoomDb(cleanSlug),
+    };
+    res.setHeader("Content-Disposition", `attachment; filename="asliworkspace-${cleanSlug}-backup.json"`);
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.send(JSON.stringify(payload, null, 2));
+  });
+
+  app.patch("/api/platform-owner/account/profile", (req, res) => {
+    const owner = saas.verifyOwnerToken(req);
+    if (!owner) return res.status(401).json({ detail: "Unauthorized" });
+    const { name, job_title, phone } = req.body || {};
+    const out = saas.updateOwnerProfile(owner.email, { name, job_title, phone });
+    if (!out.ok) return res.status(400).json({ detail: out.error });
+    res.json({ owner: out.owner });
+  });
+
+  app.put("/api/platform-owner/account/password", (req, res) => {
+    const owner = saas.verifyOwnerToken(req);
+    if (!owner) return res.status(401).json({ detail: "Unauthorized" });
+    const { current_password, new_password, revoke_other_sessions } = req.body || {};
+    const out = saas.changeOwnerPassword(owner.email, {
+      current_password,
+      new_password,
+      revoke_other_sessions,
+    });
+    if (!out.ok) return res.status(400).json({ detail: out.error });
+    res.json({ token: out.token, owner: out.owner });
+  });
+
+  app.post("/api/platform-owner/account/reset-passkey", (req, res) => {
+    const owner = saas.verifyOwnerToken(req);
+    if (!owner) return res.status(401).json({ detail: "Unauthorized" });
+    const out = saas.resetOwnerPasskey(owner.email);
+    if (!out.ok) return res.status(400).json({ detail: out.error });
+    res.json({
+      generated_passkey: out.generated_passkey,
+      token: out.token,
+      owner: out.owner,
+    });
+  });
+
+  app.post("/api/platform-owner/account/revoke-sessions", (req, res) => {
+    const owner = saas.verifyOwnerToken(req);
+    if (!owner) return res.status(401).json({ detail: "Unauthorized" });
+    const out = saas.revokeOwnerSessions(owner.email);
+    if (!out.ok) return res.status(400).json({ detail: out.error });
+    res.json({ token: out.token, owner: out.owner });
+  });
+
+  app.post("/api/platform-owner/account/reset", (req, res) => {
+    const owner = saas.verifyOwnerToken(req);
+    if (!owner) return res.status(401).json({ detail: "Unauthorized" });
+    const mode = req.body?.mode === "telemetry_only" ? "telemetry_only" : "profile_and_governance";
+    const out = saas.resetOwnerDefaults(owner.email, mode);
+    if (!out.ok) return res.status(400).json({ detail: out.error });
+    res.json(out);
+  });
+
+  app.post("/api/platform-owner/account/owners", (req, res) => {
+    const owner = saas.verifyOwnerToken(req);
+    if (!owner) return res.status(401).json({ detail: "Unauthorized" });
+    const { email: targetEmail, name: targetName } = req.body || {};
+    const out = saas.addPlatformOwnerAccount(targetEmail, targetName);
+    if (!out.ok) return res.status(400).json({ detail: out.error });
+    res.json({ platform_owners: out.platform_owners });
+  });
+
+  app.delete("/api/platform-owner/account/owners", (req, res) => {
+    const owner = saas.verifyOwnerToken(req);
+    if (!owner) return res.status(401).json({ detail: "Unauthorized" });
+    const targetEmail = String(req.body?.email || req.query?.email || "");
+    const out = saas.removePlatformOwnerAccount(targetEmail, owner.email);
+    if (!out.ok) return res.status(400).json({ detail: out.error });
+    res.json({ platform_owners: out.platform_owners });
+  });
+
+  // WebSocket handling with cryptographic token verification, presence tracking, and multi-room isolation
   wss.on('connection', (ws: WebSocket, request: any) => {
+    let wsSlug = DEFAULT_ROOM_SLUG;
     try {
       const reqUrl = new URL(request?.url || '', `http://${request?.headers?.host || 'localhost'}`);
+      wsSlug = saas.resolveRoomSlug(reqUrl.searchParams.get('room'));
+      (ws as any)._roomSlug = wsSlug;
       const queryToken = reqUrl.searchParams.get('token');
       const cookies = parseCookies(request?.headers?.cookie);
-      const verified = verifyAuthenticatedUserFromToken(queryToken || cookies.circle_session || null);
-      if (verified) {
-        (ws as any).userId = verified.user_id;
-        setUserOnlineStatus(verified.user_id, true);
-      }
-    } catch {}
+      roomAls.run({ slug: wsSlug, db: saas.getRoomDb(wsSlug) }, () => {
+        const verified = verifyAuthenticatedUserFromToken(queryToken || cookies.circle_session || null);
+        if (verified) {
+          (ws as any).userId = verified.user_id;
+          setUserOnlineStatus(verified.user_id, true);
+        }
+      });
+    } catch {
+      (ws as any)._roomSlug = wsSlug;
+    }
 
     ws.on('message', (message: string) => {
       try {
         const data = JSON.parse(message);
+        const roomSlug = (ws as any)._roomSlug || DEFAULT_ROOM_SLUG;
         if (data.token) {
-          const verified = verifyAuthenticatedUserFromToken(data.token);
-          if (verified) {
-            (ws as any).userId = verified.user_id;
-            setUserOnlineStatus(verified.user_id, true);
-          }
+          roomAls.run({ slug: roomSlug, db: saas.getRoomDb(roomSlug) }, () => {
+            const verified = verifyAuthenticatedUserFromToken(data.token);
+            if (verified) {
+              (ws as any).userId = verified.user_id;
+              setUserOnlineStatus(verified.user_id, true);
+            }
+          });
         }
         if (data.type === 'ping') {
           ws.send(JSON.stringify({ type: 'pong' }));
@@ -18910,16 +20774,24 @@ async function startServer() {
 
     ws.on('close', () => {
       const uid = (ws as any).userId;
+      const roomSlug = (ws as any)._roomSlug || DEFAULT_ROOM_SLUG;
       if (!uid) return;
       setTimeout(() => {
         let stillConnected = false;
         wss.clients.forEach((client: any) => {
-          if (client !== ws && client.readyState === WebSocket.OPEN && client.userId === uid) {
+          if (
+            client !== ws &&
+            client.readyState === WebSocket.OPEN &&
+            client.userId === uid &&
+            (client._roomSlug || DEFAULT_ROOM_SLUG) === roomSlug
+          ) {
             stillConnected = true;
           }
         });
         if (!stillConnected) {
-          setUserOnlineStatus(uid, false);
+          roomAls.run({ slug: roomSlug, db: saas.getRoomDb(roomSlug) }, () => {
+            setUserOnlineStatus(uid, false);
+          });
         }
       }, 4000);
     });
@@ -18964,6 +20836,7 @@ async function startServer() {
   server.headersTimeout = 66000;
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`ASLI Workspace server running on port ${PORT}`);
+    void ensurePostgresHydrated();
   });
 
   const handleShutdown = async (signal: string) => {
@@ -18971,8 +20844,9 @@ async function startServer() {
       flushDbToFileSync();
       if (pgHydrated && !isServerBootstrapping) {
         await enqueuePostgresSave();
+        await flushPendingSaasPostgresSaves();
       }
-      console.log(`[Persistence] Flushed workspace DB on ${signal}.`);
+      console.log(`[Persistence] Flushed workspace & SaaS DB on ${signal}.`);
     } catch {}
   };
   process.on('SIGINT', () => { void handleShutdown('SIGINT').finally(() => process.exit(0)); });
