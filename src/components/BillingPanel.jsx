@@ -15,11 +15,65 @@ import {
   Check,
   Pencil,
   AlertTriangle,
+  KeyRound,
 } from "lucide-react";
 import { toast } from "sonner";
-import { api, errMsg } from "../lib/api";
+import { api, errMsg, invalidateApiGetCache } from "../lib/api";
+import { getActiveRoomSlug, roomStorageKey } from "../lib/roomContext";
 import { useApp } from "../context/AppContext";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./ui/dialog";
+
+const BILLING_CACHE_KEY = "circle_billing_overview_v2";
+const BILLING_MEMORY_CACHE = new Map();
+const BILLING_INFLIGHT = new Map();
+
+function readBillingCache(slug = getActiveRoomSlug()) {
+  if (!slug) return null;
+  const mem = BILLING_MEMORY_CACHE.get(slug);
+  if (mem) return mem;
+  try {
+    const raw = localStorage.getItem(roomStorageKey(BILLING_CACHE_KEY, slug));
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && parsed.active_plan) {
+        BILLING_MEMORY_CACHE.set(slug, parsed);
+        return parsed;
+      }
+    }
+  } catch {}
+  return null;
+}
+
+function writeBillingCache(payload, slug = getActiveRoomSlug()) {
+  if (!slug || !payload || typeof payload !== "object") return;
+  BILLING_MEMORY_CACHE.set(slug, payload);
+  try {
+    localStorage.setItem(roomStorageKey(BILLING_CACHE_KEY, slug), JSON.stringify(payload));
+  } catch {}
+}
+
+export async function prefetchBillingOverview(force = false) {
+  const slug = getActiveRoomSlug();
+  if (!slug) return null;
+  if (!force && BILLING_INFLIGHT.has(slug)) {
+    return BILLING_INFLIGHT.get(slug);
+  }
+  const req = api
+    .get("/billing/overview", force ? { noCache: true } : undefined)
+    .then((res) => {
+      if (res?.data && typeof res.data === "object") {
+        writeBillingCache(res.data, slug);
+        return res.data;
+      }
+      return readBillingCache(slug);
+    })
+    .catch(() => readBillingCache(slug))
+    .finally(() => {
+      BILLING_INFLIGHT.delete(slug);
+    });
+  BILLING_INFLIGHT.set(slug, req);
+  return req;
+}
 
 const formatRupiah = (amount) => {
   const num = Number(amount || 0);
@@ -36,6 +90,15 @@ const formatStorageLimit = (mb) => {
   return `${num} MB`;
 };
 
+const getPlanMonthlyPrice = (plan) => Number(plan?.monthly_price ?? plan?.price_monthly ?? 0);
+const getPlanAnnualPrice = (plan) => Number(plan?.annual_price ?? plan?.price_yearly ?? 0);
+const getPlanDescription = (plan) => {
+  const raw = String(plan?.description ?? plan?.tagline ?? "").trim();
+  if (!raw || /gratis selamanya untuk tim kecil hingga 5 anggota/i.test(raw)) return "";
+  return raw;
+};
+const normalizeCycle = (val) => (val === "annual" || val === "yearly" ? "annual" : "monthly");
+
 const CHANNEL_OPTIONS = [
   { id: "qris", label: "QRIS Instan", desc: "Scan QRIS semua bank & e-wallet", group: "QRIS", icon: QrCode },
   { id: "va_bca", label: "Virtual Account BCA", desc: "Transfer otomatis BCA", group: "VA", icon: Building2 },
@@ -48,10 +111,13 @@ const CHANNEL_OPTIONS = [
 ];
 
 export default function BillingPanel() {
-  const { reloadWs, isAdmin } = useApp();
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [cycle, setCycle] = useState("monthly");
+  const { reloadWs, isAdmin, currentRoomSlug } = useApp();
+  const roomSlug = currentRoomSlug || getActiveRoomSlug();
+
+  const [data, setData] = useState(() => readBillingCache(roomSlug));
+  const [refreshing, setRefreshing] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(() => !readBillingCache(roomSlug));
+  const [cycle, setCycle] = useState(() => normalizeCycle(readBillingCache(roomSlug)?.billing_cycle));
   const [checkoutPlan, setCheckoutPlan] = useState(null);
   const [selectedChannel, setSelectedChannel] = useState("qris");
   const [busyCheckout, setBusyCheckout] = useState(false);
@@ -59,22 +125,47 @@ export default function BillingPanel() {
   const [busyConfirm, setBusyConfirm] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
 
-  const loadBilling = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await api.get("/billing/overview", { noCache: true });
-      setData(res.data);
-      if (res.data?.billing_cycle === "yearly") setCycle("yearly");
-    } catch (err) {
-      toast.error(errMsg(err, "Gagal memuat informasi langganan"));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const [regeneratingCode, setRegeneratingCode] = useState(false);
+  const [editingCode, setEditingCode] = useState(false);
+  const [customCodeInput, setCustomCodeInput] = useState("");
+  const [savingCustomCode, setSavingCustomCode] = useState(false);
+
+  const loadBilling = useCallback(
+    async ({ manual = false, force = false } = {}) => {
+      if (manual) setRefreshing(true);
+      try {
+        if (force) invalidateApiGetCache("/billing/overview");
+        const res = await api.get("/billing/overview", force ? { noCache: true } : undefined);
+        if (res?.data && typeof res.data === "object") {
+          setData(res.data);
+          writeBillingCache(res.data, roomSlug);
+          if (res.data.billing_cycle) {
+            setCycle(normalizeCycle(res.data.billing_cycle));
+          }
+        }
+      } catch (err) {
+        if (manual || !readBillingCache(roomSlug)) {
+          toast.error(errMsg(err, "Gagal memuat informasi langganan"));
+        }
+      } finally {
+        setInitialLoading(false);
+        if (manual) setRefreshing(false);
+      }
+    },
+    [roomSlug]
+  );
 
   useEffect(() => {
-    loadBilling();
-  }, [loadBilling]);
+    const cached = readBillingCache(roomSlug);
+    if (cached) {
+      setData(cached);
+      setInitialLoading(false);
+      if (cached.billing_cycle) setCycle(normalizeCycle(cached.billing_cycle));
+    } else {
+      setInitialLoading(true);
+    }
+    loadBilling({ manual: false, force: false });
+  }, [roomSlug, loadBilling]);
 
   const handleOpenUpgrade = (plan) => {
     const enabled = data?.gateway?.enabled_channels || CHANNEL_OPTIONS.map((c) => c.id);
@@ -96,13 +187,13 @@ export default function BillingPanel() {
       if (payload.instant_activated) {
         toast.success(`Paket ${checkoutPlan.name} berhasil diaktifkan!`);
         setCheckoutPlan(null);
-        await loadBilling();
+        await loadBilling({ force: true });
         await reloadWs?.();
         return;
       }
       setActiveInvoice(payload);
       toast.success("Tagihan pembayaran lokal berhasil dibuat.");
-      await loadBilling();
+      await loadBilling({ force: true });
     } catch (err) {
       toast.error(errMsg(err, "Gagal membuat checkout pembayaran"));
     } finally {
@@ -118,7 +209,7 @@ export default function BillingPanel() {
       toast.success("Pembayaran terverifikasi! Paket workspace Anda telah di-upgrade.");
       setCheckoutPlan(null);
       setActiveInvoice(null);
-      await loadBilling();
+      await loadBilling({ force: true });
       await reloadWs?.();
     } catch (err) {
       toast.error(errMsg(err, "Gagal mengkonfirmasi pembayaran"));
@@ -126,11 +217,6 @@ export default function BillingPanel() {
       setBusyConfirm(false);
     }
   };
-
-  const [regeneratingCode, setRegeneratingCode] = useState(false);
-  const [editingCode, setEditingCode] = useState(false);
-  const [customCodeInput, setCustomCodeInput] = useState("");
-  const [savingCustomCode, setSavingCustomCode] = useState(false);
 
   const copyInviteCode = async () => {
     if (!data?.invite_code) return;
@@ -147,7 +233,12 @@ export default function BillingPanel() {
     try {
       const { data: resData } = await api.post("/admin/room-invite-code/regenerate");
       if (resData?.invite_code) {
-        setData((prev) => (prev ? { ...prev, invite_code: resData.invite_code } : prev));
+        invalidateApiGetCache("/billing/overview");
+        setData((prev) => {
+          const next = prev ? { ...prev, invite_code: resData.invite_code } : prev;
+          if (next) writeBillingCache(next, roomSlug);
+          return next;
+        });
         setEditingCode(false);
         toast.success(`Kode undangan baru: ${resData.invite_code}`);
       }
@@ -165,7 +256,12 @@ export default function BillingPanel() {
     try {
       const { data: resData } = await api.put("/admin/room-invite-code", { invite_code: clean });
       if (resData?.invite_code) {
-        setData((prev) => (prev ? { ...prev, invite_code: resData.invite_code } : prev));
+        invalidateApiGetCache("/billing/overview");
+        setData((prev) => {
+          const next = prev ? { ...prev, invite_code: resData.invite_code } : prev;
+          if (next) writeBillingCache(next, roomSlug);
+          return next;
+        });
         setEditingCode(false);
         toast.success(`Kode undangan custom disimpan: ${resData.invite_code}`);
       }
@@ -176,16 +272,72 @@ export default function BillingPanel() {
     }
   };
 
+  if (initialLoading && !data) {
+    return (
+      <div className="space-y-5 font-sans tabular-nums" data-testid="billing-panel">
+        <section className="card overflow-hidden">
+          <div className="p-5 sm:p-6 flex items-start justify-between gap-4">
+            <div className="flex items-start gap-3.5 min-w-0">
+              <div className="h-11 w-11 shrink-0 rounded-2xl bg-surface2 animate-pulse" />
+              <div className="space-y-2 pt-0.5">
+                <div className="h-3 w-28 rounded-md bg-surface2 animate-pulse" />
+                <div className="h-5 w-48 rounded-md bg-surface2 animate-pulse" />
+                <div className="h-3.5 w-64 rounded-md bg-surface2 animate-pulse" />
+              </div>
+            </div>
+            <div className="h-9 w-24 shrink-0 rounded-xl bg-surface2 animate-pulse" />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-border/70 border-t border-border/70">
+            <div className="p-5 sm:p-6 space-y-3">
+              <div className="h-3.5 w-36 rounded bg-surface2 animate-pulse" />
+              <div className="h-7 w-40 rounded bg-surface2 animate-pulse" />
+              <div className="h-1.5 w-full rounded-full bg-surface2 animate-pulse" />
+              <div className="h-3 w-52 rounded bg-surface2 animate-pulse" />
+            </div>
+            <div className="p-5 sm:p-6 space-y-3">
+              <div className="h-3.5 w-40 rounded bg-surface2 animate-pulse" />
+              <div className="h-7 w-44 rounded bg-surface2 animate-pulse" />
+              <div className="h-1.5 w-full rounded-full bg-surface2 animate-pulse" />
+              <div className="h-3 w-56 rounded bg-surface2 animate-pulse" />
+            </div>
+          </div>
+          <div className="border-t border-border/70 bg-surface2/35 px-5 py-3.5 sm:px-6 flex items-center justify-between gap-3">
+            <div className="h-4 w-56 rounded bg-surface2 animate-pulse" />
+            <div className="h-7 w-40 rounded bg-surface2 animate-pulse" />
+          </div>
+        </section>
+      </div>
+    );
+  }
+
   const activePlan = data?.active_plan || {
-    id: "free",
-    name: "Free Starter",
-    tagline: "Gratis selamanya untuk tim kecil hingga 5 anggota.",
-    badge: "Gratis",
+    id: "free_starter",
+    name: "Starter",
+    monthly_price: 0,
+    annual_price: 0,
     max_members: 5,
     storage_mb: 512,
   };
-  const quota = data?.quota || { current_members: 1, max_members: activePlan.max_members || 5, remaining: 4, exceeded: false };
-  const storage = data?.storage || { used_mb: 0.1, limit_mb: activePlan.storage_mb || 512 };
+  const activeBillingCycle = normalizeCycle(data?.billing_cycle);
+  const activePrice =
+    activeBillingCycle === "annual"
+      ? getPlanAnnualPrice(activePlan)
+      : getPlanMonthlyPrice(activePlan);
+  const activePriceLabel =
+    activePrice <= 0
+      ? "Gratis"
+      : `${formatRupiah(activePrice)} / ${activeBillingCycle === "annual" ? "tahun" : "bulan"}`;
+
+  const quota = data?.quota || {
+    current_members: 0,
+    max_members: activePlan.max_members || 5,
+    remaining: activePlan.max_members || 5,
+    exceeded: false,
+  };
+  const storage = data?.storage || {
+    used_mb: 0.1,
+    limit_mb: activePlan.storage_mb || 512,
+  };
   const plans = Array.isArray(data?.plans) ? data.plans : [];
   const gateway = data?.gateway || {
     mode: "sandbox",
@@ -194,8 +346,14 @@ export default function BillingPanel() {
   };
   const transactions = Array.isArray(data?.transactions) ? data.transactions : [];
 
-  const memberPct = Math.min(100, Math.round(((quota.current_members || 0) / Math.max(1, quota.max_members || 5)) * 100));
-  const storagePct = Math.min(100, Math.max(3, Math.round(((storage.used_mb || 0) / Math.max(1, storage.limit_mb || 512)) * 100)));
+  const memberPct = Math.min(
+    100,
+    Math.round(((quota.current_members || 0) / Math.max(1, quota.max_members || 5)) * 100)
+  );
+  const rawStoragePct = ((storage.used_mb || 0) / Math.max(1, storage.limit_mb || 512)) * 100;
+  const storagePct = Math.min(100, Math.max(rawStoragePct > 0 ? 2 : 0, Math.round(rawStoragePct)));
+  const storagePctLabel =
+    rawStoragePct > 0 && rawStoragePct < 1 ? `${rawStoragePct.toFixed(1)}%` : `${Math.min(100, Math.round(rawStoragePct))}%`;
 
   const enabledChannels = CHANNEL_OPTIONS.filter((ch) =>
     !Array.isArray(gateway.enabled_channels) || gateway.enabled_channels.length === 0
@@ -208,144 +366,71 @@ export default function BillingPanel() {
       ? activeInvoice.snap_url
       : "";
 
+  const checkoutPrice =
+    cycle === "annual" ? getPlanAnnualPrice(checkoutPlan) : getPlanMonthlyPrice(checkoutPlan);
+
   return (
     <div className="space-y-5 font-sans tabular-nums" data-testid="billing-panel">
-      {/* 1. Active Plan Summary + Quotas */}
-      <section className="card p-5 sm:p-6 space-y-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
+      {/* 1. Active Plan Summary + Quotas + Room Invite Code */}
+      <section className="card overflow-hidden">
+        {/* Top Plan Header */}
+        <div className="p-5 sm:p-6 flex flex-wrap items-start justify-between gap-4">
           <div className="flex items-start gap-3.5 min-w-0">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-rose-50 text-brand dark:bg-rose-950/50">
-              <Crown size={22} />
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-brand/10 text-brand">
+              <Crown size={20} />
             </div>
             <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <h3 className="text-base sm:text-lg font-extrabold text-ink tracking-tight">
-                  Paket {activePlan.name}
-                </h3>
-                <span className="rounded-full border border-border bg-surface2 px-2.5 py-0.5 text-[11px] font-bold text-ink">
-                  {Number(activePlan.price_monthly || 0) === 0
-                    ? `Gratis (Maks. ${activePlan.max_members} Anggota)`
-                    : `${formatRupiah(activePlan.price_monthly)}/bln`}
-                </span>
-              </div>
-              <p className="text-xs sm:text-sm text-sub mt-0.5">
-                {activePlan.tagline || "Gratis selamanya untuk tim kecil hingga 5 anggota."}
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-sub">
+                Langganan Aktif
               </p>
-              {data?.invite_code && (
-                <div className="mt-2 space-y-2 text-xs text-sub font-sans tabular-nums">
-                  <div className="inline-flex flex-wrap items-center gap-2.5">
-                    <span>Kode Undangan Room:</span>
-                    <span className="font-mono font-bold text-ink tracking-wide">{data.invite_code}</span>
-                    <button
-                      type="button"
-                      onClick={copyInviteCode}
-                      className="inline-flex items-center gap-1 font-semibold text-brand hover:underline cursor-pointer"
-                      title="Salin kode undangan"
-                    >
-                      {copiedCode ? <Check size={12} /> : <Copy size={12} />}
-                      <span>{copiedCode ? "Disalin" : "Salin"}</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setCustomCodeInput(data.invite_code || "");
-                        setEditingCode((v) => !v);
-                      }}
-                      className="inline-flex items-center gap-1 font-semibold text-ink hover:underline cursor-pointer"
-                      title="Atur kode undangan custom"
-                      data-testid="billing-custom-invite-code-btn"
-                    >
-                      <Pencil size={12} />
-                      <span>Custom</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleRegenerateInviteCode}
-                      disabled={regeneratingCode}
-                      className="inline-flex items-center gap-1 font-semibold text-sub hover:text-ink cursor-pointer disabled:opacity-50"
-                      title="Buat kode undangan unik baru"
-                    >
-                      <RefreshCw size={12} className={regeneratingCode ? "animate-spin" : ""} />
-                      <span>Acak</span>
-                    </button>
-                  </div>
-                  {editingCode && (() => {
-                    const trimmed = String(customCodeInput || "").trim();
-                    const hasLen = trimmed.length >= 9 && !/\s/.test(trimmed);
-                    const hasNum = /[0-9]/.test(trimmed);
-                    const hasSym = /[^A-Za-z0-9\s]/.test(trimmed);
-                    const valid = hasLen && hasNum && hasSym;
-                    return (
-                      <form onSubmit={handleSaveCustomInviteCode} className="rounded-2xl border border-border bg-surface2/60 p-3 space-y-2 max-w-md">
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="text"
-                            value={customCodeInput}
-                            onChange={(e) => setCustomCodeInput(e.target.value.replace(/\s+/g, "").toUpperCase())}
-                            placeholder="Cth: ASLI-TIM#2026"
-                            maxLength={32}
-                            className="h-9 flex-1 rounded-full border border-border bg-surface px-3.5 font-mono text-xs font-bold uppercase tracking-wider text-ink outline-none focus:border-brand"
-                            data-testid="billing-custom-invite-input"
-                          />
-                          <button
-                            type="submit"
-                            disabled={!valid || savingCustomCode}
-                            className="h-9 rounded-full bg-brand px-4 text-xs font-bold text-white disabled:opacity-50 cursor-pointer"
-                            data-testid="billing-save-custom-invite-btn"
-                          >
-                            {savingCustomCode ? "Simpan..." : "Simpan"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setEditingCode(false)}
-                            className="h-9 rounded-full border border-border bg-surface px-3 text-xs font-semibold text-sub hover:text-ink cursor-pointer"
-                          >
-                            Batal
-                          </button>
-                        </div>
-                        <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px]">
-                          <span className={hasLen ? "text-emerald-600 font-semibold" : "text-sub"}>
-                            {hasLen ? "✓" : "•"} Min. 9 karakter
-                          </span>
-                          <span className={hasNum ? "text-emerald-600 font-semibold" : "text-sub"}>
-                            {hasNum ? "✓" : "•"} Angka (0-9)
-                          </span>
-                          <span className={hasSym ? "text-emerald-600 font-semibold" : "text-sub"}>
-                            {hasSym ? "✓" : "•"} Simbol (-, #, @, !)
-                          </span>
-                        </div>
-                      </form>
-                    );
-                  })()}
-                </div>
-              )}
+              <h3 className="mt-0.5 text-lg sm:text-xl font-extrabold text-ink tracking-tight leading-snug">
+                Paket {activePlan.name}
+              </h3>
+              <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs font-medium text-sub">
+                <span className="font-semibold text-ink">{activePriceLabel}</span>
+                <span aria-hidden="true" className="text-border">•</span>
+                <span>Maks. {quota.max_members} anggota</span>
+                <span aria-hidden="true" className="text-border">•</span>
+                <span>Penyimpanan {formatStorageLimit(storage.limit_mb)}</span>
+              </p>
             </div>
           </div>
 
           <button
             type="button"
-            onClick={loadBilling}
-            disabled={loading}
-            className="inline-flex h-10 items-center gap-1.5 rounded-full border border-border bg-surface px-4 text-xs font-bold text-ink hover:bg-surface2 transition-colors cursor-pointer disabled:opacity-50"
+            onClick={() => loadBilling({ manual: true, force: true })}
+            disabled={refreshing}
+            className="inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border border-border bg-surface px-3.5 text-xs font-semibold text-ink hover:bg-surface2 transition-colors cursor-pointer disabled:opacity-50"
           >
-            <RefreshCw size={13} className={loading ? "animate-spin" : ""} />
+            <RefreshCw size={13} className={refreshing ? "animate-spin" : ""} />
             <span>Segarkan</span>
           </button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+        {/* 2-Column Quota Metrics Strip */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-border/70 border-t border-border/70">
           {/* Quota Members */}
-          <div className="rounded-2xl border border-border bg-surface p-4 space-y-2.5">
-            <div className="flex items-center justify-between gap-2 text-xs sm:text-sm">
-              <span className="inline-flex items-center gap-1.5 font-bold text-ink">
-                <Users size={15} className="text-brand" />
+          <div className="px-5 py-4 sm:px-6 sm:py-5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs font-semibold text-sub">
+                <Users size={14} className="text-brand shrink-0" />
                 <span>Kuota Anggota Aktif</span>
               </span>
-              <span className="font-extrabold text-ink">
-                {quota.current_members} / {quota.max_members} anggota
+              <span className="whitespace-nowrap text-xs font-semibold text-sub">
+                {memberPct}% terpakai
               </span>
             </div>
-            <div className="h-2 w-full overflow-hidden rounded-full bg-surface2">
+
+            <div className="mt-2 flex items-baseline gap-1.5 whitespace-nowrap">
+              <span className="text-2xl font-extrabold tracking-tight text-ink">
+                {quota.current_members}
+              </span>
+              <span className="text-xs sm:text-sm font-semibold text-sub">
+                / {quota.max_members} anggota
+              </span>
+            </div>
+
+            <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-surface2">
               <div
                 className={`h-full rounded-full transition-all duration-300 ${
                   quota.exceeded || memberPct >= 100 ? "bg-rose-500" : "bg-emerald-500"
@@ -353,10 +438,12 @@ export default function BillingPanel() {
                 style={{ width: `${memberPct}%` }}
               />
             </div>
-            <p className="text-xs text-sub leading-relaxed">
+
+            <p className="mt-2.5 text-xs text-sub leading-relaxed">
               {quota.exceeded || quota.remaining <= 0 ? (
                 <span className="inline-flex items-center gap-1 font-semibold text-rose-600 dark:text-rose-400">
-                  <AlertTriangle size={12} /> Kuota penuh. Upgrade paket untuk menambah anggota tim baru.
+                  <AlertTriangle size={12} className="shrink-0" />
+                  <span>Kuota penuh. Upgrade paket untuk menambah anggota baru.</span>
                 </span>
               ) : (
                 `Tersisa ${quota.remaining} slot anggota yang masih dapat diundang.`
@@ -365,78 +452,201 @@ export default function BillingPanel() {
           </div>
 
           {/* Storage Quota */}
-          <div className="rounded-2xl border border-border bg-surface p-4 space-y-2.5">
-            <div className="flex items-center justify-between gap-2 text-xs sm:text-sm">
-              <span className="inline-flex items-center gap-1.5 font-bold text-ink">
-                <HardDrive size={15} className="text-sky-600" />
+          <div className="px-5 py-4 sm:px-6 sm:py-5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs font-semibold text-sub">
+                <HardDrive size={14} className="text-sky-600 dark:text-sky-400 shrink-0" />
                 <span>Penyimpanan Workspace</span>
               </span>
-              <span className="font-extrabold text-ink">
-                {Number(storage.used_mb || 0).toFixed(1)} MB / {formatStorageLimit(storage.limit_mb)}
+              <span className="whitespace-nowrap text-xs font-semibold text-sub">
+                {storagePctLabel} terpakai
               </span>
             </div>
-            <div className="h-2 w-full overflow-hidden rounded-full bg-surface2">
+
+            <div className="mt-2 flex items-baseline gap-1.5 whitespace-nowrap">
+              <span className="text-2xl font-extrabold tracking-tight text-ink">
+                {Number(storage.used_mb || 0).toFixed(1)} MB
+              </span>
+              <span className="text-xs sm:text-sm font-semibold text-sub">
+                / {formatStorageLimit(storage.limit_mb)}
+              </span>
+            </div>
+
+            <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-surface2">
               <div
                 className="h-full rounded-full bg-sky-500 transition-all duration-300"
                 style={{ width: `${storagePct}%` }}
               />
             </div>
-            <p className="text-xs text-sub leading-relaxed">
-              Meliputi file lampiran, media obrolan, aset portal, dan snapshot lokal.
+
+            <p className="mt-2.5 text-xs text-sub leading-relaxed">
+              Lampiran file, media obrolan, aset portal, dan snapshot lokal.
             </p>
           </div>
         </div>
+
+        {/* Room Invite Code Footer Bar */}
+        {data?.invite_code && (
+          <div className="border-t border-border/70 bg-surface2/35 px-5 py-3.5 sm:px-6 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 min-w-0">
+                <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs font-semibold text-sub">
+                  <KeyRound size={13} className="text-sub shrink-0" />
+                  <span>Kode Undangan Room</span>
+                </span>
+                <span className="text-sm font-extrabold tracking-wide text-ink select-all">
+                  {data.invite_code}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={copyInviteCode}
+                  className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-surface px-2.5 text-xs font-semibold text-brand hover:bg-surface2 transition-colors cursor-pointer"
+                  title="Salin kode undangan"
+                >
+                  {copiedCode ? <Check size={12} /> : <Copy size={12} />}
+                  <span>{copiedCode ? "Disalin" : "Salin"}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCustomCodeInput(data.invite_code || "");
+                    setEditingCode((v) => !v);
+                  }}
+                  className={`inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 text-xs font-semibold transition-colors cursor-pointer ${
+                    editingCode
+                      ? "border-brand bg-brand/10 text-brand"
+                      : "border-border bg-surface text-ink hover:bg-surface2"
+                  }`}
+                  title="Atur kode undangan custom"
+                  data-testid="billing-custom-invite-code-btn"
+                >
+                  <Pencil size={12} />
+                  <span>Custom</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRegenerateInviteCode}
+                  disabled={regeneratingCode}
+                  className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-surface px-2.5 text-xs font-semibold text-sub hover:text-ink hover:bg-surface2 transition-colors cursor-pointer disabled:opacity-50"
+                  title="Buat kode undangan unik baru"
+                >
+                  <RefreshCw size={12} className={regeneratingCode ? "animate-spin" : ""} />
+                  <span>Acak</span>
+                </button>
+              </div>
+            </div>
+
+            {editingCode &&
+              (() => {
+                const trimmed = String(customCodeInput || "").trim();
+                const hasLen = trimmed.length >= 9 && !/\s/.test(trimmed);
+                const hasNum = /[0-9]/.test(trimmed);
+                const hasSym = /[^A-Za-z0-9\s]/.test(trimmed);
+                const valid = hasLen && hasNum && hasSym;
+                return (
+                  <form
+                    onSubmit={handleSaveCustomInviteCode}
+                    className="rounded-xl border border-border bg-surface p-3 space-y-2.5 max-w-lg"
+                  >
+                    <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
+                      <input
+                        type="text"
+                        value={customCodeInput}
+                        onChange={(e) => setCustomCodeInput(e.target.value.replace(/\s+/g, "").toUpperCase())}
+                        placeholder="Contoh: ASLI-TIM#2026"
+                        maxLength={32}
+                        className="h-9 flex-1 min-w-[180px] rounded-xl border border-border bg-surface2/50 px-3 font-sans text-xs font-bold uppercase tracking-wide text-ink placeholder:normal-case placeholder:font-normal placeholder:tracking-normal placeholder:text-sub/70 outline-none focus:border-brand tabular-nums"
+                        data-testid="billing-custom-invite-input"
+                      />
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="submit"
+                          disabled={!valid || savingCustomCode}
+                          className="h-9 whitespace-nowrap rounded-xl bg-brand px-4 text-xs font-bold text-white disabled:opacity-50 cursor-pointer"
+                          data-testid="billing-save-custom-invite-btn"
+                        >
+                          {savingCustomCode ? "Menyimpan..." : "Simpan"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingCode(false)}
+                          className="h-9 whitespace-nowrap rounded-xl border border-border bg-surface px-3 text-xs font-semibold text-sub hover:text-ink cursor-pointer"
+                        >
+                          Batal
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-x-3.5 gap-y-1 text-[11px] font-medium">
+                      <span className={hasLen ? "text-emerald-600 dark:text-emerald-400 font-semibold" : "text-sub"}>
+                        {hasLen ? "✓" : "•"} Min. 9 karakter
+                      </span>
+                      <span className={hasNum ? "text-emerald-600 dark:text-emerald-400 font-semibold" : "text-sub"}>
+                        {hasNum ? "✓" : "•"} Angka (0–9)
+                      </span>
+                      <span className={hasSym ? "text-emerald-600 dark:text-emerald-400 font-semibold" : "text-sub"}>
+                        {hasSym ? "✓" : "•"} Simbol (-, #, @, !)
+                      </span>
+                    </div>
+                  </form>
+                );
+              })()}
+          </div>
+        )}
       </section>
 
       {/* 2. Plan Selection Grid */}
-      <section className="card p-5 sm:p-6 space-y-4">
+      <section className="card p-5 sm:p-6 space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-base sm:text-lg font-extrabold text-ink tracking-tight">
               Pilihan Paket ASLIWORKSPACE
             </h3>
             <p className="text-xs sm:text-sm text-sub mt-0.5">
-              Pembayaran lokal cepat melalui QRIS, Virtual Account Bank (BCA/Mandiri/BNI/BRI), &amp; E-Wallet.
+              Pembayaran lokal cepat melalui QRIS, Virtual Account Bank (BCA, Mandiri, BNI, BRI), &amp; E-Wallet.
             </p>
           </div>
-        </div>
 
-        {/* Cycle Switcher */}
-        <div className="inline-flex rounded-full bg-surface2 p-1 border border-border">
-          <button
-            type="button"
-            onClick={() => setCycle("monthly")}
-            className={`rounded-full px-4 py-1.5 text-xs font-bold transition-all cursor-pointer ${
-              cycle === "monthly" ? "bg-surface text-ink shadow-xs" : "text-sub hover:text-ink"
-            }`}
-          >
-            Bulanan
-          </button>
-          <button
-            type="button"
-            onClick={() => setCycle("yearly")}
-            className={`rounded-full px-4 py-1.5 text-xs font-bold transition-all cursor-pointer ${
-              cycle === "yearly" ? "bg-surface text-ink shadow-xs" : "text-sub hover:text-ink"
-            }`}
-          >
-            Tahunan (Hemat 2 Bln)
-          </button>
+          {/* Cycle Switcher */}
+          <div className="inline-flex rounded-xl bg-surface2 p-1 border border-border shrink-0">
+            <button
+              type="button"
+              onClick={() => setCycle("monthly")}
+              className={`whitespace-nowrap rounded-lg px-3.5 py-1.5 text-xs font-bold transition-all cursor-pointer ${
+                cycle === "monthly" ? "bg-surface text-ink shadow-xs" : "text-sub hover:text-ink"
+              }`}
+            >
+              Bulanan
+            </button>
+            <button
+              type="button"
+              onClick={() => setCycle("annual")}
+              className={`whitespace-nowrap rounded-lg px-3.5 py-1.5 text-xs font-bold transition-all cursor-pointer ${
+                cycle === "annual" ? "bg-surface text-ink shadow-xs" : "text-sub hover:text-ink"
+              }`}
+            >
+              Tahunan (Hemat 2 Bln)
+            </button>
+          </div>
         </div>
 
         {/* 2x2 Grid of Plans */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {plans.map((p) => {
             const isCurrent = p.id === activePlan.id;
-            const isPopular = Boolean(p.highlight) || p.id === "growth";
-            const displayPrice = cycle === "yearly" ? p.price_yearly : p.price_monthly;
-            const isFree = Number(displayPrice || 0) <= 0;
+            const isPopular = Boolean(p.is_popular || p.highlight) || p.id === "growth_team";
+            const displayPrice = cycle === "annual" ? getPlanAnnualPrice(p) : getPlanMonthlyPrice(p);
+            const isFree = displayPrice <= 0;
+            const desc = getPlanDescription(p);
 
             return (
               <div
                 key={p.id}
-                className={`rounded-3xl border p-5 flex flex-col justify-between transition-all ${
+                className={`rounded-2xl border p-5 flex flex-col justify-between transition-all ${
                   isPopular
-                    ? "border-brand shadow-sm ring-1 ring-brand/15 bg-surface"
+                    ? "border-brand/70 ring-1 ring-brand/15 bg-surface"
                     : "border-border bg-surface"
                 }`}
                 data-testid={`billing-plan-${p.id}`}
@@ -444,43 +654,39 @@ export default function BillingPanel() {
                 <div className="space-y-3.5">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <h4 className="text-base font-extrabold text-ink">{p.name}</h4>
-                      <p className="text-xs text-sub mt-0.5 leading-relaxed">{p.tagline}</p>
+                      <h4 className="text-base font-extrabold text-ink tracking-tight">{p.name}</h4>
+                      {desc && (
+                        <p className="text-xs text-sub mt-0.5 leading-relaxed">{desc}</p>
+                      )}
                     </div>
-                    {p.badge && (
-                      <span
-                        className={`shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
-                          isPopular
-                            ? "bg-brand text-white"
-                            : "border border-border bg-surface text-ink"
-                        }`}
-                      >
-                        {p.badge}
+                    {isPopular && (
+                      <span className="shrink-0 whitespace-nowrap rounded-lg bg-brand/10 px-2.5 py-0.5 text-[11px] font-bold text-brand">
+                        Populer
                       </span>
                     )}
                   </div>
 
-                  <div className="pt-1">
+                  <div className="pt-0.5">
                     {isFree ? (
                       <p className="text-2xl sm:text-3xl font-extrabold text-ink tracking-tight">Gratis</p>
                     ) : (
-                      <p className="text-2xl sm:text-3xl font-extrabold text-ink tracking-tight">
+                      <p className="text-2xl sm:text-3xl font-extrabold text-ink tracking-tight whitespace-nowrap">
                         {formatRupiah(displayPrice)}{" "}
                         <span className="text-xs sm:text-sm font-medium text-sub">
-                          /{cycle === "yearly" ? "tahun" : "bulan"}
+                          /{cycle === "annual" ? "tahun" : "bulan"}
                         </span>
                       </p>
                     )}
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-3 border-y border-border/70 py-2.5 text-xs font-bold text-ink">
-                    <span className="inline-flex items-center gap-1.5">
-                      <Users size={14} className="text-brand" />
-                      Maks. {p.max_members} anggota
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-y border-border/70 py-2.5 text-xs font-semibold text-ink">
+                    <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                      <Users size={14} className="text-brand shrink-0" />
+                      <span>Maks. {p.max_members} anggota</span>
                     </span>
-                    <span className="inline-flex items-center gap-1.5">
-                      <HardDrive size={14} className="text-sky-600" />
-                      {formatStorageLimit(p.storage_mb)}
+                    <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                      <HardDrive size={14} className="text-sky-600 dark:text-sky-400 shrink-0" />
+                      <span>{formatStorageLimit(p.storage_mb)}</span>
                     </span>
                   </div>
 
@@ -499,7 +705,7 @@ export default function BillingPanel() {
                     <button
                       type="button"
                       disabled
-                      className="h-11 w-full rounded-full border border-border bg-surface2/70 text-xs font-bold text-sub flex items-center justify-center gap-1.5 cursor-default"
+                      className="h-10 w-full rounded-xl border border-border bg-surface2/70 text-xs font-bold text-sub flex items-center justify-center gap-1.5 cursor-default"
                     >
                       <Check size={14} />
                       <span>Paket Aktif Saat Ini</span>
@@ -509,10 +715,10 @@ export default function BillingPanel() {
                       type="button"
                       disabled={!isAdmin}
                       onClick={() => handleOpenUpgrade(p)}
-                      className={`h-11 w-full rounded-full text-xs sm:text-sm font-extrabold flex items-center justify-center gap-1.5 transition-all cursor-pointer disabled:opacity-50 ${
+                      className={`h-10 w-full rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer disabled:opacity-50 ${
                         isPopular
-                          ? "btn-accent shadow-sm"
-                          : "bg-[#1A2133] hover:bg-[#101522] text-white dark:bg-white dark:text-[#101522]"
+                          ? "btn-accent shadow-xs"
+                          : "bg-ink text-surface hover:opacity-90"
                       }`}
                       data-testid={`upgrade-plan-btn-${p.id}`}
                     >
@@ -534,19 +740,20 @@ export default function BillingPanel() {
             <CreditCard size={17} className="text-brand shrink-0" />
             <span>Riwayat Transaksi &amp; Tagihan Lokal</span>
           </div>
-          <span className="text-xs font-semibold text-sub">
-            Gateway: <b className="text-ink">{gateway.display_label}</b> ({gateway.mode})
+          <span className="text-xs font-medium text-sub">
+            Gateway: <span className="font-semibold text-ink">{gateway.display_label}</span> ({gateway.mode})
           </span>
         </div>
 
         {transactions.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-border bg-surface2/30 p-6 text-center text-xs text-sub">
+          <div className="rounded-xl border border-dashed border-border bg-surface2/30 p-6 text-center text-xs text-sub">
             Belum ada riwayat transaksi langganan di room ini.
           </div>
         ) : (
-          <div className="divide-y divide-border/70 rounded-2xl border border-border overflow-hidden">
+          <div className="divide-y divide-border/70 rounded-xl border border-border overflow-hidden">
             {transactions.map((tx) => {
               const isPaid = tx.status === "paid";
+              const txMode = tx.gateway_mode || tx.mode || gateway.mode;
               return (
                 <div
                   key={tx.id}
@@ -554,12 +761,13 @@ export default function BillingPanel() {
                 >
                   <div className="min-w-0 space-y-0.5">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-extrabold text-ink">{tx.plan_name || tx.plan_id}</span>
-                      <span className="rounded-full border border-border bg-surface2 px-2 py-0.5 text-[10px] font-bold uppercase text-sub">
+                      <span className="font-bold text-ink">{tx.plan_name || tx.plan_id}</span>
+                      <span className="text-sub">•</span>
+                      <span className="text-[11px] font-semibold uppercase text-sub">
                         {tx.method_label || tx.method}
                       </span>
                       <span
-                        className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                        className={`rounded-md px-2 py-0.5 text-[10.5px] font-bold ${
                           isPaid
                             ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300"
                             : "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
@@ -574,13 +782,15 @@ export default function BillingPanel() {
                   </div>
 
                   <div className="flex items-center gap-3 shrink-0">
-                    <span className="text-sm font-extrabold text-ink">{formatRupiah(tx.amount)}</span>
-                    {!isPaid && tx.mode === "sandbox" && isAdmin && (
+                    <span className="text-sm font-extrabold text-ink whitespace-nowrap">
+                      {formatRupiah(tx.amount)}
+                    </span>
+                    {!isPaid && txMode === "sandbox" && isAdmin && (
                       <button
                         type="button"
                         disabled={busyConfirm}
                         onClick={() => handleConfirmSandboxPaid(tx.id)}
-                        className="rounded-full bg-emerald-600 hover:bg-emerald-700 px-3 py-1.5 text-[11px] font-bold text-white cursor-pointer"
+                        className="whitespace-nowrap rounded-lg bg-emerald-600 hover:bg-emerald-700 px-3 py-1.5 text-[11px] font-bold text-white cursor-pointer"
                       >
                         Konfirmasi Lunas
                       </button>
@@ -590,7 +800,7 @@ export default function BillingPanel() {
                         href={tx.snap_url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 rounded-full bg-brand px-3 py-1.5 text-[11px] font-bold text-white"
+                        className="inline-flex items-center gap-1 whitespace-nowrap rounded-lg bg-brand px-3 py-1.5 text-[11px] font-bold text-white"
                       >
                         <span>Bayar</span>
                         <ExternalLink size={11} />
@@ -605,8 +815,11 @@ export default function BillingPanel() {
       </section>
 
       {/* Checkout Dialog */}
-      <Dialog open={Boolean(checkoutPlan)} onOpenChange={(v) => !busyCheckout && !busyConfirm && !v && setCheckoutPlan(null)}>
-        <DialogContent className="max-w-lg rounded-[28px] p-5 sm:p-6 bg-surface border border-border shadow-2xl font-sans tabular-nums">
+      <Dialog
+        open={Boolean(checkoutPlan)}
+        onOpenChange={(v) => !busyCheckout && !busyConfirm && !v && setCheckoutPlan(null)}
+      >
+        <DialogContent className="max-w-lg rounded-2xl p-5 sm:p-6 bg-surface border border-border shadow-2xl font-sans tabular-nums">
           <DialogHeader className="text-left pb-3 border-b border-border/70">
             <DialogTitle className="text-base sm:text-lg font-extrabold text-ink">
               {activeInvoice ? "Selesaikan Pembayaran Paket" : `Upgrade ke ${checkoutPlan?.name}`}
@@ -618,14 +831,16 @@ export default function BillingPanel() {
 
           {!activeInvoice ? (
             <div className="space-y-4 pt-2">
-              <div className="rounded-2xl border border-border bg-surface2/50 p-3.5 flex items-center justify-between">
+              <div className="rounded-xl border border-border bg-surface2/50 p-3.5 flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-xs font-bold text-sub">Total Tagihan ({cycle === "yearly" ? "Tahunan" : "Bulanan"})</p>
+                  <p className="text-xs font-semibold text-sub">
+                    Total Tagihan ({cycle === "annual" ? "Tahunan" : "Bulanan"})
+                  </p>
                   <p className="text-xl font-extrabold text-ink mt-0.5">
-                    {formatRupiah(cycle === "yearly" ? checkoutPlan?.price_yearly : checkoutPlan?.price_monthly)}
+                    {formatRupiah(checkoutPrice)}
                   </p>
                 </div>
-                <span className="rounded-full bg-brand/10 px-3 py-1 text-xs font-bold text-brand">
+                <span className="whitespace-nowrap text-xs font-bold text-brand">
                   Maks. {checkoutPlan?.max_members} anggota
                 </span>
               </div>
@@ -641,18 +856,22 @@ export default function BillingPanel() {
                         key={ch.id}
                         type="button"
                         onClick={() => setSelectedChannel(ch.id)}
-                        className={`flex items-center gap-2.5 rounded-2xl border p-3 text-left transition-all cursor-pointer ${
+                        className={`flex items-center gap-2.5 rounded-xl border p-3 text-left transition-all cursor-pointer ${
                           active
                             ? "border-brand bg-brand/5 ring-1 ring-brand/20"
                             : "border-border bg-surface hover:bg-surface2/50"
                         }`}
                       >
-                        <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${active ? "bg-brand text-white" : "bg-surface2 text-sub"}`}>
+                        <div
+                          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+                            active ? "bg-brand text-white" : "bg-surface2 text-sub"
+                          }`}
+                        >
                           <Icon size={16} />
                         </div>
                         <div className="min-w-0">
-                          <p className="text-xs font-extrabold text-ink truncate">{ch.label}</p>
-                          <p className="text-[10.5px] text-sub truncate">{ch.desc}</p>
+                          <p className="text-xs font-bold text-ink truncate">{ch.label}</p>
+                          <p className="text-[11px] text-sub truncate">{ch.desc}</p>
                         </div>
                       </button>
                     );
@@ -665,7 +884,7 @@ export default function BillingPanel() {
                   type="button"
                   disabled={busyCheckout}
                   onClick={() => setCheckoutPlan(null)}
-                  className="h-10 rounded-full border border-border bg-surface px-5 text-xs font-bold text-ink hover:bg-surface2 cursor-pointer"
+                  className="h-10 rounded-xl border border-border bg-surface px-4 text-xs font-bold text-ink hover:bg-surface2 cursor-pointer"
                 >
                   Batal
                 </button>
@@ -673,7 +892,7 @@ export default function BillingPanel() {
                   type="button"
                   disabled={busyCheckout}
                   onClick={handleStartCheckout}
-                  className="btn-accent h-10 rounded-full px-5 text-xs font-extrabold cursor-pointer disabled:opacity-50"
+                  className="btn-accent h-10 rounded-xl px-5 text-xs font-bold cursor-pointer disabled:opacity-50"
                 >
                   {busyCheckout ? "Memproses Tagihan..." : "Buat Tagihan Pembayaran"}
                 </button>
@@ -681,25 +900,29 @@ export default function BillingPanel() {
             </div>
           ) : (
             <div className="space-y-4 pt-2">
-              <div className="rounded-2xl border border-border bg-surface2/50 p-4 space-y-2 text-xs">
-                <div className="flex items-center justify-between">
+              <div className="rounded-xl border border-border bg-surface2/50 p-4 space-y-2 text-xs">
+                <div className="flex items-center justify-between gap-2">
                   <span className="text-sub">ID Transaksi</span>
                   <span className="font-bold text-ink">{activeInvoice.transaction?.id}</span>
                 </div>
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <span className="text-sub">Nominal</span>
-                  <span className="text-base font-extrabold text-ink">{formatRupiah(activeInvoice.transaction?.amount)}</span>
+                  <span className="text-base font-extrabold text-ink">
+                    {formatRupiah(activeInvoice.transaction?.amount)}
+                  </span>
                 </div>
                 {activeInvoice.va_number && (
-                  <div className="flex items-center justify-between pt-2 border-t border-border/60">
+                  <div className="flex items-center justify-between gap-2 pt-2 border-t border-border/60">
                     <span className="text-sub">Nomor Virtual Account</span>
-                    <span className="text-sm font-extrabold text-brand tracking-wider">{activeInvoice.va_number}</span>
+                    <span className="text-sm font-extrabold text-brand tracking-wide">
+                      {activeInvoice.va_number}
+                    </span>
                   </div>
                 )}
                 {activeInvoice.qris_code && (
                   <div className="pt-2 border-t border-border/60">
                     <p className="text-sub mb-1">Payload QRIS Dinamis</p>
-                    <div className="rounded-xl bg-surface p-2.5 border border-border text-[11px] font-semibold text-ink break-all">
+                    <div className="rounded-lg bg-surface p-2.5 border border-border text-[11px] font-semibold text-ink break-all">
                       {activeInvoice.qris_code}
                     </div>
                   </div>
@@ -712,7 +935,7 @@ export default function BillingPanel() {
                     href={safeSnapUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="btn-accent h-11 w-full rounded-full text-xs sm:text-sm font-extrabold flex items-center justify-center gap-2"
+                    className="btn-accent h-10 w-full rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2"
                   >
                     <span>Lanjutkan ke Halaman Pembayaran {activeInvoice.provider || "Gateway"}</span>
                     <ExternalLink size={15} />
@@ -727,11 +950,13 @@ export default function BillingPanel() {
                     type="button"
                     disabled={busyConfirm}
                     onClick={() => handleConfirmSandboxPaid(activeInvoice.transaction?.id)}
-                    className="h-11 w-full rounded-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-extrabold flex items-center justify-center gap-2 shadow-sm cursor-pointer disabled:opacity-50"
+                    className="h-10 w-full rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-bold flex items-center justify-center gap-2 shadow-xs cursor-pointer disabled:opacity-50"
                     data-testid="confirm-sandbox-payment-btn"
                   >
                     <CheckCircle2 size={16} />
-                    <span>{busyConfirm ? "Mengaktifkan Paket..." : "Konfirmasi Pembayaran Lunas (Sandbox)"}</span>
+                    <span>
+                      {busyConfirm ? "Mengaktifkan Paket..." : "Konfirmasi Pembayaran Lunas (Sandbox)"}
+                    </span>
                   </button>
                   <p className="text-[11px] text-sub text-center">
                     Simulasi pembayaran lokal instan. Untuk pembayaran real production, aktifkan Live Gateway di Platform Owner Console.

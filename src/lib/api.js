@@ -47,6 +47,7 @@ const CACHEABLE_GET_PREFIXES = [
   "/org/units",
   "/admin/stats",
   "/admin/users",
+  "/billing/overview",
 ];
 const GET_CACHE_TTL_MS = 10000;
 const GET_CACHE_MAX_ENTRIES = 80;

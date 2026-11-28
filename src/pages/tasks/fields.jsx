@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Plus, X, FileText, Check, ChevronDown, Palette } from "lucide-react";
+import { Plus, X, FileText, Check, ChevronDown, Palette, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api, errMsg, fileUrl, uploadFile } from "../../lib/api";
 import { useApp } from "../../context/AppContext";
@@ -390,15 +390,19 @@ export function ItemChip({ name, small, className = "" }) {
 }
 
 export function ItemPicker({ value, onChange, testid = "item-picker", trigger }) {
-  const { ws, reloadWs, t: tr } = useApp();
+  const { ws, reloadWs, setSession, t: tr } = useApp();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [showAddForm, setShowAddForm] = useState(false);
   const [customName, setCustomName] = useState("");
   const [customColor, setCustomColor] = useState("#2563EB");
+  const [confirmDeleteName, setConfirmDeleteName] = useState(null);
+  const [deletingName, setDeletingName] = useState(null);
 
   // Authoritative workspace item_types when configured, fallback to DEFAULT_ITEM_TYPES
-  const sourceList = Array.isArray(ws?.item_types) && ws.item_types.length > 0 ? ws.item_types : DEFAULT_ITEM_TYPES;
+  const hasConfiguredList =
+    Array.isArray(ws?.item_types) && (ws.item_types.length > 0 || ws?.item_types_configured);
+  const sourceList = hasConfiguredList ? ws.item_types : DEFAULT_ITEM_TYPES;
   const combinedMap = new Map();
   sourceList.forEach((item) => item?.name && combinedMap.set(item.name.toLowerCase(), item));
   const all = Array.from(combinedMap.values());
@@ -411,6 +415,7 @@ export function ItemPicker({ value, onChange, testid = "item-picker", trigger })
     setOpen(false);
     setQ("");
     setShowAddForm(false);
+    setConfirmDeleteName(null);
   };
 
   const createItem = async (nameToCreate, colorToUse) => {
@@ -431,6 +436,42 @@ export function ItemPicker({ value, onChange, testid = "item-picker", trigger })
       pick(finalName);
     } catch (e) {
       toast.error(errMsg(e));
+    }
+  };
+
+  const deleteItem = async (nameToDelete) => {
+    const targetName = String(nameToDelete || "").trim();
+    if (!targetName || deletingName) return;
+    setDeletingName(targetName);
+    try {
+      const { data } = await api.delete(`/item-types/${encodeURIComponent(targetName)}`);
+      const nextTypes = Array.isArray(data?.item_types)
+        ? data.item_types
+        : all.filter((x) => x.name.toLowerCase() !== targetName.toLowerCase());
+      if (setSession) {
+        setSession((prev) =>
+          prev
+            ? {
+                ...prev,
+                workspace: {
+                  ...(prev.workspace || {}),
+                  item_types: nextTypes,
+                  item_types_configured: true,
+                },
+              }
+            : prev
+        );
+      }
+      if (value && value.toLowerCase() === targetName.toLowerCase()) {
+        onChange(null);
+      }
+      setConfirmDeleteName(null);
+      toast.success(`Jenis item "${targetName}" dihapus`);
+      reloadWs().catch(() => {});
+    } catch (e) {
+      toast.error(errMsg(e, "Gagal menghapus jenis item"));
+    } finally {
+      setDeletingName(null);
     }
   };
 
@@ -464,7 +505,13 @@ export function ItemPicker({ value, onChange, testid = "item-picker", trigger })
   ];
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (!nextOpen) setConfirmDeleteName(null);
+      }}
+    >
       <PopoverTrigger asChild>
         {trigger || (
           <button
@@ -505,19 +552,72 @@ export function ItemPicker({ value, onChange, testid = "item-picker", trigger })
           {list.length > 0 ? (
             list.map((i) => {
               const isSelected = value === i.name;
+              const isConfirming = confirmDeleteName === i.name;
+              const isDeleting = deletingName === i.name;
+              const slugTestId = i.name.replace(/\s/g, "-");
               return (
-                <button
+                <div
                   key={i.name}
-                  type="button"
-                  onClick={() => pick(i.name)}
-                  className={`flex w-full items-center justify-between rounded-xl p-1.5 text-left transition-colors cursor-pointer ${
-                    isSelected ? "bg-brand/10 font-bold" : "hover:bg-surface2"
+                  className={`group flex w-full items-center justify-between gap-1.5 rounded-xl p-1 transition-colors ${
+                    isSelected ? "bg-brand/10" : "hover:bg-surface2"
                   }`}
-                  data-testid={`${testid}-option-${i.name.replace(/\s/g, "-")}`}
                 >
-                  <ItemChip name={i.name} />
-                  {isSelected && <Check size={14} className="text-brand shrink-0 mr-1" strokeWidth={2.5} />}
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => pick(i.name)}
+                    className={`flex min-w-0 flex-1 items-center justify-between rounded-lg px-1 py-0.5 text-left cursor-pointer ${
+                      isSelected ? "font-bold" : ""
+                    }`}
+                    data-testid={`${testid}-option-${slugTestId}`}
+                  >
+                    <ItemChip name={i.name} />
+                    {isSelected && !isConfirming && (
+                      <Check size={14} className="text-brand shrink-0 ml-1.5" strokeWidth={2.5} />
+                    )}
+                  </button>
+
+                  {isConfirming ? (
+                    <div className="flex items-center gap-1 shrink-0 pr-0.5">
+                      <button
+                        type="button"
+                        disabled={isDeleting}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteItem(i.name);
+                        }}
+                        className="rounded-lg bg-rose-600 px-2 py-1 text-[11px] font-bold text-white hover:bg-rose-700 disabled:opacity-50 cursor-pointer whitespace-nowrap"
+                        data-testid={`${testid}-confirm-delete-${slugTestId}`}
+                      >
+                        {isDeleting ? "..." : "Hapus"}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isDeleting}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setConfirmDeleteName(null);
+                        }}
+                        className="rounded-lg border border-border bg-surface px-2 py-1 text-[11px] font-semibold text-sub hover:text-ink cursor-pointer whitespace-nowrap"
+                      >
+                        Batal
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setConfirmDeleteName(i.name);
+                      }}
+                      title={`Hapus jenis item "${i.name}"`}
+                      aria-label={`Hapus jenis item ${i.name}`}
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-sub/55 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/50 dark:hover:text-rose-400 transition-colors cursor-pointer"
+                      data-testid={`${testid}-delete-${slugTestId}`}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  )}
+                </div>
               );
             })
           ) : (

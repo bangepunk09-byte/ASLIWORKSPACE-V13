@@ -639,7 +639,7 @@ export function PeopleAccess() {
                   Bagikan kode ini ke rekan tim yang belum memiliki workspace (1 akun Google hanya untuk 1 workspace).
                 </p>
               </div>
-              <div className="font-mono text-base font-extrabold tracking-wider text-brand tabular-nums" data-testid="room-invite-code-value">
+              <div className="font-sans text-base font-extrabold tracking-wide text-brand tabular-nums" data-testid="room-invite-code-value">
                 {roomInviteCode}
               </div>
             </div>
@@ -751,9 +751,9 @@ export function PeopleAccess() {
                       type="text"
                       value={customInviteInput}
                       onChange={(e) => setCustomInviteInput(e.target.value.replace(/\s+/g, "").toUpperCase())}
-                      placeholder="Cth: ASLI-TIM#2026"
+                      placeholder="Contoh: ASLI-TIM#2026"
                       maxLength={32}
-                      className={`${inp} h-9 flex-1 min-w-[200px] font-mono font-bold uppercase tracking-wider text-xs`}
+                      className={`${inp} h-9 flex-1 min-w-[200px] font-sans font-bold uppercase tracking-wide placeholder:normal-case placeholder:font-normal placeholder:tracking-normal text-xs tabular-nums`}
                       data-testid="custom-room-invite-input"
                     />
                     <button
@@ -2010,12 +2010,12 @@ export function ItemTypesAdmin() {
   const { ws, reloadWs } = useApp();
   const [n, setN] = useState("");
   const [color, setColor] = useState("#2563EB");
-  const rawList = Array.isArray(ws?.item_types) && ws.item_types.length > 0 ? ws.item_types : DEFAULT_ITEM_TYPES;
+  const rawList = Array.isArray(ws?.item_types) && (ws.item_types.length > 0 || ws?.item_types_configured) ? ws.item_types : DEFAULT_ITEM_TYPES;
   const combinedMap = new Map();
   rawList.forEach((i) => i?.name && combinedMap.set(i.name.toLowerCase(), i));
   const list = Array.from(combinedMap.values());
 
-  const save = (l, msg) => run(() => api.patch("/workspace", { item_types: l }), msg).then(reloadWs);
+  const save = (l, msg) => run(() => api.patch("/workspace", { item_types: l, item_types_configured: true }), msg).then(reloadWs);
   const add = () => {
     const trimmed = n.trim();
     if (!trimmed) return;

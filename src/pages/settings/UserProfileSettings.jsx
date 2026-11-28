@@ -318,7 +318,7 @@ export function UserProfileSettings() {
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-semibold text-sub">Level Hierarki</label>
+            <label className="mb-1 block text-xs font-semibold text-sub">Level</label>
             <AppSelect
               value={f.org_level || inferUserOrgLevel(me, DEFAULT_ORG_LEVELS)}
               onChange={(e) => setF({ ...f, org_level: e.target.value })}

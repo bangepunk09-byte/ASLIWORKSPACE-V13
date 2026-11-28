@@ -181,7 +181,7 @@ function UnitDialog({ state, setState, units, levels, humanUsers, divisions, onD
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-xs font-semibold text-sub">{tr("org_unit_level_label", "Level Hierarki")}</label>
+              <label className="mb-1 block text-xs font-semibold text-sub">{tr("org_unit_level_label", "Level")}</label>
               <AppSelect
                 value={f.level || ""}
                 onChange={(e) => setF({ ...f, level: e.target.value })}
@@ -1001,7 +1001,7 @@ export default function Org() {
           <p className="mt-1 text-xl sm:text-2xl font-extrabold text-ink tabular-nums">{humanUsers.length}</p>
         </div>
         <div className="rounded-2xl border bg-surface p-3 sm:p-3.5">
-          <p className="text-[11px] sm:text-xs font-semibold text-sub">{t("org_stat_levels", "Level Hierarki")}</p>
+          <p className="text-[11px] sm:text-xs font-semibold text-sub">{t("org_stat_levels", "Level")}</p>
           <p className="mt-1 text-xs sm:text-sm font-bold text-ink truncate">{levels.join(" → ")}</p>
         </div>
       </div>
@@ -1010,7 +1010,7 @@ export default function Org() {
       <div className="mb-5 flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2.5">
         <div className="flex w-full sm:w-auto overflow-x-auto rounded-2xl sm:rounded-full border bg-surface p-1 text-xs sm:text-sm font-semibold scroll-thin">
           {[
-            ["chart", t("org_view_chart", "Bagan Hierarki")],
+            ["chart", t("org_view_chart", "Bagan Organisasi")],
             ["grid", t("org_view_grid", "Kartu Divisi")],
             ["table", t("org_view_table", "Tabel Manajemen & Penempatan")]
           ].map(([v, label]) => (

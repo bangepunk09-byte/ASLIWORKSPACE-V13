@@ -95,7 +95,7 @@ export const DEFAULT_SAAS_PLANS: SaaSPlan[] = [
     id: "free_starter",
     name: "Free Starter",
     badge: "Gratis",
-    description: "Gratis selamanya untuk tim kecil hingga 5 anggota.",
+    description: "Paket dasar untuk tim kecil hingga 5 anggota.",
     monthly_price: 0,
     annual_price: 0,
     max_members: 5,
@@ -503,6 +503,7 @@ export class SaaSPlatformManager {
   snapshots: PlatformSnapshot[] = [];
   minuteTelemetryBuckets = new Map<number, { requests: number; errors_4xx: number; errors_5xx: number; online_users: number }>();
   hourTelemetryBuckets = new Map<number, { requests: number; errors_4xx: number; errors_5xx: number; online_users: number }>();
+  private roomStorageCache = new Map<string, { mb: number; revision: number; computedAt: number }>();
 
   constructor(rootDir: string, masterKey: Buffer, defaultDb: Record<string, any>) {
     this.rootDir = rootDir;
@@ -1103,8 +1104,19 @@ export class SaaSPlatformManager {
     ).length;
   }
 
-  getRoomStorageUsedMb(slug: string): number {
+  getRoomStorageUsedMb(slug: string, force = false): number {
     const rdb = this.getRoomDb(slug);
+    const curRev = Number(rdb?.revision || 0);
+    const now = Date.now();
+    const cached = this.roomStorageCache.get(slug);
+    if (
+      !force &&
+      cached &&
+      ((cached.revision === curRev && now - cached.computedAt < 60_000) ||
+        now - cached.computedAt < 15_000)
+    ) {
+      return cached.mb;
+    }
     try {
       const jsonBytes = Buffer.byteLength(JSON.stringify(rdb), "utf-8");
       let filesBytes = 0;
@@ -1113,9 +1125,11 @@ export class SaaSPlatformManager {
           filesBytes += Number(f?.size || 0);
         }
       }
-      return Math.max(0.1, Number(((jsonBytes + filesBytes) / (1024 * 1024)).toFixed(1)));
+      const mb = Math.max(0.1, Number(((jsonBytes + filesBytes) / (1024 * 1024)).toFixed(1)));
+      this.roomStorageCache.set(slug, { mb, revision: curRev, computedAt: now });
+      return mb;
     } catch {
-      return 0.1;
+      return cached?.mb ?? 0.1;
     }
   }
 

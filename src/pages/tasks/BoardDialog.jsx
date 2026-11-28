@@ -13,18 +13,24 @@ export default function BoardDialog({ board, onClose, onSaved }) {
   const { users, me, isAdmin, t } = useApp();
   const depts = [...new Set(users.filter((u) => !u.is_bot).map((u) => u.department).filter(Boolean))].sort();
 
+  const initialBoardMembers = Array.isArray(board?.invited_member_ids) && board.invited_member_ids.length > 0
+    ? board.invited_member_ids
+    : Array.isArray(board?.allowed_member_ids) && board.allowed_member_ids.length > 0
+    ? board.allowed_member_ids
+    : Array.isArray(board?.member_ids) && board.member_ids.length > 0
+    ? board.member_ids
+    : (me?.user_id ? [me.user_id] : []);
+
   const [f, setF] = useState({
     name: board?.name || "",
     description: board?.description || "",
     color: board?.color || COLORS[4],
     board_type: "collaborative",
     is_collaborative: true,
-    all_workspace_members: board?.all_workspace_members !== false,
+    all_workspace_members: false,
     project_id: board?.project_id || "",
     department: "Semua Divisi",
-    member_ids: Array.isArray(board?.member_ids) && board.member_ids.length > 0
-      ? board.member_ids
-      : (me?.user_id ? [me.user_id] : [])
+    member_ids: initialBoardMembers
   });
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
@@ -56,6 +62,7 @@ export default function BoardDialog({ board, onClose, onSaved }) {
         ...f,
         board_type: "collaborative",
         is_collaborative: true,
+        all_workspace_members: false,
         department: "Semua Divisi",
         project_id: f.project_id || null,
         invited_member_ids: f.member_ids
@@ -141,24 +148,11 @@ export default function BoardDialog({ board, onClose, onSaved }) {
             </div>
           </div>
 
-          <div className="space-y-2.5">
-            <label className="flex items-start gap-2 rounded-xl border bg-surface2/60 p-2.5 text-xs cursor-pointer">
-              <input
-                type="checkbox"
-                checked={f.all_workspace_members !== false}
-                onChange={(e) => setF({ ...f, all_workspace_members: e.target.checked })}
-                className="mt-0.5 accent-brand"
-                data-testid="board-collab-all-checkbox"
-              />
-              <span>
-                <b className="text-ink">{t("board_collab_all_title", "Terbuka untuk seluruh anggota lintas divisi")}</b>
-                <span className="block text-sub text-[11px] mt-0.5">
-                  {f.all_workspace_members !== false
-                    ? t("board_collab_all_desc_on", "Semua employee dari divisi manapun bisa dipilih saat assign tugas di board kolaborasi ini.")
-                    : t("board_collab_all_desc_off", "Hanya anggota yang Anda centang di bawah yang bisa ditugaskan di board ini.")}
-                </span>
-              </span>
-            </label>
+          <div className="rounded-xl border border-border bg-surface2/60 p-3 text-xs">
+            <p className="font-semibold text-ink">Akses Requestor &amp; Assignee Terbatas ke Board</p>
+            <p className="text-sub text-[11px] mt-0.5 leading-relaxed">
+              Hanya anggota dalam 1 grup yang terhubung atau orang yang Anda pilih (invite) di bawah yang dapat dipilih sebagai Requestor dan Assignee di board ini.
+            </p>
           </div>
 
           <div className="pt-2 border-t">

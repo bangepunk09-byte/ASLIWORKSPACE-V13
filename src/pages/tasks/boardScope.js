@@ -28,71 +28,100 @@ export function getBoardAssigneeScope({
   users = []
 } = {}) {
   const humanUsers = getHumanUsers(users);
-  const humanIds = humanUsers.map((u) => u.user_id);
+  const humanSet = new Set(humanUsers.map((u) => u.user_id));
 
-  const activeBoard = board || (boards || []).find((b) => b.id === boardId) || null;
+  const activeBoard =
+    board ||
+    (boards || []).find((b) => b && b.id === boardId) ||
+    (projectId ? (boards || []).find((b) => b && b.project_id === projectId) : null) ||
+    null;
+
   const rawDept = activeBoard ? (activeBoard.department || "") : (department || "");
   const cleanDept = String(rawDept).trim();
   const deptLower = cleanDept.toLowerCase();
-  const hasProject = Boolean(projectId || activeBoard?.project_id);
+  const hasSpecificDept =
+    Boolean(deptLower) &&
+    !["semua divisi", "all", "kolaborasi"].includes(deptLower);
   const boardCollab = isBoardCollaborative(activeBoard);
-  const isCollaborative = Boolean(boardCollab || hasProject);
 
-  if (isCollaborative) {
-    let ids = humanIds;
-    if (
-      activeBoard &&
-      activeBoard.all_workspace_members === false &&
-      Array.isArray(activeBoard.member_ids) &&
-      activeBoard.member_ids.length > 0
-    ) {
-      const allowedSet = new Set([
-        ...(activeBoard.member_ids || []),
-        ...(activeBoard.invited_member_ids || [])
-      ]);
-      ids = humanUsers.filter((u) => allowedSet.has(u.user_id)).map((u) => u.user_id);
+  if (activeBoard) {
+    // 1. Prefer authoritative server-computed allowed_member_ids (linked group members + board invited members)
+    if (Array.isArray(activeBoard.allowed_member_ids)) {
+      const allowedSet = new Set(activeBoard.allowed_member_ids.filter((id) => humanSet.has(id)));
+      const ids = humanUsers.filter((u) => allowedSet.has(u.user_id)).map((u) => u.user_id);
+      const groupName = activeBoard.linked_group_name || (hasSpecificDept ? cleanDept : activeBoard.name);
+      return {
+        ids,
+        isCollaborative: boardCollab,
+        activeBoard,
+        divisionName: hasSpecificDept ? cleanDept : (activeBoard.name || "Kolaborasi"),
+        scopeLabel: boardCollab
+          ? `Khusus anggota grup ${groupName || "board"} & yang di-invite ke board ini`
+          : `Khusus anggota grup/divisi ${cleanDept} & yang di-invite ke board ini`,
+        emptyMessage: "Belum ada anggota grup atau orang yang di-invite ke board ini."
+      };
     }
+
+    // 2. Fallback when board comes from local cache before fresh server enrichment:
+    //    Strictly restrict to linked group members + explicitly invited board members (and division members if division board).
+    const hasLegacyInflatedMembers =
+      boardCollab &&
+      activeBoard.all_workspace_members === true &&
+      Array.isArray(activeBoard.invited_member_ids) &&
+      activeBoard.invited_member_ids.length > 0;
+
+    const explicitSet = new Set([
+      ...(Array.isArray(activeBoard.linked_group_member_ids) ? activeBoard.linked_group_member_ids : []),
+      ...(Array.isArray(activeBoard.invited_member_ids) ? activeBoard.invited_member_ids : []),
+      ...(Array.isArray(activeBoard.chat_invited_member_ids) ? activeBoard.chat_invited_member_ids : []),
+      ...(!hasLegacyInflatedMembers && Array.isArray(activeBoard.member_ids) ? activeBoard.member_ids : []),
+      ...(boardCollab && activeBoard.created_by ? [activeBoard.created_by] : []),
+    ]);
+
+    const ids = humanUsers
+      .filter((u) => {
+        if (explicitSet.has(u.user_id)) return true;
+        if (!boardCollab && hasSpecificDept && String(u.department || "").trim().toLowerCase() === deptLower) {
+          return true;
+        }
+        return false;
+      })
+      .map((u) => u.user_id);
+
+    const groupName = activeBoard.linked_group_name || (hasSpecificDept ? cleanDept : activeBoard.name);
     return {
       ids,
-      isCollaborative: true,
+      isCollaborative: boardCollab,
       activeBoard,
-      divisionName: cleanDept && deptLower !== "semua divisi" ? cleanDept : "Lintas Divisi",
-      scopeLabel: hasProject && !boardCollab
-        ? "Mode Proyek Kolaborasi · Lintas divisi"
-        : "Board Kolaborasi / Proyek · Dapat memilih anggota lintas divisi",
-      emptyMessage: "Belum ada kolaborator yang ditambahkan ke board ini."
+      divisionName: hasSpecificDept ? cleanDept : (activeBoard.name || "Kolaborasi"),
+      scopeLabel: boardCollab
+        ? `Khusus anggota grup ${groupName || "board"} & yang di-invite ke board ini`
+        : `Khusus anggota grup/divisi ${cleanDept} & yang di-invite ke board ini`,
+      emptyMessage: "Belum ada anggota grup atau orang yang di-invite ke board ini."
     };
   }
 
-  if (cleanDept) {
-    const invitedSet = new Set([
-      ...(Array.isArray(activeBoard?.invited_member_ids) ? activeBoard.invited_member_ids : []),
-      ...(Array.isArray(activeBoard?.member_ids) ? activeBoard.member_ids : [])
-    ]);
+  // Fallback when no board object is resolved yet, but specific department is known
+  if (hasSpecificDept) {
     const deptIds = humanUsers
-      .filter(
-        (u) =>
-          String(u.department || "").trim().toLowerCase() === deptLower ||
-          invitedSet.has(u.user_id)
-      )
+      .filter((u) => String(u.department || "").trim().toLowerCase() === deptLower)
       .map((u) => u.user_id);
-
     return {
       ids: deptIds,
       isCollaborative: false,
-      activeBoard,
+      activeBoard: null,
       divisionName: cleanDept,
-      scopeLabel: `Khusus anggota divisi ${cleanDept} & yang di-invite ke board ini`,
-      emptyMessage: `Belum ada akun di board ${cleanDept}.`
+      scopeLabel: `Khusus anggota grup/divisi ${cleanDept} & yang di-invite ke board ini`,
+      emptyMessage: `Belum ada anggota di grup/divisi ${cleanDept}.`
     };
   }
 
   return {
-    ids: humanIds,
-    isCollaborative: true,
-    activeBoard,
-    divisionName: "Semua Divisi",
-    scopeLabel: "Pilih board divisi untuk membatasi anggota per divisi",
-    emptyMessage: "Belum ada anggota tersedia."
+    ids: [],
+    isCollaborative: false,
+    activeBoard: null,
+    divisionName: "",
+    scopeLabel: "Pilih board terlebih dahulu untuk menampilkan anggota grup & yang di-invite",
+    emptyMessage: "Pilih board terlebih dahulu atau invite anggota ke board ini."
   };
 }

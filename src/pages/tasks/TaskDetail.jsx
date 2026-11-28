@@ -318,7 +318,10 @@ export default function TaskDetail({ id, initialTask = null, boards: propBoards 
   const approvalProgressPct = isApprovedFull ? 100 : approvedCount === 1 ? 50 : 0;
   const alreadyApprovedByMe = Boolean(me?.user_id && approvedList.includes(me.user_id));
 
-  const activeBoardObj = boards.find((b) => b.id === t?.board_id) || t?.board || null;
+  const cachedBoardObj = boards.find((b) => b.id === t?.board_id) || null;
+  const activeBoardObj = t?.board
+    ? { ...(cachedBoardObj || {}), ...t.board }
+    : cachedBoardObj;
   const assigneeScope = getBoardAssigneeScope({
     board: activeBoardObj,
     boards,

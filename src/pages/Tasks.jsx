@@ -1166,7 +1166,7 @@ export function TaskWorkspace({ projectId, compactHeader }) {
             data-testid="filter-task-item-type"
           >
             <option value="">{t("tasks_all_item_types", "Semua Jenis Item")}</option>
-            {(Array.isArray(ws?.item_types) && ws.item_types.length > 0 ? ws.item_types : DEFAULT_ITEM_TYPES).map((it) => (
+            {(Array.isArray(ws?.item_types) && (ws.item_types.length > 0 || ws?.item_types_configured) ? ws.item_types : DEFAULT_ITEM_TYPES).map((it) => (
               <option key={it.name} value={it.name}>{it.name}</option>
             ))}
           </AppSelect>

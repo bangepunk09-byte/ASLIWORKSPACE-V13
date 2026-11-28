@@ -36,7 +36,6 @@ export function getProfileCompletion(user) {
       : []),
     { key: "city", label: "Kota", ok: Boolean(String(user.city || "").trim()) },
     { key: "office", label: "Kantor", ok: Boolean(String(user.office || "").trim()) },
-    { key: "location_status", label: "Status Lokasi", ok: Boolean(String(user.location_status || "").trim()) },
     { key: "skills", label: "Keahlian", ok: hasSkills },
     { key: "bio", label: "Biodata", ok: Boolean(String(user.bio || "").trim()) },
   ];

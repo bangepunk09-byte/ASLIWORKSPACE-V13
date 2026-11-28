@@ -75,7 +75,7 @@ export const ORG_LEVEL_META = {
 };
 
 export function normalizeOrgLevel(raw) {
-  const s = String(raw || "").trim();
+  const s = String(raw || "").replace(/^\s*\d+\.\s*/, "").trim();
   if (!s) return "";
   const lower = s.toLowerCase();
   if (LEGACY_ORG_LEVEL_MAP[lower]) return LEGACY_ORG_LEVEL_MAP[lower];
@@ -160,7 +160,7 @@ export function getOrgLevelMeta(level, levels = DEFAULT_ORG_LEVELS) {
     rank,
     short: `L${rank}`,
     label: normalized,
-    subtitle: `Level ${rank} organisasi`,
+    subtitle: "Level organisasi",
     accent: "#64748B",
     badge: "bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700",
     dot: "bg-slate-500",
@@ -207,4 +207,17 @@ export function canAccessEmployeeArchives(user, { users = [], serverFlag = false
   }
   return false;
 }
+
+export function canAccessLocationTracking(user) {
+  if (!user || user.is_bot || user.role === "assistant") return false;
+  const role = String(user.role || "").toLowerCase();
+  if (["super_admin", "workspace_admin", "department_manager", "project_manager", "manager"].includes(role)) {
+    return true;
+  }
+  const level = inferUserOrgLevel(user);
+  const rank = getOrgLevelRank(level);
+  // Rank 1..4 = C Level, Direktur, Manager, Lead. Level Staff (rank >= 5) tidak dapat mengakses fitur lacak.
+  return rank <= 4;
+}
+
 

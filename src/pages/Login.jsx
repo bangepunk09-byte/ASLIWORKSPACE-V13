@@ -798,7 +798,7 @@ export default function Login({ roomSlugOverride = null }) {
                               <p className="truncate text-sm font-extrabold tracking-tight text-ink">
                                 {room.name || room.brand_name}
                               </p>
-                              <span className="text-xs text-sub font-mono">/w/{room.slug}</span>
+                              <span className="text-xs font-sans text-sub">/w/{room.slug}</span>
                               {room.status === "suspended" && (
                                 <span className="text-xs font-bold text-rose-600">· Suspended</span>
                               )}
@@ -866,8 +866,8 @@ export default function Login({ roomSlugOverride = null }) {
                         required
                         value={inviteCode}
                         onChange={(e) => setInviteCode(e.target.value.replace(/\s+/g, "").toUpperCase())}
-                        placeholder="Kode Undangan (cth: ASLI-9F2A#1)"
-                        className="h-11 flex-1 rounded-full border border-border bg-surface2/60 px-4 text-sm font-mono font-bold uppercase tracking-wider text-ink outline-none focus:border-brand tabular-nums"
+                        placeholder="Kode undangan (cth: ASLI-9F2A#1)"
+                        className="h-11 flex-1 rounded-full border border-border bg-surface2/60 px-4 font-sans text-sm font-bold uppercase tracking-wide text-ink placeholder:normal-case placeholder:font-normal placeholder:tracking-normal placeholder:text-sub/70 outline-none focus:border-brand tabular-nums"
                         data-testid="join-invite-code-input"
                       />
                       <button

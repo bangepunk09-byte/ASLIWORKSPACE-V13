@@ -43,10 +43,16 @@ import {
 import { setTopQuickActionNotifActive } from "../lib/sonnerCompat";
 import { hasTopNotifQuickAction } from "../components/TopNotificationPopup";
 import { enforceTaskApprovalInvariant, mergeTasksArrayNonDestructive } from "../lib/snapshotMerge";
+import { autoSyncLocationIfGranted } from "../lib/liveLocation";
 
 const prefetchMarketplaceStateLazy = (uid) =>
   import("../pages/marketplace/marketplaceStore")
     .then((m) => m.prefetchMarketplaceState?.(uid))
+    .catch(() => null);
+
+const prefetchBillingOverviewLazy = () =>
+  import("../components/BillingPanel")
+    .then((m) => m.prefetchBillingOverview?.())
     .catch(() => null);
 
 const AppCtx = createContext(null);
@@ -746,7 +752,10 @@ export function AppProvider({ children }) {
           if (wsRef.current?.marketplace_enabled !== false) {
             prefetchMarketplaceStateLazy(me.user_id);
           }
-        }, 5000);
+          if (me?.role === "super_admin") {
+            prefetchBillingOverviewLazy();
+          }
+        }, 1800);
       })();
       return () => {
         cancelled = true;
@@ -1007,6 +1016,13 @@ export function AppProvider({ children }) {
               return { ...s, user: { ...s.user, availability_status: incomingAvail, online: true } };
             });
           }
+        }
+        if (evt.type === "location:ping") {
+          const curMe = meRef.current;
+          if (curMe?.user_id && curMe.share_location !== false) {
+            autoSyncLocationIfGranted(curMe, { force: true }).catch(() => {});
+          }
+          return;
         }
         const playMsgSoundOnce = () => {
           const nowMs = Date.now();
@@ -1668,6 +1684,41 @@ export function AppProvider({ children }) {
     }, 350);
     return () => clearTimeout(timer);
   }, [me?.user_id, canAccessArchives]);
+
+  // Quietly keep live GPS location fresh when browser geolocation permission is already granted
+  useEffect(() => {
+    if (!me?.user_id || me?.share_location === false) return;
+    let cancelled = false;
+    const syncOnce = async (force = false) => {
+      const res = await autoSyncLocationIfGranted(meRef.current, { force });
+      if (cancelled || !res?.live_location) return;
+      const uid = meRef.current?.user_id;
+      if (!uid) return;
+      const patch = {
+        live_location: res.live_location,
+        location_status: res.location_status || res.live_location.label,
+      };
+      setSession((s) => (s?.user?.user_id === uid ? { ...s, user: { ...s.user, ...patch } } : s));
+      setUsers((prev) => {
+        const next = (Array.isArray(prev) ? prev : []).map((u) =>
+          u.user_id === uid ? { ...u, ...patch } : u
+        );
+        scheduleJsonStorageWrite(roomStorageKey("circle_users_cache"), next);
+        return next;
+      });
+    };
+    const initTimer = setTimeout(() => {
+      syncOnce(false);
+    }, 2500);
+    const interval = setInterval(() => {
+      syncOnce(true);
+    }, 10 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      clearTimeout(initTimer);
+      clearInterval(interval);
+    };
+  }, [me?.user_id, me?.share_location, setSession]);
 
   const value = useMemo(() => {
     return {

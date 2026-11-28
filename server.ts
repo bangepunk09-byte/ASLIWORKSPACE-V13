@@ -1137,7 +1137,6 @@ async function startServer() {
       ...(isCustomMode ? [Boolean(String(u.custom_location || "").trim())] : []),
       Boolean(String(u.city || "").trim()),
       Boolean(String(u.office || "").trim()),
-      Boolean(String(u.location_status || "").trim()),
       hasSkills,
       Boolean(String(u.bio || "").trim()),
     ];
@@ -1181,6 +1180,7 @@ async function startServer() {
     return {
       ...rest,
       availability_status: u.availability_status || "online",
+      live_location: u.share_location === false ? null : (u.live_location || null),
       is_verified: Boolean(comp.isVerified),
       profile_completion: comp.percent,
       has_password: Boolean(u.password_hash || u.password),
@@ -2643,6 +2643,7 @@ async function startServer() {
     "city",
     "office",
     "location_status",
+    "live_location",
     "share_location",
     "timezone",
     "team",
@@ -7078,10 +7079,287 @@ async function startServer() {
     });
   });
 
+  function canAccessLocationTrackingServer(u: any): boolean {
+    if (!u || u.is_bot || u.role === "assistant") return false;
+    const role = String(u.role || "").toLowerCase();
+    if (["super_admin", "workspace_admin", "department_manager", "project_manager", "manager"].includes(role)) {
+      return true;
+    }
+    const rawLevel = String(u.org_level || "").replace(/^\s*\d+\.\s*/, "").trim().toLowerCase();
+    if (rawLevel) {
+      if (["c level", "c-level", "clevel", "executive", "direktur", "director", "division", "manager", "manajer", "department", "lead", "leader", "supervisor", "team"].includes(rawLevel)) {
+        return true;
+      }
+      if (["staff", "staf", "employee", "intern", "magang"].includes(rawLevel)) {
+        return false;
+      }
+    }
+    const title = String(u.job_title || "").toLowerCase();
+    if (/\b(ceo|cto|cfo|coo|cmo|cio|cpo|chro|chief|c-level|c level|founder|co-founder|president|komisaris|commissioner|direktur|director|vp|vice president|svp|evp|general manager|gm|head of|manager|manajer|pm|lead|leader|supervisor|spv|koordinator|coordinator|principal|head|senior)\b/i.test(title)) {
+      return true;
+    }
+    return false;
+  }
+
+  function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
+    const R = 6371000;
+    const toRad = (deg: number) => (deg * Math.PI) / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLng = toRad(lng2 - lng1);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+  }
+
+  const pendingLocationPings = new Map<string, Array<() => void>>();
+
   app.get("/api/users", (req, res) => {
     const reqUser = getReqUser(req);
     if (!reqUser) return res.status(401).json({ detail: "Silakan login terlebih dahulu." });
-    res.json(sanitizeUsersList(db.users));
+    const allowLiveLoc = canAccessLocationTrackingServer(reqUser);
+    const list = sanitizeUsersList(db.users);
+    if (!allowLiveLoc) {
+      return res.json(list.map((u: any) => ({ ...u, live_location: null })));
+    }
+    res.json(list);
+  });
+
+  const reverseGeoCache = new Map<string, { label: string; full_address: string; city: string; expiresAt: number }>();
+
+  async function reverseGeocodeCoords(lat: number, lng: number) {
+    const key = `${lat.toFixed(3)},${lng.toFixed(3)}`;
+    const now = Date.now();
+    const cached = reverseGeoCache.get(key);
+    if (cached && cached.expiresAt > now) {
+      return { label: cached.label, full_address: cached.full_address, city: cached.city };
+    }
+    const fallbackLabel = `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 4500);
+      const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(
+        lat
+      )}&lon=${encodeURIComponent(lng)}&zoom=16&accept-language=id`;
+      const resp = await fetch(url, {
+        headers: {
+          "User-Agent": "ASLIWORKSPACE-LiveLocation/1.0",
+          Accept: "application/json",
+        },
+        signal: ctrl.signal,
+      });
+      clearTimeout(timer);
+      if (resp.ok) {
+        const geo: any = await resp.json();
+        const addr = geo?.address || {};
+        const primary =
+          addr.suburb ||
+          addr.neighbourhood ||
+          addr.village ||
+          addr.city_district ||
+          addr.town ||
+          addr.road ||
+          "";
+        const secondary =
+          addr.city ||
+          addr.municipality ||
+          addr.county ||
+          addr.state_district ||
+          addr.state ||
+          "";
+        const parts = [primary, secondary].filter(Boolean);
+        const uniqueParts = parts.filter(
+          (p, i) => parts.findIndex((x) => x.toLowerCase() === p.toLowerCase()) === i
+        );
+        const label = uniqueParts.join(", ") || String(geo?.name || "").trim() || fallbackLabel;
+        const full_address = String(geo?.display_name || label);
+        const city = String(secondary || primary || "");
+        reverseGeoCache.set(key, { label, full_address, city, expiresAt: now + 10 * 60_000 });
+        if (reverseGeoCache.size > 500) {
+          const oldestKey = reverseGeoCache.keys().next().value;
+          if (oldestKey) reverseGeoCache.delete(oldestKey);
+        }
+        return { label, full_address, city };
+      }
+    } catch {}
+    return { label: fallbackLabel, full_address: fallbackLabel, city: "" };
+  }
+
+  app.post("/api/users/me/live-location", async (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Silakan login terlebih dahulu." });
+    const user = db.users.find((u: any) => u.user_id === reqUser.user_id);
+    if (!user) return res.status(404).json({ detail: "User not found" });
+
+    if (req.body?.clear === true) {
+      user.live_location = null;
+      saveDbToFile();
+      broadcast({ type: "users:changed" });
+      return res.json({ live_location: null, location_status: user.location_status || "" });
+    }
+
+    const lat = Number(req.body?.lat);
+    const lng = Number(req.body?.lng);
+    const accuracy = req.body?.accuracy !== undefined && req.body?.accuracy !== null ? Math.round(Number(req.body.accuracy)) : null;
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      return res.status(400).json({ detail: "Koordinat lokasi tidak valid." });
+    }
+
+    const geo = await reverseGeocodeCoords(lat, lng);
+    const nowIso = new Date().toISOString();
+    const radiusMeters = Number.isFinite(accuracy as number) && (accuracy as number) > 0
+      ? Math.max(10, Math.round(accuracy as number))
+      : 50;
+    user.share_location = true;
+    user.live_location = {
+      lat: Number(lat.toFixed(6)),
+      lng: Number(lng.toFixed(6)),
+      accuracy: Number.isFinite(accuracy as number) ? accuracy : radiusMeters,
+      radius_meters: radiusMeters,
+      label: geo.label,
+      full_address: geo.full_address,
+      updated_at: nowIso,
+      source: "gps",
+    };
+    user.location_status = geo.label;
+    if (geo.city && !String(user.city || "").trim()) {
+      user.city = geo.city;
+    }
+    saveDbToFile();
+    broadcast({ type: "users:changed" });
+
+    const activeSlug = roomAls.getStore()?.slug || DEFAULT_ROOM_SLUG;
+    const pingKey = `${activeSlug}::${user.user_id}`;
+    const waiters = pendingLocationPings.get(pingKey);
+    if (waiters && waiters.length > 0) {
+      pendingLocationPings.delete(pingKey);
+      waiters.forEach((resolveFn) => {
+        try { resolveFn(); } catch {}
+      });
+    }
+
+    res.json({
+      live_location: user.live_location,
+      location_status: user.location_status,
+      radius_meters: radiusMeters,
+      user: sanitizeUser(user),
+    });
+  });
+
+  app.post("/api/users/:id/track-location", async (req, res) => {
+    const reqUser = getReqUser(req);
+    if (!reqUser?.user_id) return res.status(401).json({ detail: "Silakan login terlebih dahulu." });
+    if (!canAccessLocationTrackingServer(reqUser)) {
+      return res.status(403).json({ detail: "Fitur lacak lokasi tidak dapat diakses oleh level Staff." });
+    }
+
+    const target = db.users.find((u: any) => u.user_id === req.params.id);
+    if (!target) return res.status(404).json({ detail: "Pengguna tidak ditemukan." });
+    if (target.share_location === false) {
+      return res.status(403).json({ detail: "Pengguna menonaktifkan fitur berbagi lokasi." });
+    }
+
+    const activeSlug = roomAls.getStore()?.slug || DEFAULT_ROOM_SLUG;
+    const targetSockets: any[] = [];
+    wss.clients.forEach((client: any) => {
+      if (
+        client.readyState === WebSocket.OPEN &&
+        client.userId === target.user_id &&
+        (client._roomSlug || DEFAULT_ROOM_SLUG) === activeSlug
+      ) {
+        targetSockets.push(client);
+      }
+    });
+
+    const prevUpdatedAt = target.live_location?.updated_at
+      ? new Date(target.live_location.updated_at).getTime()
+      : 0;
+    const isStale = !prevUpdatedAt || Date.now() - prevUpdatedAt > 20_000;
+    let refreshedLive = false;
+
+    if (targetSockets.length > 0 && isStale && target.user_id !== reqUser.user_id) {
+      const pingKey = `${activeSlug}::${target.user_id}`;
+      const waitPromise = new Promise<boolean>((resolve) => {
+        const list = pendingLocationPings.get(pingKey) || [];
+        let settled = false;
+        const done = (ok: boolean) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve(ok);
+        };
+        const onUpdated = () => done(true);
+        const timer = setTimeout(() => {
+          const cur = pendingLocationPings.get(pingKey);
+          if (cur) {
+            const remaining = cur.filter((fn) => fn !== onUpdated);
+            if (remaining.length > 0) pendingLocationPings.set(pingKey, remaining);
+            else pendingLocationPings.delete(pingKey);
+          }
+          done(false);
+        }, 2500);
+        list.push(onUpdated);
+        pendingLocationPings.set(pingKey, list);
+      });
+
+      const pingPayload = JSON.stringify({
+        type: "location:ping",
+        requester_id: reqUser.user_id,
+        room_slug: activeSlug,
+      });
+      targetSockets.forEach((sock) => {
+        try { sock.send(pingPayload); } catch {}
+      });
+      refreshedLive = await waitPromise;
+    }
+
+    const freshTarget = db.users.find((u: any) => u.user_id === target.user_id) || target;
+    if (!freshTarget.live_location || !Number.isFinite(Number(freshTarget.live_location.lat))) {
+      return res.json({
+        available: false,
+        online: targetSockets.length > 0 || Boolean(freshTarget.online),
+        detail:
+          targetSockets.length > 0
+            ? "Perangkat pengguna belum mengaktifkan izin lokasi GPS di browser."
+            : "Lokasi GPS pengguna belum tersedia karena perangkat belum membagikan lokasi.",
+      });
+    }
+
+    const loc = freshTarget.live_location;
+    const radiusMeters = Math.max(
+      10,
+      Math.round(Number(loc.radius_meters ?? loc.accuracy) || 50)
+    );
+    const enrichedLoc = {
+      ...loc,
+      radius_meters: radiusMeters,
+    };
+
+    let distanceFromYouMeters: number | null = null;
+    const requesterRecord = db.users.find((u: any) => u.user_id === reqUser.user_id);
+    if (
+      requesterRecord &&
+      requesterRecord.user_id !== freshTarget.user_id &&
+      Number.isFinite(Number(requesterRecord.live_location?.lat)) &&
+      Number.isFinite(Number(requesterRecord.live_location?.lng))
+    ) {
+      distanceFromYouMeters = haversineMeters(
+        Number(requesterRecord.live_location.lat),
+        Number(requesterRecord.live_location.lng),
+        Number(loc.lat),
+        Number(loc.lng)
+      );
+    }
+
+    res.json({
+      available: true,
+      refreshed_live: refreshedLive,
+      live_location: enrichedLoc,
+      radius_meters: radiusMeters,
+      distance_from_you_meters: distanceFromYouMeters,
+      location_status: freshTarget.location_status || loc.label,
+      user: sanitizeUser(freshTarget),
+    });
   });
 
   app.get("/api/users/:id", (req, res) => {
@@ -7090,7 +7368,11 @@ async function startServer() {
     const user = db.users.find((u: any) => u.user_id === req.params.id);
     if (!user) return res.status(404).json({ detail: "User not found" });
     const canEdit = user.user_id === reqUser.user_id || ["super_admin", "workspace_admin"].includes(reqUser.role);
-    res.json({ ...sanitizeUser(user), can_edit: canEdit });
+    const sanitized = sanitizeUser(user);
+    if (!canAccessLocationTrackingServer(reqUser)) {
+      sanitized.live_location = null;
+    }
+    res.json({ ...sanitized, can_edit: canEdit });
   });
 
   app.get("/api/users/:id/posts", (req, res) => {
@@ -7153,6 +7435,9 @@ async function startServer() {
     if (safeBody.org_level !== undefined) {
       const cleanLvl = normalizeEmployeeOrgLevel(safeBody.org_level);
       safeBody.org_level = cleanLvl || null;
+    }
+    if (safeBody.share_location === false) {
+      safeBody.live_location = null;
     }
     if (isAdminOrMgr) {
       if (req.body?.role !== undefined) {
@@ -8138,7 +8423,13 @@ async function startServer() {
     const creatorName = curUser.name || "Seseorang";
     const nextTaskNum = getNextTaskNumber(db.tasks);
     const taskNum = `TSK-${String(nextTaskNum).padStart(3, '0')}`;
-    const reqIds = req.body.requestor_ids || [creatorId];
+    const targetCreateBoard = resolveTaskTargetBoard(
+      req.body.board_id,
+      req.body.project_id,
+      req.body.department
+    );
+    const hasExplicitRequestors = Array.isArray(req.body.requestor_ids) && req.body.requestor_ids.length > 0;
+    const reqIds = hasExplicitRequestors ? req.body.requestor_ids.filter(Boolean) : [creatorId];
     const rawCps = Array.isArray(req.body.checkpoints) ? req.body.checkpoints : [];
     const normalizedInputCps = rawCps.map((c: any, idx: number) =>
       typeof c === "string"
@@ -8148,6 +8439,8 @@ async function startServer() {
     const cpPics = normalizedInputCps.map((c: any) => c?.assignee_id).filter(Boolean);
 
     // Normalize requested assignee_ids and split self-assignment vs others requiring DM approval
+    const hasExplicitAssignees =
+      req.body.assignee_ids !== undefined || req.body.assignee_id !== undefined;
     let requestedAssigneeIds = Array.isArray(req.body.assignee_ids) ? [...req.body.assignee_ids] : [];
     if (req.body.assignee_id && !requestedAssigneeIds.includes(req.body.assignee_id)) {
       requestedAssigneeIds.unshift(req.body.assignee_id);
@@ -8157,11 +8450,27 @@ async function startServer() {
       requestedAssigneeIds = Array.from(new Set(cpPics));
     } else if (
       requestedAssigneeIds.length === 0 &&
-      req.body.assignee_ids === undefined &&
-      req.body.assignee_id === undefined &&
+      !hasExplicitAssignees &&
       creatorId
     ) {
-      requestedAssigneeIds = [creatorId];
+      if (!targetCreateBoard || getBoardAllowedMemberIds(targetCreateBoard).allowedIds.includes(creatorId)) {
+        requestedAssigneeIds = [creatorId];
+      }
+    }
+
+    if (targetCreateBoard) {
+      const invalidReq = hasExplicitRequestors
+        ? findDisallowedBoardParticipants(targetCreateBoard, reqIds)
+        : [];
+      const invalidAss = findDisallowedBoardParticipants(
+        targetCreateBoard,
+        [...requestedAssigneeIds, ...cpPics]
+      );
+      if (invalidReq.length > 0 || invalidAss.length > 0) {
+        return res.status(400).json({
+          detail: "Requestor dan Assignee hanya dapat dipilih dari anggota 1 grup yang sama atau orang yang di-invite ke board ini.",
+        });
+      }
     }
 
     const immediateAssigneeIds = requestedAssigneeIds.filter((uid: string) => uid === creatorId);
@@ -9041,9 +9350,19 @@ async function startServer() {
           if (safePatch.assignee_id !== undefined || safePatch.assignee_ids !== undefined) {
             const curActive = Array.isArray(t.assignee_ids) && t.assignee_ids.length ? t.assignee_ids : (t.assignee_id ? [t.assignee_id] : []);
             const curActiveSet = new Set(curActive);
-            const requestedBulk = Array.isArray(safePatch.assignee_ids)
+            const rawRequestedBulk = Array.isArray(safePatch.assignee_ids)
               ? safePatch.assignee_ids.filter(Boolean)
               : (safePatch.assignee_id ? [safePatch.assignee_id] : []);
+            const bulkBoard = resolveTaskTargetBoard(t.board_id, t.project_id, t.department);
+            const allowedBulkSet = bulkBoard
+              ? new Set<string>([...getBoardAllowedMemberIds(bulkBoard).allowedIds, ...curActive])
+              : null;
+            const requestedBulk = allowedBulkSet
+              ? rawRequestedBulk.filter((uid: string) => allowedBulkSet.has(String(uid)))
+              : rawRequestedBulk;
+            if (rawRequestedBulk.length > 0 && requestedBulk.length === 0) {
+              return;
+            }
             const immediateBulk = requestedBulk.filter((uid: string) => uid === reqUser.user_id || curActiveSet.has(uid));
             bulkPendingInvites = requestedBulk.filter((uid: string) => uid !== reqUser.user_id && !curActiveSet.has(uid) && isHumanWorkspaceUser(uid));
             safePatch.assignee_ids = immediateBulk;
@@ -9153,12 +9472,14 @@ async function startServer() {
       return res.status(403).json({ detail: "Akses ditolak. Tugas ini hanya dapat diakses oleh divisi terkait atau anggota terundang." });
     }
     const rawBoard = db.boards?.find((b: any) => b.id === t.board_id) || db.boards?.[0] || null;
-    const deptMembers = rawBoard?.department
-      ? (db.users || []).filter((u: any) => !u.is_bot && u.department && u.department.toLowerCase() === rawBoard.department.toLowerCase()).map((u: any) => u.user_id)
-      : [];
-    const board = rawBoard ? {
+    const boardScopeInfo = rawBoard ? getBoardAllowedMemberIds(rawBoard) : null;
+    const board = rawBoard && boardScopeInfo ? {
       ...rawBoard,
-      member_ids: Array.from(new Set([...deptMembers, ...(Array.isArray(rawBoard.invited_member_ids) ? rawBoard.invited_member_ids : [])]))
+      all_workspace_members: false,
+      allowed_member_ids: boardScopeInfo.allowedIds,
+      linked_group_member_ids: boardScopeInfo.groupMemberIds,
+      linked_group_name: boardScopeInfo.linkedGroupName,
+      member_ids: boardScopeInfo.allowedIds,
     } : null;
     const reqIds = Array.isArray(t.requestor_ids) && t.requestor_ids.length
       ? t.requestor_ids
@@ -9291,6 +9612,44 @@ async function startServer() {
         created_at: nowIso
       });
     };
+
+    // Enforce strict board-group / board-invited member scoping for newly added Requestor, Assignee, & Checkpoint PICs
+    const targetPatchBoard = resolveTaskTargetBoard(
+      req.body.board_id !== undefined ? req.body.board_id : t.board_id,
+      req.body.project_id !== undefined ? req.body.project_id : t.project_id,
+      req.body.department !== undefined ? req.body.department : t.department
+    );
+    if (targetPatchBoard) {
+      const existingReqIds = Array.isArray(t.requestor_ids)
+        ? t.requestor_ids
+        : (t.requestor_id ? [t.requestor_id] : (t.created_by ? [t.created_by] : []));
+      const existingAssIds = Array.isArray(t.assignee_ids)
+        ? t.assignee_ids
+        : (t.assignee_id ? [t.assignee_id] : []);
+      const existingCpIds = Array.isArray(t.checkpoints)
+        ? t.checkpoints.map((c: any) => c?.assignee_id).filter(Boolean)
+        : [];
+      const incomingReqIds = Array.isArray(req.body.requestor_ids)
+        ? req.body.requestor_ids
+        : (req.body.requestor_id ? [req.body.requestor_id] : []);
+      const incomingAssIds = Array.isArray(req.body.assignee_ids)
+        ? req.body.assignee_ids
+        : (req.body.assignee_id ? [req.body.assignee_id] : []);
+      const incomingCpIds = Array.isArray(req.body.checkpoints)
+        ? req.body.checkpoints.map((c: any) => c?.assignee_id).filter(Boolean)
+        : [];
+      const badReq = findDisallowedBoardParticipants(targetPatchBoard, incomingReqIds, existingReqIds);
+      const badAss = findDisallowedBoardParticipants(
+        targetPatchBoard,
+        [...incomingAssIds, ...incomingCpIds],
+        [...existingAssIds, ...existingCpIds]
+      );
+      if (badReq.length > 0 || badAss.length > 0) {
+        return res.status(400).json({
+          detail: "Requestor dan Assignee hanya dapat dipilih dari anggota 1 grup yang sama atau orang yang di-invite ke board ini.",
+        });
+      }
+    }
 
     // Reviewer otomatis sinkron dengan requestor + normalize requestor_id
     if (Array.isArray(req.body.requestor_ids)) {
@@ -10609,55 +10968,30 @@ async function startServer() {
     const userDept = String(user.department || "").trim().toLowerCase();
     const isSuper = user.role === "super_admin" || user.role === "workspace_admin";
 
-    const isBoardCollab = (b: any) => {
-      if (!b) return false;
-      const bd = String(b.department || "").trim().toLowerCase();
-      return Boolean(
-        b.is_collaborative ||
-        b.board_type === "collaborative" ||
-        b.board_type === "project" ||
-        b.project_id ||
-        !bd ||
-        bd === "semua divisi" ||
-        bd === "all" ||
-        bd === "kolaborasi"
-      );
-    };
-
     const enriched = (db.boards || []).map((b: any) => {
       const boardDept = String(b.department || "").trim().toLowerCase();
-      const isCollab = isBoardCollab(b);
+      const scopeInfo = getBoardAllowedMemberIds(b);
+      const isCollab = scopeInfo.isCollab;
       const isDeptMember = Boolean(userDept && boardDept === userDept);
       const isInvited = Boolean(Array.isArray(b.invited_member_ids) && b.invited_member_ids.includes(user.user_id));
-      const isCollabMember = Boolean(
-        isCollab &&
-        (b.all_workspace_members !== false ||
-          boardDept === "semua divisi" ||
-          (Array.isArray(b.member_ids) && b.member_ids.includes(user.user_id)))
-      );
+      const isAllowedMember = scopeInfo.allowedIds.includes(user.user_id);
       const isCreator = b.created_by === user.user_id;
-
-      const deptMembers = (db.users || []).filter(
-        (u: any) => !u.is_bot && u.role !== "assistant" && u.user_id !== CIRCLE_BOT_ID && u.department && b.department && u.department.toLowerCase() === b.department.toLowerCase()
-      ).map((u: any) => u.user_id);
-      const invitedMembers = Array.isArray(b.invited_member_ids) ? b.invited_member_ids : [];
-      const explicitCollabMembers = isCollab && Array.isArray(b.member_ids) ? b.member_ids : [];
-      const totalMemberIds = isCollab && b.all_workspace_members !== false
-        ? (db.users || []).filter((u: any) => !u.is_bot && u.role !== "assistant" && u.user_id !== CIRCLE_BOT_ID).map((u: any) => u.user_id)
-        : Array.from(new Set([...deptMembers, ...invitedMembers, ...explicitCollabMembers]));
 
       return {
         ...b,
         board_type: isCollab ? (b.board_type || "collaborative") : "department",
         is_collaborative: isCollab,
-        all_workspace_members: b.all_workspace_members !== false,
+        all_workspace_members: false,
         task_count: counts[b.id] || 0,
-        dept_members_count: deptMembers.length,
-        invited_members_count: invitedMembers.length,
-        member_ids: totalMemberIds,
+        dept_members_count: scopeInfo.deptMemberIds.length,
+        invited_members_count: scopeInfo.invitedIds.length,
+        linked_group_name: scopeInfo.linkedGroupName,
+        linked_group_member_ids: scopeInfo.groupMemberIds,
+        allowed_member_ids: scopeInfo.allowedIds,
+        member_ids: scopeInfo.allowedIds,
         is_dept_member: isDeptMember,
         is_invited: isInvited,
-        is_accessible: isSuper || isDeptMember || isInvited || isCollabMember || isCreator
+        is_accessible: isSuper || isDeptMember || isInvited || isAllowedMember || isCreator
       };
     });
 
@@ -10747,42 +11081,160 @@ async function startServer() {
     return { group, conv };
   }
 
+  function isBoardCollaborativeServer(b: any): boolean {
+    if (!b) return false;
+    const bd = String(b.department || "").trim().toLowerCase();
+    return Boolean(
+      b.is_collaborative ||
+      b.board_type === "collaborative" ||
+      b.board_type === "project" ||
+      b.project_id ||
+      !bd ||
+      bd === "semua divisi" ||
+      bd === "all" ||
+      bd === "kolaborasi"
+    );
+  }
+
+  function getBoardAllowedMemberIds(b: any) {
+    const humanUsers = (db.users || []).filter(
+      (u: any) => u && !u.is_bot && u.role !== "assistant" && u.user_id !== CIRCLE_BOT_ID
+    );
+    const humanSet = new Set<string>(humanUsers.map((u: any) => String(u.user_id)));
+    if (!b) {
+      return {
+        isCollab: false,
+        allowedIds: [] as string[],
+        groupMemberIds: [] as string[],
+        deptMemberIds: [] as string[],
+        invitedIds: [] as string[],
+        linkedGroupName: "",
+      };
+    }
+
+    const isCollab = isBoardCollaborativeServer(b);
+    const cleanDept = String(b.department || "").trim();
+    const deptLower = cleanDept.toLowerCase();
+    const hasSpecificDept =
+      !isCollab &&
+      Boolean(deptLower) &&
+      !["semua divisi", "all", "kolaborasi"].includes(deptLower);
+
+    // 1. Members in the board's linked group (1 group yang sama)
+    const { group, conv } = findBoardLinkedGroup(b, false);
+    const groupMemberIds = Array.from(
+      new Set(
+        [
+          ...(Array.isArray(group?.member_ids) ? group.member_ids : []),
+          ...(Array.isArray(group?.members) ? group.members : []),
+          ...(Array.isArray(conv?.member_ids) ? conv.member_ids : []),
+          ...(Array.isArray(conv?.members) ? conv.members : []),
+        ]
+          .map(String)
+          .filter((id) => humanSet.has(id))
+      )
+    );
+
+    // 2. Department members for a division board
+    const deptMemberIds = hasSpecificDept
+      ? humanUsers
+          .filter((u: any) => String(u.department || "").trim().toLowerCase() === deptLower)
+          .map((u: any) => String(u.user_id))
+      : [];
+
+    // 3. Explicitly invited / assigned board members (+ linked project members)
+    const linkedPrj = b.project_id
+      ? (db.projects || []).find((p: any) => p && (p.id === b.project_id || p.board_id === b.id))
+      : null;
+    const invitedIds = Array.from(
+      new Set(
+        [
+          ...(Array.isArray(b.invited_member_ids) ? b.invited_member_ids : []),
+          ...(Array.isArray(b.chat_invited_member_ids) ? b.chat_invited_member_ids : []),
+          ...(Array.isArray(b.member_ids) ? b.member_ids : []),
+          ...(Array.isArray(linkedPrj?.member_ids) ? linkedPrj.member_ids : []),
+          ...(isCollab && b.created_by ? [b.created_by] : []),
+        ]
+          .map(String)
+          .filter((id) => humanSet.has(id))
+      )
+    );
+
+    const allowedIds = Array.from(
+      new Set([...groupMemberIds, ...deptMemberIds, ...invitedIds])
+    );
+
+    return {
+      isCollab,
+      allowedIds,
+      groupMemberIds,
+      deptMemberIds,
+      invitedIds,
+      linkedGroupName: String(group?.name || conv?.name || (hasSpecificDept ? cleanDept : b.name) || ""),
+    };
+  }
+
+  function resolveTaskTargetBoard(boardId?: string, projectId?: string, department?: string) {
+    const boards = Array.isArray(db.boards) ? db.boards : [];
+    if (boardId) {
+      const byId = boards.find((b: any) => b && b.id === boardId);
+      if (byId) return byId;
+    }
+    if (projectId) {
+      const byPrj = boards.find((b: any) => b && b.project_id === projectId);
+      if (byPrj) return byPrj;
+    }
+    const cleanDept = String(department || "").trim().toLowerCase();
+    if (cleanDept && !["semua divisi", "all", "kolaborasi"].includes(cleanDept)) {
+      const byDept = boards.find(
+        (b: any) => b && String(b.department || "").trim().toLowerCase() === cleanDept
+      );
+      if (byDept) return byDept;
+    }
+    return null;
+  }
+
+  function findDisallowedBoardParticipants(
+    board: any,
+    candidateIds: string[],
+    existingAllowedIds: string[] = []
+  ): string[] {
+    if (!board) return [];
+    const { allowedIds } = getBoardAllowedMemberIds(board);
+    const allowedSet = new Set<string>([
+      ...allowedIds,
+      ...(existingAllowedIds || []).filter(Boolean).map(String),
+    ]);
+    return (candidateIds || [])
+      .filter(Boolean)
+      .map(String)
+      .filter((uid) => isHumanWorkspaceUser(uid) && !allowedSet.has(uid));
+  }
+
   app.get("/api/boards/:id/members", (req, res) => {
     const reqUser = getReqUser(req);
     if (!reqUser?.user_id) return res.status(401).json({ detail: "Unauthorized" });
     const b = db.boards.find((x: any) => x.id === req.params.id);
     if (!b) return res.status(404).json({ detail: "Board not found" });
 
-    const cleanDept = String(b.department || "").trim().toLowerCase();
-    const isCollab = Boolean(
-      b.is_collaborative ||
-      b.board_type === "collaborative" ||
-      b.board_type === "project" ||
-      b.project_id ||
-      !cleanDept ||
-      cleanDept === "semua divisi" ||
-      cleanDept === "all" ||
-      cleanDept === "kolaborasi"
-    );
+    const scopeInfo = getBoardAllowedMemberIds(b);
+    const isCollab = scopeInfo.isCollab;
 
     const { group, conv } = findBoardLinkedGroup(b, false);
     const groupMemIds = new Set<string>([
-      ...(Array.isArray(group?.member_ids) ? group.member_ids : []),
-      ...(Array.isArray(group?.members) ? group.members : []),
-      ...(Array.isArray(conv?.member_ids) ? conv.member_ids : []),
-      ...(Array.isArray(conv?.members) ? conv.members : []),
+      ...scopeInfo.groupMemberIds,
       ...(Array.isArray(b.chat_invited_member_ids) ? b.chat_invited_member_ids : []),
     ]);
 
     const humanList = (db.users || []).filter((u: any) => !u.is_bot && u.role !== "assistant" && u.user_id !== CIRCLE_BOT_ID);
-    const deptUsers = (isCollab && b.all_workspace_members !== false
-      ? humanList
-      : humanList.filter((u: any) => String(u.department || "").trim().toLowerCase() === cleanDept)
-    ).map((u: any) => sanitizeUser(u));
+    const primaryMemberSet = new Set<string>(
+      isCollab ? scopeInfo.groupMemberIds : [...scopeInfo.deptMemberIds, ...scopeInfo.groupMemberIds]
+    );
+    const deptUsers = humanList
+      .filter((u: any) => primaryMemberSet.has(u.user_id))
+      .map((u: any) => sanitizeUser(u));
 
-    const invitedIds = Array.isArray(b.invited_member_ids) ? b.invited_member_ids : [];
-    const collabExplicitIds = isCollab && Array.isArray(b.member_ids) ? b.member_ids : [];
-    const extraIds = Array.from(new Set([...invitedIds, ...collabExplicitIds])).filter((uid) => !deptUsers.some((u: any) => u.user_id === uid));
+    const extraIds = scopeInfo.allowedIds.filter((uid) => !primaryMemberSet.has(uid));
     const invitedUsers = humanList
       .filter((u: any) => extraIds.includes(u.user_id))
       .map((u: any) => ({
@@ -10799,10 +11251,11 @@ async function startServer() {
       linked_group_name: group?.name || conv?.name || b.department || b.name,
       board_type: isCollab ? (b.board_type || "collaborative") : "department",
       is_collaborative: isCollab,
-      all_workspace_members: b.all_workspace_members !== false,
+      all_workspace_members: false,
       color: b.color,
       dept_users: deptUsers,
       invited_users: invitedUsers,
+      allowed_member_ids: scopeInfo.allowedIds,
       total_count: deptUsers.length + invitedUsers.length
     });
   });
@@ -10820,7 +11273,7 @@ async function startServer() {
       department: "Semua Divisi",
       board_type: "collaborative",
       is_collaborative: true,
-      all_workspace_members: req.body.all_workspace_members !== false,
+      all_workspace_members: false,
       invited_member_ids: req.body.invited_member_ids || memberIds,
       member_ids: memberIds,
       created_by: user.user_id,
@@ -10876,6 +11329,10 @@ async function startServer() {
       b.is_collaborative = true;
       b.board_type = "collaborative";
       b.department = "Semua Divisi";
+      b.all_workspace_members = false;
+      if (Array.isArray(req.body.member_ids)) {
+        b.invited_member_ids = [...req.body.member_ids];
+      }
       const linkedPrj = (db.projects || []).find(
         (p: any) => p.id === b.project_id || p.board_id === b.id
       );
@@ -13797,43 +14254,27 @@ async function startServer() {
     const isManagerOrAdmin = ["super_admin", "workspace_admin", "department_manager", "project_manager"].includes(reqUser.role);
     const enrichedBoards = (db.boards || []).map((b: any) => {
       const boardDept = String(b.department || "").trim().toLowerCase();
-      const isCollab = Boolean(
-        b.is_collaborative ||
-        b.board_type === "collaborative" ||
-        b.board_type === "project" ||
-        b.project_id ||
-        !boardDept ||
-        boardDept === "semua divisi" ||
-        boardDept === "all" ||
-        boardDept === "kolaborasi"
-      );
+      const scopeInfo = getBoardAllowedMemberIds(b);
+      const isCollab = scopeInfo.isCollab;
       const isDeptMember = Boolean(userDept && boardDept === userDept);
       const isInvited = Boolean(Array.isArray(b.invited_member_ids) && b.invited_member_ids.includes(uid));
-      const isCollabMember = Boolean(
-        isCollab &&
-        (b.all_workspace_members !== false ||
-          boardDept === "semua divisi" ||
-          (Array.isArray(b.member_ids) && b.member_ids.includes(uid)))
-      );
+      const isAllowedMember = scopeInfo.allowedIds.includes(uid);
       const isCreator = b.created_by === uid;
-      const deptMembers = boardDept ? (deptUserIdsMap.get(boardDept) || []) : [];
-      const invitedMembers = Array.isArray(b.invited_member_ids) ? b.invited_member_ids : [];
-      const explicitCollabMembers = isCollab && Array.isArray(b.member_ids) ? b.member_ids : [];
-      const totalMemberIds = isCollab && b.all_workspace_members !== false
-        ? allHumanUserIds
-        : Array.from(new Set([...deptMembers, ...invitedMembers, ...explicitCollabMembers]));
       return {
         ...b,
         board_type: isCollab ? (b.board_type || "collaborative") : "department",
         is_collaborative: isCollab,
-        all_workspace_members: b.all_workspace_members !== false,
+        all_workspace_members: false,
         task_count: boardCounts[b.id] || 0,
-        dept_members_count: deptMembers.length,
-        invited_members_count: invitedMembers.length,
-        member_ids: totalMemberIds,
+        dept_members_count: scopeInfo.deptMemberIds.length,
+        invited_members_count: scopeInfo.invitedIds.length,
+        linked_group_name: scopeInfo.linkedGroupName,
+        linked_group_member_ids: scopeInfo.groupMemberIds,
+        allowed_member_ids: scopeInfo.allowedIds,
+        member_ids: scopeInfo.allowedIds,
         is_dept_member: isDeptMember,
         is_invited: isInvited,
-        is_accessible: isSuper || isDeptMember || isInvited || isCollabMember || isCreator,
+        is_accessible: isSuper || isDeptMember || isInvited || isAllowedMember || isCreator,
       };
     });
     const visibleBoards = isSuper ? enrichedBoards : enrichedBoards.filter((b: any) => b.is_accessible);
@@ -17888,7 +18329,9 @@ async function startServer() {
   app.post("/api/item-types", (req, res) => {
     const actor = getReqUser(req);
     if (!actor?.user_id) return res.status(401).json({ detail: "Unauthorized" });
-    db.workspace.item_types = db.workspace.item_types || [];
+    db.workspace.item_types = Array.isArray(db.workspace.item_types)
+      ? db.workspace.item_types
+      : [...DEFAULT_WORKSPACE_ITEM_TYPES];
     const name = (req.body.name || "").trim();
     if (!name) return res.status(400).json({ error: "Nama item tidak boleh kosong" });
 
@@ -17905,9 +18348,35 @@ async function startServer() {
       existing = { name, color, text_color, border_color };
       db.workspace.item_types.push(existing);
     }
+    db.workspace.item_types_configured = true;
+    db.workspace.item_types_version = 2;
     saveDbToFile(true);
     broadcast({ type: "workspace:changed" });
     res.json(existing);
+  });
+
+  app.delete("/api/item-types/:name", (req, res) => {
+    const actor = getReqUser(req);
+    if (!actor?.user_id) return res.status(401).json({ detail: "Unauthorized" });
+    const rawName = decodeURIComponent(String(req.params.name || "")).trim();
+    if (!rawName) return res.status(400).json({ detail: "Nama jenis item tidak valid" });
+
+    const currentList = Array.isArray(db.workspace.item_types)
+      ? db.workspace.item_types
+      : [...DEFAULT_WORKSPACE_ITEM_TYPES];
+    const targetLower = rawName.toLowerCase();
+    const nextList = currentList.filter(
+      (x: any) => String(x?.name || "").trim().toLowerCase() !== targetLower
+    );
+    if (nextList.length === currentList.length) {
+      return res.status(404).json({ detail: "Jenis item tidak ditemukan" });
+    }
+    db.workspace.item_types = nextList;
+    db.workspace.item_types_configured = true;
+    db.workspace.item_types_version = 2;
+    saveDbToFile(true);
+    broadcast({ type: "workspace:changed" });
+    res.json({ deleted: rawName, item_types: nextList });
   });
 
   const handlePrefsUpdate = (req: any, res: any) => {

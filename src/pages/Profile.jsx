@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { MessageCircle, Mail, MapPin, Briefcase, Users2, Pencil, Calendar, IdCard, Link2, Phone, Newspaper, CornerDownRight, Heart, BarChart3, Paperclip, Hash, ArrowUpRight, BadgeCheck, Sparkles, Palette, ImagePlus, RotateCcw, Check, Trash2, Clock, Video, Plus, ExternalLink, CalendarPlus } from "lucide-react";
+import { MessageCircle, Mail, MapPin, Briefcase, Users2, Pencil, Calendar, IdCard, Link2, Phone, Newspaper, CornerDownRight, Heart, BarChart3, Paperclip, Hash, ArrowUpRight, BadgeCheck, Sparkles, Palette, ImagePlus, RotateCcw, Check, Trash2, Clock, Video, Plus, ExternalLink, CalendarPlus, LocateFixed, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { useApp } from "../context/AppContext";
 import { api, errMsg, fileUrl, uploadFile } from "../lib/api";
@@ -14,7 +14,15 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/
 import { AppSelect } from "../components/ui/select";
 import { DatePicker } from "../components/ui/date-picker";
 import { Switch } from "../components/ui/switch";
-import { DEFAULT_ORG_LEVELS, inferUserOrgLevel, getOrgLevelMeta } from "../lib/orgLevels";
+import { DEFAULT_ORG_LEVELS, inferUserOrgLevel, getOrgLevelMeta, canAccessLocationTracking } from "../lib/orgLevels";
+import {
+  detectAndSyncLiveLocation,
+  trackUserLiveLocation,
+  resolveRadiusMeters,
+  formatRadiusMeters,
+  formatLocationTimeAgo,
+} from "../lib/liveLocation";
+import { LiveLocationMapDialog } from "../components/LiveLocationMapDialog";
 
 const MODES = ["Office", "Remote", "Hybrid", "On-site", "Kustom"];
 const EMPLOYMENT_OPTIONS = [
@@ -97,7 +105,6 @@ function EditProfile({ open, onOpenChange, p, onSaved }) {
       "city",
       "office",
       "custom_location",
-      "location_status",
       "share_location",
       "custom",
       ...(isAdmin ? ["job_title", "org_level", "department", "division", "team", "manager_id"] : []),
@@ -184,7 +191,7 @@ function EditProfile({ open, onOpenChange, p, onSaved }) {
           <Field label={tr("profile_field_join", "Tanggal Bergabung")}><DatePicker showQuickPresets={false} value={f.join_date || ""} onChange={(val) => setF({ ...f, join_date: val })} placeholder="Pilih tanggal bergabung" className={inp} data-testid="profile-join-date-input" /></Field>
           {isAdmin && <>
             <Field label={tr("profile_field_job", "Jabatan")}><input value={f.job_title || ""} onChange={set("job_title")} className={inp} data-testid="profile-title-input" /></Field>
-            <Field label={tr("profile_field_level", "Level Hierarki")}>
+            <Field label={tr("profile_field_level", "Level")}>
               <AppSelect value={f.org_level || inferUserOrgLevel(f, orgLevels)} onChange={set("org_level")} placeholder="Pilih level" className={inp} data-testid="profile-org-level-select">
                 {orgLevels.map((lvl) => (
                   <option key={lvl} value={lvl}>{lvl}</option>
@@ -199,7 +206,6 @@ function EditProfile({ open, onOpenChange, p, onSaved }) {
           <Field label={tr("profile_field_city", "Kota")}><input value={f.city || ""} onChange={set("city")} className={inp} data-testid="profile-city-input" /></Field>
           <Field label={tr("profile_field_office", "Kantor")}><input value={f.office || ""} onChange={set("office")} className={inp} /></Field>
           {(f.work_mode === "Custom" || f.work_mode === "Kustom") && <Field label={tr("profile_field_custom_loc", "Lokasi Kustom")}><input value={f.custom_location || ""} onChange={set("custom_location")} className={inp} /></Field>}
-          <Field label={tr("profile_field_loc_status", "Status Lokasi")}><input value={f.location_status || ""} onChange={set("location_status")} placeholder={tr("profile_field_loc_status_ph", "mis. Di lokasi klien hari ini")} className={inp} /></Field>
         </div>
         <label className="flex items-center justify-between rounded-xl bg-surface2 p-3 text-sm">{tr("profile_share_location", "Bagikan lokasi kerja saya dengan rekan tim")}<Switch checked={f.share_location !== false} onCheckedChange={set("share_location")} data-testid="profile-share-location" /></label>
         <Field label={tr("profile_field_skills", "Keahlian")}><input value={f.skillsText || ""} onChange={set("skillsText")} placeholder={tr("profile_field_skills_ph", "Pisahkan dengan koma")} className={inp} data-testid="profile-skills-input" /></Field>
@@ -514,7 +520,7 @@ function readCachedUserFeedHistory(uid, userMap) {
 export default function Profile() {
   const { uid } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { me, userMap, ws, online, reloadUsers, setSession, hasDeadlineToday, subscribe, t: tr } = useApp();
+  const { me, userMap, ws, reloadUsers, setSession, hasDeadlineToday, subscribe, t: tr } = useApp();
   const [rawP, setP] = useState(() => userMap?.[uid] || (uid === me?.user_id ? me : null));
   const [edit, setEdit] = useState(false);
   const [coverOpen, setCoverOpen] = useState(false);
@@ -596,12 +602,22 @@ export default function Profile() {
   const activeRawP = rawP?.user_id === uid ? rawP : null;
   const liveUser = (uid === me?.user_id ? me : null) || userMap?.[uid];
   const baseP = activeRawP || liveUser || { user_id: uid, name: "Employee", job_title: "Anggota Tim" };
+  const baseLocTs = baseP?.live_location?.updated_at ? new Date(baseP.live_location.updated_at).getTime() : 0;
+  const liveLocTs = liveUser?.live_location?.updated_at ? new Date(liveUser.live_location.updated_at).getTime() : 0;
+  const resolvedLiveLocation =
+    liveUser?.share_location === false || baseP?.share_location === false
+      ? null
+      : liveLocTs >= baseLocTs
+        ? (liveUser?.live_location ?? baseP?.live_location ?? null)
+        : (baseP?.live_location ?? liveUser?.live_location ?? null);
   const p = liveUser
     ? {
         ...liveUser,
         ...baseP,
         online: liveUser.online ?? baseP.online,
         availability_status: liveUser.availability_status || baseP.availability_status,
+        live_location: resolvedLiveLocation,
+        location_status: resolvedLiveLocation?.label || liveUser.location_status || baseP.location_status,
         can_edit: baseP.can_edit ?? liveUser.can_edit,
       }
     : baseP;
@@ -629,6 +645,69 @@ export default function Profile() {
     }
     reloadUsers();
   };
+  const canTrackLocation = useMemo(() => canAccessLocationTracking(me), [me]);
+  const [locating, setLocating] = useState(false);
+  const [trackedResult, setTrackedResult] = useState(null);
+  const [mapPopupOpen, setMapPopupOpen] = useState(false);
+
+  useEffect(() => {
+    setTrackedResult(null);
+    setMapPopupOpen(false);
+  }, [uid]);
+
+  const handleTrackLocation = async () => {
+    if (locating || !canTrackLocation) return;
+    setLocating(true);
+    try {
+      if (uid === me?.user_id) {
+        const res = await detectAndSyncLiveLocation();
+        const loc = res?.live_location || res?.user?.live_location || null;
+        if (res?.user) {
+          syncSavedProfile(res.user);
+        } else if (loc) {
+          syncSavedProfile({
+            ...p,
+            share_location: true,
+            live_location: loc,
+            location_status: res.location_status || loc.label,
+          });
+        }
+        if (loc) {
+          setTrackedResult({
+            uid,
+            live_location: loc,
+            distance_from_you_meters: null,
+          });
+          toast.success(`Lokasi terdeteksi (${formatRadiusMeters(resolveRadiusMeters(loc))}) — klik hasil untuk lihat peta.`);
+        }
+      } else {
+        const res = await trackUserLiveLocation(uid);
+        if (!res?.available || !res?.live_location) {
+          toast.info(res?.detail || "Lokasi GPS pengguna belum tersedia.");
+          return;
+        }
+        if (res.user) {
+          syncSavedProfile(res.user);
+        }
+        setTrackedResult({
+          uid,
+          live_location: res.live_location,
+          distance_from_you_meters: res.distance_from_you_meters ?? null,
+        });
+        toast.success(`Lokasi terdeteksi (${formatRadiusMeters(resolveRadiusMeters(res.live_location))}) — klik hasil untuk lihat peta.`);
+      }
+    } catch (e) {
+      toast.error(e?.message || "Gagal melacak lokasi saat ini.");
+    } finally {
+      setLocating(false);
+    }
+  };
+  const activeTrackedLocation =
+    canTrackLocation && p.share_location !== false && trackedResult?.uid === uid
+      ? trackedResult.live_location
+      : null;
+  const activeTrackedDistance =
+    trackedResult?.uid === uid ? trackedResult.distance_from_you_meters : null;
   const [dmBusy, setDmBusy] = useState(false);
   const openDm = async () => {
     if (dmBusy) return;
@@ -862,27 +941,38 @@ export default function Profile() {
                   <VerifiedBadge user={p} size={22} />
                 </h1>
                 <div className="mt-0.5 flex flex-wrap items-center gap-2">
-                  <p className="text-sub" data-testid="profile-job-title">
-                    {p.job_title || tr("profile_no_job_title", "Belum ada jabatan")}{p.department && ` · ${p.department}`}
-                  </p>
                   {(() => {
                     const lvl = inferUserOrgLevel(p, DEFAULT_ORG_LEVELS);
                     const meta = getOrgLevelMeta(lvl, DEFAULT_ORG_LEVELS);
+                    const rawTitle = String(p.job_title || "").trim();
+                    const isGenericTitle =
+                      !rawTitle ||
+                      /^(anggota tim|staff member|employee|user|belum ada jabatan)$/i.test(rawTitle);
+                    const primaryRole = isGenericTitle ? meta.label : rawTitle;
+                    const roleDivision = [primaryRole, p.department].filter(Boolean).join(" - ");
+                    const showLevelBadge =
+                      !isGenericTitle && rawTitle.toLowerCase() !== meta.label.toLowerCase();
                     return (
-                      <span
-                        className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-semibold ${meta.badge}`}
-                        data-testid="profile-org-level-badge"
-                      >
-                        <span className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} />
-                        {meta.rank}. {meta.label}
-                      </span>
+                      <>
+                        <p className="text-sm font-medium text-sub" data-testid="profile-job-title">
+                          {roleDivision || tr("profile_no_job_title", "Belum ada jabatan")}
+                        </p>
+                        {showLevelBadge && (
+                          <span
+                            className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-semibold ${meta.badge}`}
+                            data-testid="profile-org-level-badge"
+                          >
+                            <span className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} />
+                            {meta.label}
+                          </span>
+                        )}
+                      </>
                     );
                   })()}
                 </div>
-                <p className="mt-1.5 flex flex-wrap items-center gap-2 text-xs">
+                <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs">
                   {(() => {
                     const statusMeta = getAvailabilityStatusMeta(p.availability_status);
-                    const isOn = online.has(p.user_id) || p.online;
                     if (statusMeta.value !== "online") {
                       return (
                         <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 font-semibold ${statusMeta.badgeClass}`}>
@@ -891,23 +981,68 @@ export default function Profile() {
                         </span>
                       );
                     }
-                    return (
-                      <span className={isOn ? "text-emerald-600 font-semibold" : "text-sub"}>
-                        {isOn ? tr("profile_status_online", "● Online") : tr("profile_status_offline", "○ Offline")}
-                      </span>
-                    );
+                    return null;
                   })()}
-                  {p.location_status && <span className="text-sub"> · {p.location_status}</span>}
-                  {isDeadlineToday ? (
+                  {canTrackLocation && p.share_location !== false ? (
+                    activeTrackedLocation ? (
+                      <div className="inline-flex flex-wrap items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setMapPopupOpen(true)}
+                          title="Klik untuk melihat posisi di peta"
+                          data-testid="profile-tracked-radius-btn"
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 dark:border-emerald-800/60 bg-emerald-50/75 dark:bg-emerald-950/35 hover:bg-emerald-100/80 dark:hover:bg-emerald-950/60 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-800 dark:text-emerald-300 transition-colors cursor-pointer"
+                        >
+                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                          <MapPin size={12} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
+                          <span>
+                            Dalam {formatRadiusMeters(resolveRadiusMeters(activeTrackedLocation))}
+                          </span>
+                          {activeTrackedLocation.label && (
+                            <span className="font-normal text-emerald-700/85 dark:text-emerald-300/85 max-w-[200px] truncate">
+                              · {activeTrackedLocation.label}
+                            </span>
+                          )}
+                          {formatLocationTimeAgo(activeTrackedLocation.updated_at) && (
+                            <span className="font-normal text-emerald-700/70 dark:text-emerald-400/70">
+                              · {formatLocationTimeAgo(activeTrackedLocation.updated_at)}
+                            </span>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleTrackLocation}
+                          disabled={locating}
+                          title="Lacak ulang lokasi"
+                          data-testid="profile-retrack-location-btn"
+                          className="inline-flex h-6 w-6 items-center justify-center rounded-lg border border-border bg-surface2/70 hover:bg-surface2 text-sub hover:text-ink transition-colors disabled:opacity-60 cursor-pointer"
+                        >
+                          <RefreshCw size={11} className={locating ? "animate-spin text-brand" : ""} />
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleTrackLocation}
+                        disabled={locating}
+                        data-testid="profile-track-location-btn"
+                        className="inline-flex items-center gap-1 rounded-lg border border-border bg-surface2/70 hover:bg-surface2 px-2.5 py-0.5 text-[11px] font-semibold text-sub hover:text-ink transition-colors disabled:opacity-60 cursor-pointer"
+                      >
+                        {locating ? (
+                          <RefreshCw size={11} className="animate-spin text-brand" />
+                        ) : (
+                          <LocateFixed size={11} className="text-brand" />
+                        )}
+                        <span>{locating ? "Melacak…" : "Lacak Lokasi"}</span>
+                      </button>
+                    )
+                  ) : null}
+                  {isDeadlineToday && (
                     <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/60 px-2.5 py-0.5 text-[11px] font-bold text-rose-600 dark:text-rose-400 whitespace-nowrap animate-pulse">
                       <span className="h-2 w-2 rounded-full bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.9)]" /> {tr("profile_deadline_today", "Ada Deadline Hari Ini")}
                     </span>
-                  ) : (
-                    <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 px-2.5 py-0.5 text-[11px] font-bold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
-                      <span className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.9)]" /> {tr("profile_deadline_free", "Bebas Deadline")}
-                    </span>
                   )}
-                </p>
+                </div>
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2 shrink-0 sm:pt-0.5">
@@ -1328,6 +1463,17 @@ export default function Profile() {
           loadProfileMeetings();
         }}
       />
+      {canTrackLocation && (
+        <LiveLocationMapDialog
+          open={mapPopupOpen && Boolean(activeTrackedLocation)}
+          onOpenChange={setMapPopupOpen}
+          user={p}
+          liveLocation={activeTrackedLocation}
+          distanceFromYouMeters={activeTrackedDistance}
+          onRefresh={handleTrackLocation}
+          refreshing={locating}
+        />
+      )}
     </div>
   );
 }

@@ -11,7 +11,7 @@ import ThemeEditor from "./settings/ThemeEditor";
 import BackgroundEditor from "./settings/BackgroundEditor";
 import { UserProfileSettings } from "./settings/UserProfileSettings";
 import { Card, AdminOverview, PeopleAccess, WorkspaceBranding, DivisionsAdmin, ItemTypesAdmin, WeeklyReportCard, LabelsAdmin, StatusesAdmin, ProfileFieldsAdmin, StickersAdmin, AssistantBranding, MarketplaceSettingsCard } from "./settings/AdminPanels";
-import BillingPanel from "../components/BillingPanel";
+import BillingPanel, { prefetchBillingOverview } from "../components/BillingPanel";
 import { DEFAULT_COPYWRITING, COPYWRITING_GROUPS, getEffectiveCopywriting, cleanCopywritingMap, generateCopywritingCsv, parseCopywritingCsv } from "../lib/i18n";
 import { DEFAULT_MARKETPLACE_COPYWRITING, reconcileMarketplaceEnabledCache } from "./marketplace/marketplaceStore";
 import {
@@ -1084,10 +1084,13 @@ export default function Settings() {
     }
   }, [isSuperAdmin, tab]);
   useEffect(() => {
+    if (isSuperAdmin) {
+      prefetchBillingOverview();
+    }
     if (isAdmin) {
       prefetchBackupSummary();
     }
-  }, [isAdmin]);
+  }, [isAdmin, isSuperAdmin]);
   return (
     <div className="mx-auto w-full min-w-0 max-w-5xl overflow-x-clip px-3.5 py-4 sm:px-6 sm:py-5 lg:px-10 lg:py-10 animate-crossfade" data-testid="settings-page">
       <PageHeader icon={Cog} title={t("settings_title", "Pengaturan")} subtitle={t("settings_subtitle", "Sesuaikan tampilan ASLIWORKSPACE dan kelola workspace Anda.")} />
